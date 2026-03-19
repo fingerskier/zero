@@ -22,7 +22,7 @@ ZeroDB fixes all of these while keeping what made GunDB compelling: instant loca
 | Decision | Replaces (GunDB) | Rationale |
 |----------|-------------------|-----------|
 | Hybrid Logical Clocks (HLC) | HAM (wall-clock timestamps) | Causality-preserving ordering without clock synchronization. A device with a skewed clock cannot block the network. |
-| Oplog with Merkle DAG | No operation log | Enables efficient delta sync after arbitrary offline periods. Peers exchange Merkle tree roots to identify divergence, then ship only missing operations. |
+| Oplog with causal graph + Merkle sync tree | No operation log | Enables efficient delta sync after arbitrary offline periods. Operations form a causal graph (for correctness); a derived Merkle sync tree enables O(log N) divergence detection. |
 | Rust core / WASM bindings | Pure JavaScript | Identical behavior across browser, Node.js, mobile, and CLI. Follows Automerge and Loro's proven path. |
 | Column-level CRDT selection | Everything is an LWW register | A `name` field is LWW, a `tags` field is an OR-Set, a `view_count` is a Counter. Schema declares intent; the engine enforces merge semantics. Inspired by CR-SQLite. |
 | Lean formal proofs | No formal verification | Machine-checked proofs of CRDT convergence properties. The trust differentiator for safety-critical and financial applications. |
@@ -51,7 +51,7 @@ ZeroDB fixes all of these while keeping what made GunDB compelling: instant loca
 │                   ZeroDB Core (Rust)                 │
 │  ┌────────┐ ┌──────────┐ ┌────────┐ ┌─────────────┐  │
 │  │  HLC   │ │  CRDT    │ │ Merkle │ │   Crypto    │  │
-│  │ Clock  │ │  Engine  │ │  DAG   │ │   Layer     │  │
+│  │ Clock  │ │  Engine  │ │  Sync  │ │   Layer     │  │
 │  └────────┘ └──────────┘ └────────┘ └─────────────┘  │
 │  ┌────────────────────┐ ┌──────────────────────────┐ │
 │  │    Oplog Store     │ │     State Materializer   │ │
@@ -100,7 +100,7 @@ Unlike GunDB's flat key-value nodes with link references, ZeroDB edges are first
 
 ```typescript
 interface Node {
-  id: NodeId;             // ULIDv2 — sortable, globally unique, embeds timestamp
+  id: NodeId;             // UUIDv7 — sortable, globally unique, embeds timestamp (RFC 9562)
   label: string;          // e.g. "User", "Document", "Session"
   properties: Record<string, CRDTValue>;  // each property has a CRDT type
   _meta: {
@@ -117,7 +117,7 @@ interface Node {
 
 ```typescript
 interface Edge {
-  id: EdgeId;             // ULIDv2
+  id: EdgeId;             // UUIDv7
   label: string;          // e.g. "FOLLOWS", "AUTHORED", "MEMBER_OF"
   source: NodeId;
   target: NodeId;
@@ -156,6 +156,7 @@ Every operation in ZeroDB is timestamped with an HLC.  The HLC is a tuple:
 - **Causal ordering across peers:** After peer A sends operations to peer B, all subsequent operations on B will have timestamps greater than A's sent operations.
 - **Close to wall-clock time:** Unlike pure Lamport clocks, HLC timestamps are interpretable as approximate real time — useful for queries like "show me changes from the last hour."
 - **Bounded drift:** If a peer's physical clock is wildly off, the HLC still advances but caps the logical counter to prevent runaway timestamps.  Peers with clocks skewed beyond a configurable threshold (default: 60 seconds) trigger a drift warning but are never blocked from writing.
+- **Logical counter overflow:** The `u16` logical counter supports up to 65,535 operations per physical-clock millisecond.  If exhausted (extreme burst throughput), the peer advances `physical_time` by 1ms and resets the counter.  This preserves monotonicity at the cost of a slight forward drift.
 
 **Comparison with GunDB's HAM:**
 
@@ -166,48 +167,48 @@ Every operation in ZeroDB is timestamped with an HLC.  The HLC is a tuple:
 | Tie-breaking | `JSON.stringify` lexicographic comparison | Deterministic: physical → logical → peer_id |
 | Future-dated attacks | A peer can set clock to far future and block all others | Bounded drift detection; logical counter caps prevent runaway |
 
-### 2.5 Oplog & Merkle DAG
+### 2.5 Oplog & Causal Graph
 
 Every mutation to the graph produces an **operation** appended to a local, append-only log:
 
 ```typescript
 interface Operation {
-  id: OpId;               // HLC timestamp of this operation
+  id: OpId;               // content hash (BLAKE3) of this operation — globally unique
+  hlc: HLCTimestamp;      // HLC timestamp when this operation was created
   peer: PeerId;           // originating peer
-  deps: OpId[];           // causal dependencies (HLC of last-seen op per peer)
+  deps: OpId[];           // causal dependencies (OpIds of last-seen ops per peer)
   entity: NodeId | EdgeId;
   field: string;          // property name, or "__tombstone" for deletes
-  crdt_type: CRDTType;   // LWW | Counter | ORSet | MVRegister | ...
-  payload: CRDTPayload;  // type-specific operation payload
+  payload: CRDTPayload;   // type-specific operation payload (CRDT type resolved via schema)
+  group?: GroupId;         // optional operation group for atomic batches (see §2.7)
   signature?: Signature;
 }
 ```
 
-Operations form a **Merkle DAG** — each operation references its causal dependencies by hash. This structure enables:
+Operations form a **causal graph** — each operation references its causal dependencies by `OpId` (content hash).  This structure provides:
 
-1. **Efficient delta sync:** Two peers compare Merkle roots. If they match, peers are in sync.  If not, they walk the DAG to find the divergence point and exchange only missing operations.
-2. **Offline resilience:** A peer that's been offline for days/weeks/months can reconnect and efficiently sync by exchanging Merkle hashes — no need to replay the entire history.
-3. **Integrity verification:** Any operation can be verified against its hash and its causal parents' hashes.  Tampered operations are detectable.
+1. **Causal ordering:** The `deps` field captures the happens-before relationship.  Any peer can reconstruct the causal partial order from the operation set.
+2. **Integrity verification:** Each `OpId` is the content hash of the operation.  Tampered operations produce a different hash and are detectable.
+3. **Deduplication:** Content-addressed operations are naturally idempotent — receiving the same operation twice is a no-op.
 
-**Merkle Tree Structure:**
+**Note:** The CRDT type for each operation is not stored in the operation itself.  It is resolved from the schema by looking up `(entity.label, field)`.  This avoids redundancy between the schema and the oplog, and prevents inconsistencies where an operation claims a different CRDT type than the schema declares.
+
+### 2.6 Merkle Sync Tree
+
+Separate from the causal graph, ZeroDB maintains a **Merkle sync tree** — a time-bucketed hash tree used exclusively for efficient delta synchronization between peers.
 
 The oplog is partitioned into time-based buckets (configurable granularity, default: 1 minute).
 Each bucket has a Merkle hash computed from its operations.
 Buckets are organized in a balanced tree where:
-- Leaf nodes = per-minute operation hashes
+- Leaf nodes = per-bucket operation hashes
 - Internal nodes = hash of children
 - Root = single hash representing the entire oplog state
 
 Sync protocol walks from root downward: if a subtree matches, skip it entirely.  This gives O(log N) sync negotiation where N is the number of time buckets since divergence.
 
-**Why GunDB can't do this:**
+The Merkle sync tree is a **derived structure** — it is computed from the oplog and can be rebuilt at any time.  It is not part of the causal graph and carries no semantic meaning beyond enabling efficient sync.
 
-GunDB has no oplog.
-Each peer stores only the current materialized state.
-After an extended offline period, the only sync mechanism is to re-exchange the entire state and re-run HAM conflict resolution.
-There's no concept of "what changed since we last talked."
-
-### 2.6 State Materialization
+### 2.7 State Materialization
 
 ZeroDB maintains two views of data:
 
@@ -218,6 +219,38 @@ The materializer is an incremental engine:
 when new operations arrive (locally or via sync), it applies only the new operations to the existing materialized state rather than replaying from scratch.
 
 **Consistency guarantee:** The materialized state is always a deterministic function of the oplog.  Given the same set of operations (in any order), every peer computes the identical materialized state.  This is the Strong Eventual Consistency (SEC) guarantee that CRDTs provide.
+
+### 2.8 Operation Groups
+
+CRDTs do not support traditional transactions, but many graph mutations are logically atomic — creating a node and its edges should arrive together.  ZeroDB supports **operation groups**: a set of operations tagged with a shared `GroupId` that are treated as a unit for sync and materialization.
+
+```typescript
+type GroupId = string;  // UUIDv7
+
+// Operations in a group share the same group field
+await db.batch((tx) => {
+  const user = tx.create(User, { name: 'Alice', email: 'alice@example.com' });
+  const post = tx.create(Post, { title: 'Hello', published: true });
+  tx.link(Authored, user, post, { role: 'author' });
+});
+// All three operations get the same GroupId
+```
+
+**Guarantees:**
+
+- **Local atomicity:** All operations in a group are appended to the local oplog and materialized together.  If the process crashes mid-group, none are persisted.
+- **Sync atomicity:** During sync, a group is transmitted as a unit.  The receiving peer buffers operations until the full group arrives before materializing.
+- **No cross-peer atomicity:** Operation groups do not provide distributed transaction semantics.  Two peers can independently create conflicting groups; CRDT merge rules still apply per-field.
+
+### 2.9 Referential Integrity
+
+Edges reference source and target nodes by `NodeId`.  ZeroDB enforces referential integrity through **cascading tombstones**:
+
+- **On node tombstone:** All edges where the tombstoned node is the `source` or `target` are automatically tombstoned.  This generates additional operations in the oplog (one per affected edge), causally dependent on the node's tombstone operation.
+- **On edge creation:** If either the `source` or `target` node does not exist (or is tombstoned) in the materialized state, the edge is accepted into the oplog but marked as **dangling** in the materialized state.  If the referenced node later appears (e.g., arrives via sync), the edge becomes live.
+- **Dangling edge queries:** By default, queries exclude dangling edges.  The query API provides an `includeDangling` option for debugging and sync diagnostics.
+
+This design respects eventual consistency — operations can arrive in any order, and the materialized state converges regardless of whether a node or its edges arrive first.
 
 ---
 
@@ -233,12 +266,13 @@ The schema is a contract: "when concurrent edits happen to this field, here's ho
 | Type | Merge Semantics | Use Case |
 |------|----------------|----------|
 | `LWW<T>` | Last-Writer-Wins register. Latest HLC timestamp wins. | Names, titles, settings — any field where "most recent edit wins" is correct. |
-| `Counter` | Grow-only or PN-Counter. Concurrent increments are summed, not overwritten. | View counts, vote tallies, inventory quantities. |
+| `GCounter` | Grow-only counter. Concurrent increments are summed, never overwritten. Value is always ≥ 0. | View counts, login counts, event counters — monotonically increasing values. |
+| `PNCounter` | Positive-Negative counter. Supports both increment and decrement. Concurrent operations are summed. | Inventory quantities, vote tallies, balances — values that can go up or down. |
 | `ORSet<T>` | Observed-Remove Set. Add and remove are both tracked causally. Concurrent add+remove = element is present. | Tags, labels, members lists, permission sets. |
-| `MVRegister<T>` | Multi-Value Register. Concurrent writes produce multiple values; application resolves. | Fields where conflicts must be surfaced to the user (e.g., conflicting title edits). |
-| `LWWMap<K, V>` | Map where each key is an independent LWW register. | Metadata bags, preferences, configuration. |
+| `MVRegister<T>` | Multi-Value Register. Concurrent writes produce multiple values; application resolves via `db.resolve()`. | Fields where conflicts must be surfaced to the user (e.g., conflicting title edits). |
+| `LWWMap<K, V>` | Map where each key is an independent LWW register. Values must be scalar types (string, number, boolean, null). | Metadata bags, preferences, configuration. |
 | `RGA<T>` | Replicated Growable Array. Ordered sequence with positional insert/delete. | Ordered lists, playlists, task orderings. |
-| `Richtext` | Peritext-style rich text CRDT. Character-level insert/delete + formatting ranges. | Document content, comments, descriptions. |
+| `Richtext` | Peritext-style rich text CRDT. Character-level insert/delete + formatting ranges. *(Phase 3)* | Document content, comments, descriptions. |
 | `Flag` | Enable-Wins Flag. Concurrent enable + disable = enabled. | Feature flags, active/inactive status where enabling should win. |
 
 ### 3.2 Schema Definition
@@ -248,21 +282,22 @@ Schemas are defined in TypeScript (for the SDK) and a compact DSL (for the CLI a
 **TypeScript SDK:**
 
 ```typescript
-import { z, schema, LWW, Counter, ORSet, MVRegister, RGA } from 'zerodb';
+import { z, schema, LWW, GCounter, PNCounter, ORSet, MVRegister, RGA } from 'zerodb';
 
 const User = schema.node('User', {
   name:        LWW(z.string()),          // last write wins
   email:       LWW(z.string().email()),   // with validation
   bio:         LWW(z.string().optional()),
   tags:        ORSet(z.string()),          // add/remove tracked causally
-  loginCount:  Counter(),                  // concurrent increments merge
-  settings:    LWWMap(z.string(), z.any()),
+  loginCount:  GCounter(),                 // grow-only: concurrent increments merge
+  settings:    LWWMap(z.string(), z.string()),  // values are LWW scalars
 });
 
 const Post = schema.node('Post', {
   title:       MVRegister(z.string()),     // surface conflicts to user
-  body:        Richtext(),                 // collaborative editing
-  viewCount:   Counter(),
+  body:        LWW(z.string()),            // Richtext available in Phase 3
+  viewCount:   GCounter(),                 // grow-only
+  score:       PNCounter(),                // upvote/downvote: can increment and decrement
   tags:        ORSet(z.string()),
   published:   LWW(z.boolean()),
 });
@@ -282,14 +317,15 @@ node User {
   email       LWW<string>
   bio         LWW<string?>
   tags        ORSet<string>
-  loginCount  Counter
-  settings    LWWMap<string, any>
+  loginCount  GCounter
+  settings    LWWMap<string, string>
 }
 
 node Post {
   title       MVRegister<string>
-  body        Richtext
-  viewCount   Counter
+  body        LWW<string>
+  viewCount   GCounter
+  score       PNCounter
   tags        ORSet<string>
   published   LWW<bool>
 }
@@ -513,7 +549,9 @@ const unsubscribe = db.subscribe(
 
 // CRDT-aware mutations
 await db.mutate(post, (p) => {
-  p.viewCount.increment(1);     // Counter: concurrent increments merge
+  p.viewCount.increment(1);     // GCounter: concurrent increments merge
+  p.score.increment(1);          // PNCounter: supports increment and decrement
+  p.score.decrement(1);
   p.tags.add('featured');        // ORSet: concurrent add+remove = present
   p.title.set('Updated Title'); // MVRegister: concurrent sets = multi-value
 });
@@ -523,6 +561,13 @@ const titleState = await db.crdtState(post, 'title');
 // MVRegister: { values: ['Updated Title'], conflicts: false }
 // If two peers set title concurrently:
 // { values: ['Title A', 'Title B'], conflicts: true }
+
+// Resolve MVRegister conflicts
+if (titleState.conflicts) {
+  // Application picks a winner (or merges, or prompts the user)
+  await db.resolve(post, 'title', titleState.values[0]);
+  // This writes a new LWW-style set that supersedes all concurrent values
+}
 
 // Sync control
 await db.sync.connect('wss://relay.example.com');
@@ -567,6 +612,12 @@ function PostCard({ post }) {
 }
 ```
 
+### 5.5 Mutation Semantics
+
+**Concurrent local mutations:** Multiple `db.mutate()` calls on the same entity are serialized through the HLC — each call generates a new operation with a strictly greater HLC timestamp than the previous.  Mutations are never interleaved at the operation level.  From the application's perspective, `db.mutate()` returns a promise that resolves once the operation is appended to the local oplog and materialized.
+
+**Mutation → operation mapping:** A single `db.mutate()` call produces one operation per field touched.  Mutating three fields produces three operations, all sharing the same `GroupId` (see §2.8) to ensure they are applied atomically.
+
 ---
 
 ## 6. Cryptography & Auth
@@ -576,7 +627,7 @@ function PostCard({ post }) {
 Each peer generates an **Ed25519 keypair** on first run. The public key hash serves as the `PeerId`. All operations can optionally be signed, creating a verifiable chain of authorship.
 
 ```
-PeerId = BLAKE3(Ed25519PublicKey)  // 32 bytes, truncated to 16 for display
+PeerId = BLAKE3(Ed25519PublicKey)  // full 32 bytes stored; truncated to 16 hex chars for display
 ```
 
 ### 6.2 Built-in Crypto Layer
@@ -608,32 +659,51 @@ Applications can swap in their own provider — e.g., hardware security modules,
 
 ## 7. Storage Layer
 
-### 7.1 Storage Adapter Trait
+### 7.1 Storage Adapter Traits
+
+The storage layer is decomposed into focused traits.  Backends implement each trait independently, and the core composes them.
 
 ```rust
+/// Append-only operation log storage.
 #[async_trait]
-pub trait StorageAdapter: Send + Sync {
-    // Oplog operations
+pub trait OplogStore: Send + Sync {
     async fn append_ops(&self, ops: &[Operation]) -> Result<()>;
     async fn read_ops(&self, range: OpRange) -> Result<Vec<Operation>>;
     async fn ops_since(&self, version: &VersionVector) -> Result<Vec<Operation>>;
-    
-    // Materialized state
+}
+
+/// Materialized graph state: read and write the computed current state.
+#[async_trait]
+pub trait StateStore: Send + Sync {
     async fn get_node(&self, id: &NodeId) -> Result<Option<Node>>;
     async fn get_edge(&self, id: &EdgeId) -> Result<Option<Edge>>;
     async fn query_nodes(&self, label: &str, filter: &Filter) -> Result<Vec<Node>>;
     async fn query_edges(&self, label: &str, filter: &Filter) -> Result<Vec<Edge>>;
     async fn traverse(&self, start: &NodeId, pattern: &TraversalPattern) -> Result<Vec<Path>>;
     async fn put_materialized(&self, entity: &Entity) -> Result<()>;
-    
-    // Merkle tree
+}
+
+/// Merkle sync tree storage (derived structure, rebuildable from oplog).
+#[async_trait]
+pub trait MerkleStore: Send + Sync {
     async fn merkle_root(&self) -> Result<Hash>;
     async fn merkle_subtree(&self, depth: usize) -> Result<MerkleTree>;
-    
-    // Housekeeping
+    async fn rebuild(&self) -> Result<()>;
+}
+
+/// Housekeeping: compaction, snapshots, garbage collection.
+#[async_trait]
+pub trait Maintenance: Send + Sync {
     async fn compact(&self) -> Result<CompactionStats>;
     async fn snapshot(&self) -> Result<Snapshot>;
+    async fn gc_tombstones(&self, stable_before: &HLCTimestamp) -> Result<usize>;
 }
+```
+
+A complete storage backend bundles all four traits.  The `StorageBackend` type alias composes them:
+
+```rust
+pub trait StorageBackend: OplogStore + StateStore + MerkleStore + Maintenance {}
 ```
 
 ### 7.2 Backend Implementations
@@ -653,6 +723,42 @@ The oplog grows indefinitely without intervention. Compaction strategies:
 - **Causal stability pruning:** Once an operation has been acknowledged by all known peers (its HLC is below every peer's version vector entry), the raw operation can be discarded and only its effect on materialized state is retained.
 - **Tombstone GC:** Deleted nodes/edges (tombstoned) are fully removed after all peers have seen the delete.
 - **Snapshot checkpointing:** Periodically, the materializer writes a full state snapshot.  The oplog can be truncated to only contain operations after the snapshot.
+- **CRDT metadata pruning:** ORSet and RGA maintain internal metadata (tombstone markers, vector clocks per element) that grows with the history of add/remove operations.  After causal stability, internal CRDT metadata for acknowledged operations is compacted — e.g., ORSet tombstones for elements that all peers agree are removed can be dropped.
+
+### 7.4 Indexing
+
+The materialized state supports **secondary indexes** to avoid full scans during queries.
+
+**Automatic indexes:**
+
+- **Label index:** All nodes and edges are indexed by label.  `query_nodes("User", ...)` never scans non-User nodes.
+- **Edge endpoint index:** Edges are indexed by `(source, label)` and `(target, label)` for efficient traversal in both directions.
+
+**Schema-declared indexes:**
+
+```typescript
+const User = schema.node('User', {
+  name:   LWW(z.string()),
+  email:  LWW(z.string().email()),
+}, {
+  indexes: [
+    { fields: ['email'], unique: true },    // unique secondary index
+    { fields: ['name'] },                   // non-unique secondary index
+  ],
+});
+```
+
+```
+node User {
+  name   LWW<string>
+  email  LWW<string>
+
+  @index(email, unique)
+  @index(name)
+}
+```
+
+**Implementation:** In SQLite backends, indexes map directly to SQL indexes.  In IndexedDB, they map to IDB indexes on object stores.  The `StateStore` trait's `query_nodes` and `query_edges` methods use indexes when the filter matches an indexed field, falling back to scan otherwise.
 
 ---
 
@@ -708,23 +814,51 @@ The Lean proofs serve double duty:
 
 ### 9.2 Access Control
 
-ZeroDB supports **capability-based access control** at the schema level:
+ZeroDB supports **declarative, capability-based access control** at the schema level.  Policies are expressed as data (not closures) so they can be serialized, replicated through the oplog, and evaluated consistently across all peers.
+
+**Policy rules** are declarative predicates over the peer, entity, and operation:
 
 ```typescript
 const Post = schema.node('Post', {
   title:  LWW(z.string()),
-  body:   Richtext(),
+  body:   LWW(z.string()),
 }, {
   acl: {
-    write: (peer, node) => node._meta.origin === peer.id 
-                        || peer.hasCap('post:edit'),
-    read:  (peer, node) => node.properties.published 
-                        || node._meta.origin === peer.id,
+    write: [
+      { rule: 'origin' },                    // creator can always write
+      { rule: 'capability', cap: 'post:edit' }, // peers with this capability
+    ],
+    read: [
+      { rule: 'origin' },                    // creator can always read
+      { rule: 'field_equals', field: 'published', value: true }, // anyone if published
+    ],
   }
 });
 ```
 
-ACL evaluation happens at the storage layer — unauthorized operations are rejected before entering the oplog.
+```
+node Post {
+  title  LWW<string>
+  body   LWW<string>
+
+  @acl write: origin | cap("post:edit")
+  @acl read:  origin | published == true
+}
+```
+
+**Built-in rule types:**
+
+| Rule | Semantics |
+|------|-----------|
+| `origin` | Peer is the entity's creator (`_meta.origin === peer.id`) |
+| `capability` | Peer holds a named capability token |
+| `field_equals` | A field on the entity matches a value |
+| `peer_in_set` | Peer's ID is in a named ORSet on the entity (e.g., `editors` field) |
+| `always` | Unconditional allow (public access) |
+
+**Capability tokens** are operations in the oplog — a peer with the `grant` capability can issue a `GrantCapability` operation that gives another peer a named capability.  Revocation is also an oplog operation.  Because capabilities travel through the oplog, all peers converge on the same access control state.
+
+**Enforcement:** ACL evaluation happens at the storage layer.  When a peer receives an operation via sync, it evaluates the write ACL.  Operations that fail the check are **quarantined** — stored separately, not applied to materialized state, and flagged for the application to review.  This avoids permanent divergence: the originating peer keeps the operation, but receiving peers don't materialize it.
 
 ---
 
@@ -732,7 +866,7 @@ ACL evaluation happens at the storage layer — unauthorized operations are reje
 
 ### Phase 1: Foundation
 
-- [ ] Rust core: HLC, LWW register, Counter, ORSet
+- [ ] Rust core: HLC, LWW register, GCounter, PNCounter, ORSet
 - [ ] Oplog with Merkle DAG (in-memory)
 - [ ] SQLite storage adapter
 - [ ] CLI: `init`, `schema apply`, `repl`, basic queries
@@ -797,19 +931,41 @@ ACL evaluation happens at the storage layer — unauthorized operations are reje
 
 These are design decisions that need further research or community input:
 
-1. **CRDT garbage collection granularity:** Per-entity or per-time-bucket?  Per-entity is more precise but requires tracking per-entity causal stability.
+### Data Model & CRDTs
 
-2. **Partial replication:** Should peers be able to subscribe to subsets of the graph? (e.g., "I only want User and Post nodes, not analytics"). This complicates the Merkle tree structure significantly.
+1. **CRDT garbage collection granularity:** Per-entity or per-time-bucket?  Per-entity is more precise but requires tracking per-entity causal stability.  Per-time-bucket is simpler but may retain metadata for long-lived entities unnecessarily.
 
-3. **Schema enforcement strictness:** Should schemaless mode exist for prototyping? Or always require schema (with a `z.any()` escape hatch)?
+2. **Large value handling:** What are the size limits for operation payloads?  A Richtext CRDT on a 100MB document produces large operations.  Options: chunked operations (adds complexity to the causal graph), external blob storage with oplog references, or hard size caps per operation.
 
-4. **Query language scope:** Full Cypher, or a minimal subset?  Full Cypher is a large specification with OPTIONAL MATCH, aggregation, path patterns, etc.
+3. **Schema enforcement strictness:** Should schemaless mode exist for prototyping?  Or always require schema?  A schemaless mode would need a default CRDT type (probably LWW) for untyped fields.  This trades safety for onboarding speed.
 
-5. **WASM binary size budget:** Automerge's WASM is ~250KB gzipped. Loro is ~200KB. What's our target? Each additional CRDT type adds size.
+4. **Custom ACL rule types:** The built-in ACL rule set (§9.2) covers common patterns.  Should applications be able to define custom rule types?  If so, how are custom rules evaluated consistently across peers — embedded WASM? A policy DSL interpreter?
 
-6. **Relay protocol standardization:** Should the relay protocol be its own spec, enabling third-party relay implementations?
+### Sync & Replication
 
-7. **Backwards compatibility with GunDB:** Is a migration path from GunDB worth engineering, or is a clean break cleaner?
+5. **Partial replication:** Should peers be able to subscribe to subsets of the graph? (e.g., "I only want User and Post nodes, not analytics").  This complicates the Merkle sync tree significantly — per-label subtrees? filtered version vectors? — and introduces questions about edge visibility when only one endpoint is replicated.
+
+6. **Dual sync mechanism justification:** The spec defines both version vectors (warm sync) and Merkle sync trees (cold sync).  Should these be unified into a single protocol?  Version vectors alone may suffice for most cases, with Merkle trees reserved for disaster recovery and new-peer bootstrap.  Alternatively, a single Merkle-based protocol could handle all cases at the cost of slightly more overhead for the common (warm) case.
+
+7. **Relay protocol standardization:** Should the relay protocol be its own spec, enabling third-party relay implementations?
+
+### Schema & Evolution
+
+8. **Schema versioning across peers:** When migrations are oplog operations, peers may be at different migration versions simultaneously.  How should a peer handle operations referencing fields from a migration it hasn't yet received?  Options: buffer until migration arrives (risks blocking), apply with best-effort (risks data loss), or require migration ordering via causal dependencies.
+
+9. **Schema DSL canonical source:** The spec defines two schema languages: TypeScript SDK and `.zerodb` DSL files.  Which is the source of truth?  One should be canonical and the other generated.  Maintaining both manually is a maintenance burden and a source of inconsistency.
+
+### Developer Experience
+
+10. **Query language scope:** Full Cypher, or a minimal subset?  Full Cypher is a large specification with OPTIONAL MATCH, aggregation, path patterns, etc.  A minimal subset (MATCH, WHERE, RETURN, ORDER BY, LIMIT) covers most use cases with far less implementation effort.  Aggregation (COUNT, SUM, AVG) and path-length queries are the most-requested extensions.
+
+11. **WASM binary size budget:** Automerge's WASM is ~250KB gzipped.  Loro is ~200KB.  What's our target?  Each additional CRDT type adds size.  Should less-common types (RGA, Richtext) be loadable as optional WASM modules?
+
+### Ecosystem
+
+12. **Backwards compatibility with GunDB:** Is a migration path from GunDB worth engineering, or is a clean break cleaner?  A migration tool could convert GunDB's flat graph to ZeroDB's property graph, but GunDB's lack of operation history means the migration would be a state snapshot, not a history import.
+
+13. **Operation size limits and backpressure:** Should the sync protocol enforce maximum operation sizes or batch sizes?  Without limits, a malicious or buggy peer could send arbitrarily large payloads.  Related: should there be rate limiting at the protocol level, or only at the relay level?
 
 ---
 
@@ -817,18 +973,24 @@ These are design decisions that need further research or community input:
 
 | Term | Definition |
 |------|------------|
+| **Causal Graph** | The partial order of operations defined by their `deps` fields — captures happens-before relationships |
 | **CRDTs** | Conflict-free Replicated Data Types — data structures that merge deterministically without coordination |
-| **HLC** | Hybrid Logical Clock — combines physical time with logical counters for causality-preserving timestamps |
+| **GCounter** | Grow-only counter CRDT — supports increment only, value is always ≥ 0 |
+| **GroupId** | Identifier for an operation group — a set of operations applied atomically (see §2.8) |
 | **HAM** | Hypothetical Amnesia Machine — GunDB's conflict resolution algorithm |
-| **Oplog** | Operation log — append-only record of all mutations |
-| **Merkle DAG** | Directed Acyclic Graph where each node is content-addressed by its hash |
-| **SEC** | Strong Eventual Consistency — given the same set of operations, all peers converge to identical state |
+| **HLC** | Hybrid Logical Clock — combines physical time with logical counters for causality-preserving timestamps |
 | **LWW** | Last-Writer-Wins — CRDT where the value with the latest timestamp wins |
-| **ORSet** | Observed-Remove Set — CRDT set where add/remove are causally tracked |
+| **Merkle Sync Tree** | Time-bucketed hash tree derived from the oplog, used for efficient delta sync negotiation |
 | **MVRegister** | Multi-Value Register — CRDT register that preserves all concurrent values |
-| **RGA** | Replicated Growable Array — ordered sequence CRDT |
+| **OpId** | Content hash (BLAKE3) of an operation — globally unique, used for deduplication and causal references |
+| **Oplog** | Operation log — append-only record of all mutations |
+| **ORSet** | Observed-Remove Set — CRDT set where add/remove are causally tracked |
 | **Peritext** | Rich text CRDT algorithm that correctly handles concurrent formatting |
-| **ULID** | Universally Unique Lexicographically Sortable Identifier |
+| **PNCounter** | Positive-Negative counter CRDT — supports both increment and decrement |
+| **Quarantine** | Storage area for operations that fail ACL checks — kept but not materialized |
+| **RGA** | Replicated Growable Array — ordered sequence CRDT |
+| **SEC** | Strong Eventual Consistency — given the same set of operations, all peers converge to identical state |
+| **UUIDv7** | UUID version 7 — time-ordered, globally unique identifier (RFC 9562) |
 | **Version Vector** | Map of peer → latest timestamp, used for efficient delta computation |
 
 ## Appendix B: References
