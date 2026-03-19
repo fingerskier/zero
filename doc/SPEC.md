@@ -359,6 +359,21 @@ migration('002_simplify_title', {
 - Changing a CRDT type requires a resolver function to convert existing state.
 - Migrations are themselves operations in the oplog, so they propagate to all peers.
 
+### 3.4 Schemaless Mode
+
+To prioritize onboarding speed, ZeroDB supports a **schemaless mode** where no schema declaration is required.  This lets developers start prototyping immediately and add type safety incrementally.
+
+**Default CRDT type:**  Any property written without a schema entry defaults to `LWW<any>`.  This is the safest general-purpose default — it resolves conflicts deterministically (latest HLC wins) and imposes no structural constraints.
+
+**Warnings:**  Schemaless operation emits warnings at two levels:
+
+- **Client console** — On startup when no schema is provided: `"No schema defined — all fields default to LWW. Define a schema for type safety and richer CRDT semantics."`  Additionally, the first write to each undeclared `(label, field)` pair logs: `"Field 'User.score' has no schema entry — defaulting to LWW."`
+- **Relay / admin** — Relay nodes log a persistent warning when serving a database with no registered schema.  This surfaces in the admin dashboard (§ Phase 5 roadmap) so operators can identify unschema'd databases in production.
+
+**Strict mode:**  For production deployments, `ZeroDB.open({ schema, strict: true })` rejects writes to any field not declared in the schema, throwing a `SchemaViolationError` instead of falling back to LWW.  This is the recommended setting once a schema is defined.
+
+**Migration from schemaless:**  When a developer adds a schema after prototyping without one, existing `LWW` data is inherently compatible — no migration is needed.  If a field's CRDT type should change (e.g., from the default LWW to `PNCounter`), a standard migration with a resolver function is required (see §3.3).
+
 ---
 
 ## 4. Sync Protocol
@@ -368,9 +383,9 @@ migration('002_simplify_title', {
 ```
 Peer A                          Peer B
   │                               │
-  ├── SyncRequest ───────────────►│  (Merkle root + version vector)
+  ├── SyncRequest ───────────────►│  (Merkle root)
   │                               │
-  │◄── SyncResponse ──────────────┤  (Merkle root + version vector)
+  │◄── SyncResponse ──────────────┤  (Merkle root)
   │                               │
   │  [Compare Merkle trees]       │  [Compare Merkle trees]
   │                               │
@@ -393,27 +408,11 @@ Peer A                          Peer B
 
 | Mode | Trigger | Behavior |
 |------|---------|----------|
-| **Cold sync** | Peer reconnects after offline period | Full Merkle tree comparison → delta exchange |
-| **Warm sync** | Peer connects to a known-recent peer | Version vector comparison → delta exchange (skip Merkle walk) |
+| **Merkle sync** | Peer reconnects after offline period | Merkle tree comparison → delta exchange |
 | **Live sync** | Peers already synchronized | Real-time bidirectional operation streaming |
 | **Snapshot sync** | New peer joins with no history | Download a compressed state snapshot + recent oplog tail |
 
-### 4.3 Version Vectors
-
-Each peer maintains a **version vector** — a map of `PeerId → latest HLC timestamp seen from that peer`.
-During warm sync, two peers exchange version vectors and each can immediately compute which operations the other is missing, without walking the Merkle tree.
-
-```typescript
-type VersionVector = Map<PeerId, HLCTimestamp>;
-
-// Peer A's vector: { A: 1050, B: 1020, C: 990 }
-// Peer B's vector: { A: 1030, B: 1050, C: 1000 }
-// 
-// A needs from B: B's ops after 1020, C's ops after 990
-// B needs from A: A's ops after 1030
-```
-
-### 4.4 Transport Agnosticism
+### 4.3 Transport Agnosticism
 
 The sync protocol operates on abstract streams of operations. The transport layer is pluggable:
 
@@ -422,7 +421,7 @@ The sync protocol operates on abstract streams of operations. The transport laye
 - **TCP:** Server-to-server federation.
 - **Custom:** Implement the `Transport` trait for exotic environments (Bluetooth, serial, carrier pigeon).
 
-### 4.5 Relay Servers
+### 4.4 Relay Servers
 
 ZeroDB is peer-to-peer, but relay servers exist for:
 
@@ -431,6 +430,8 @@ ZeroDB is peer-to-peer, but relay servers exist for:
 - **Fan-out efficiency:** Rather than every peer connecting to every other, relays aggregate and redistribute operations.
 
 Relays are untrusted — they cannot forge operations (signatures verify origin) and they cannot censor without detection (Merkle roots must match). A peer can use any relay, run their own, or operate without one in direct P2P mode.
+
+The relay protocol is fully specified in the companion [Relay Protocol Specification](RELAY-SPEC.md), which defines conformance levels, wire format, message types, and operational requirements for third-party relay implementations.
 
 ---
 
@@ -720,10 +721,12 @@ pub trait StorageBackend: OplogStore + StateStore + MerkleStore + Maintenance {}
 
 The oplog grows indefinitely without intervention. Compaction strategies:
 
-- **Causal stability pruning:** Once an operation has been acknowledged by all known peers (its HLC is below every peer's version vector entry), the raw operation can be discarded and only its effect on materialized state is retained.
+- **Causal stability pruning:** Once an operation has been acknowledged by all known peers (its HLC is below every peer's known minimum timestamp), the raw operation can be discarded and only its effect on materialized state is retained.
 - **Tombstone GC:** Deleted nodes/edges (tombstoned) are fully removed after all peers have seen the delete.
 - **Snapshot checkpointing:** Periodically, the materializer writes a full state snapshot.  The oplog can be truncated to only contain operations after the snapshot.
 - **CRDT metadata pruning:** ORSet and RGA maintain internal metadata (tombstone markers, vector clocks per element) that grows with the history of add/remove operations.  After causal stability, internal CRDT metadata for acknowledged operations is compacted — e.g., ORSet tombstones for elements that all peers agree are removed can be dropped.
+
+**GC granularity: time-bucket.**  Garbage collection operates on time buckets (ranges of HLC timestamps) rather than per-entity.  All CRDT metadata, tombstones, and compactable oplog entries within a bucket become eligible for collection once the bucket's upper bound is causally stable — i.e., below every known peer's acknowledged minimum.  This may retain metadata slightly longer for long-lived entities whose last mutation falls in a recent bucket, but it eliminates the need for per-entity causal stability tracking.  The trade-off is acceptable because the approach is eventually consistent: all reclaimable metadata is collected eventually, just not at the earliest possible moment for every individual entity.
 
 ### 7.4 Indexing
 
@@ -860,6 +863,8 @@ node Post {
 
 **Enforcement:** ACL evaluation happens at the storage layer.  When a peer receives an operation via sync, it evaluates the write ACL.  Operations that fail the check are **quarantined** — stored separately, not applied to materialized state, and flagged for the application to review.  This avoids permanent divergence: the originating peer keeps the operation, but receiving peers don't materialize it.
 
+**Composing richer policies:** The built-in rules are intentionally minimal primitives.  Applications express complex access patterns — role hierarchies, time-based expiry, approval workflows — by designing their data model around capabilities and set-membership fields, then referencing those fields in declarative ACL rules.  This keeps ACL evaluation deterministic across all peers without requiring custom code execution at the engine level.
+
 ---
 
 ## 10. Roadmap
@@ -933,21 +938,21 @@ These are design decisions that need further research or community input:
 
 ### Data Model & CRDTs
 
-1. **CRDT garbage collection granularity:** Per-entity or per-time-bucket?  Per-entity is more precise but requires tracking per-entity causal stability.  Per-time-bucket is simpler but may retain metadata for long-lived entities unnecessarily.
+1. ~~**CRDT garbage collection granularity:**~~ **Resolved — per-time-bucket** (see §7.3).
 
-2. **Large value handling:** What are the size limits for operation payloads?  A Richtext CRDT on a 100MB document produces large operations.  Options: chunked operations (adds complexity to the causal graph), external blob storage with oplog references, or hard size caps per operation.
+2. ~~**Large value handling:**~~ **Deferred** — What are the size limits for operation payloads?  A Richtext CRDT on a 100MB document produces large operations.  Options: chunked operations (adds complexity to the causal graph), external blob storage with oplog references, or hard size caps per operation.
 
-3. **Schema enforcement strictness:** Should schemaless mode exist for prototyping?  Or always require schema?  A schemaless mode would need a default CRDT type (probably LWW) for untyped fields.  This trades safety for onboarding speed.
+3. ~~**Schema enforcement strictness:**~~ **Resolved — schemaless-with-warnings** (see §3.4).  Schemaless mode exists for prototyping; untyped fields default to `LWW<any>`; console and relay warnings alert developers and admins to the lack of a schema.
 
-4. **Custom ACL rule types:** The built-in ACL rule set (§9.2) covers common patterns.  Should applications be able to define custom rule types?  If so, how are custom rules evaluated consistently across peers — embedded WASM? A policy DSL interpreter?
+4. ~~**Custom ACL rule types:**~~ **Resolved — application-level.**  The five built-in rule types (§9.2) are composable primitives; applications build richer policies by combining `capability` tokens, `peer_in_set` membership, and `field_equals` predicates with their own data model.  Engine-level custom rules (WASM, DSL) are out of scope because consistent cross-peer evaluation of arbitrary code is a versioning and security hazard in a P2P system.
 
 ### Sync & Replication
 
-5. **Partial replication:** Should peers be able to subscribe to subsets of the graph? (e.g., "I only want User and Post nodes, not analytics").  This complicates the Merkle sync tree significantly — per-label subtrees? filtered version vectors? — and introduces questions about edge visibility when only one endpoint is replicated.
+5. ~~**Partial replication:**~~ **Resolved — multiple datastores + RBAC.**  Rather than complicating the Merkle sync tree with per-label subtrees or filtered sync state, data requiring separate replication boundaries lives in **separate datastores**.  Each datastore syncs independently with its own complete Merkle tree — no filtering needed.  RBAC (§9) controls which peers can access which datastores.  Cross-datastore references are explicit application-level concerns, avoiding edge-visibility ambiguity within the sync protocol.
 
-6. **Dual sync mechanism justification:** The spec defines both version vectors (warm sync) and Merkle sync trees (cold sync).  Should these be unified into a single protocol?  Version vectors alone may suffice for most cases, with Merkle trees reserved for disaster recovery and new-peer bootstrap.  Alternatively, a single Merkle-based protocol could handle all cases at the cost of slightly more overhead for the common (warm) case.
+6. ~~**Dual sync mechanism justification:**~~ **Resolved — unified Merkle sync.**  A single Merkle-based protocol handles all reconnection scenarios (short and long offline periods alike).  Version vectors removed; the Merkle tree comparison is the sole mechanism for computing deltas between peers.  The slight overhead for the common case is acceptable given the simplicity of a single protocol and the O(log N) efficiency of the Merkle tree walk.
 
-7. **Relay protocol standardization:** Should the relay protocol be its own spec, enabling third-party relay implementations?
+7. ~~**Relay protocol standardization:**~~ **Resolved — separate specification.**  The relay protocol is defined in its own [Relay Protocol Specification](RELAY-SPEC.md), enabling third-party relay implementations.  The relay spec defines three conformance levels (Signal, Stateless, Persistent), a CBOR-based wire format, message types, authentication handshake, fan-out routing, and operational concerns (rate limiting, backpressure, monitoring).
 
 ### Schema & Evolution
 
@@ -991,7 +996,7 @@ These are design decisions that need further research or community input:
 | **RGA** | Replicated Growable Array — ordered sequence CRDT |
 | **SEC** | Strong Eventual Consistency — given the same set of operations, all peers converge to identical state |
 | **UUIDv7** | UUID version 7 — time-ordered, globally unique identifier (RFC 9562) |
-| **Version Vector** | Map of peer → latest timestamp, used for efficient delta computation |
+
 
 ## Appendix B: References
 
