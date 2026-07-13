@@ -287,6 +287,8 @@ Schema apply/migrations, querying, WASM, and sync are scheduled before decisions
 
 Move blocking choices into Milestone 0 with decision IDs, owner, due point, status, alternatives, rationale, and affected milestones. Keep resolved decisions out of the active issue list.
 
+> **Resolution note (2026-07-13):** The two stale `ISSUES.md` questions are now closed in place — Lamport-versus-HLC resolved as HLC (already adopted in `doc/SPEC.md` §2.4), and the Flutter binding resolved as a Dart wrapper over a shared stable C ABI exported by the Rust core (the same ABI the Swift/Kotlin bindings wrap), scheduled under M6 Ecosystem. See `doc/ISSUES.md` for rationale.
+
 ### R6. There is no definition of done or conformance program
 
 **Evidence:** `doc/SPEC.md:768-801`; `doc/SPEC.md:870-913`; `doc/RELAY-SPEC.md:50-90`; `doc/RELAY-SPEC.md:1013-1166`; `doc/EXEMPLAR.md:13-28`.
@@ -412,7 +414,7 @@ Choose Node/NAPI + SQLite or browser/WASM + IndexedDB; do not schedule both as o
 
 ### M6 - Ecosystem
 
-Mobile/Flutter decision, additional bindings, custom CRDT/plugin policy, hosted relay, visual/admin tooling, and query optimization follow only after format and compatibility commitments are stable.
+Mobile/Flutter decision (resolved 2026-07-13: Dart binding over the shared C ABI — see `doc/ISSUES.md`), additional bindings, custom CRDT/plugin policy, hosted relay, visual/admin tooling, and query optimization follow only after format and compatibility commitments are stable.
 
 ---
 
