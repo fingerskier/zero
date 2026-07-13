@@ -1,9 +1,10 @@
 # ZeroDB — Technical Specification
 
-**Version:** 0.1.0-draft
-**Date:** 2026-03-19
+**Version:** 0.2.0-draft
+**Date:** 2026-07-13
 **Author:** Matt / Turing Automations
 **Status:** Draft — seeking contributors and co-architects
+**Normative authority:** This document is authoritative for core semantics; [RELAY-SPEC.md](RELAY-SPEC.md) is authoritative for the relay wire protocol.  Open specification issues are tracked by ID in [ISSUES.md](ISSUES.md); no wire or persistent format is frozen until the M0 exit gate (§10).
 
 ---
 
@@ -165,7 +166,7 @@ Every operation in ZeroDB is timestamped with an HLC.  The HLC is a tuple:
 | Clock skew tolerance | Defers updates until local clock catches up — effectively blocks writes | Absorbs skew into logical counter; never blocks |
 | Causal ordering | Not guaranteed across peers | Guaranteed after any message exchange |
 | Tie-breaking | `JSON.stringify` lexicographic comparison | Deterministic: physical → logical → peer_id |
-| Future-dated attacks | A peer can set clock to far future and block all others | Bounded drift detection; logical counter caps prevent runaway |
+| Future-dated attacks | A peer can set clock to far future and block all others | Drift detection warns; logical counter caps prevent counter runaway.  A far-future `physical_time` can still win LWW conflicts until the acceptance/quarantine rule ships ([ISSUES H1](ISSUES.md)) |
 
 ### 2.5 Oplog & Causal Graph
 
@@ -180,8 +181,8 @@ interface Operation {
   entity: NodeId | EdgeId;
   field: string;          // property name, or "__tombstone" for deletes
   payload: CRDTPayload;   // type-specific operation payload (CRDT type resolved via schema)
-  group?: GroupId;         // optional operation group for atomic batches (see §2.7)
-  signature?: Signature;
+  group?: GroupId;         // optional operation group for atomic batches (see §2.8)
+  signature: Signature;    // mandatory for any operation that leaves the local peer (§6.1)
 }
 ```
 
@@ -191,7 +192,9 @@ Operations form a **causal graph** — each operation references its causal depe
 2. **Integrity verification:** Each `OpId` is the content hash of the operation.  Tampered operations produce a different hash and are detectable.
 3. **Deduplication:** Content-addressed operations are naturally idempotent — receiving the same operation twice is a no-op.
 
-**Note:** The CRDT type for each operation is not stored in the operation itself.  It is resolved from the schema by looking up `(entity.label, field)`.  This avoids redundancy between the schema and the oplog, and prevents inconsistencies where an operation claims a different CRDT type than the schema declares.
+**Note:** The CRDT type for each operation is not stored in the operation itself.  It is resolved from the schema by looking up `(entity.label, field)`.  This avoids redundancy between the schema and the oplog, and prevents inconsistencies where an operation claims a different CRDT type than the schema declares.  Because the schema can evolve, this lookup must be bound to a **schema epoch**, not the mutable current schema ([ISSUES C2](ISSUES.md)).
+
+**Open (M0):** The canonical byte encoding, the hash/signature preimages (including exclusion of `id`/`signature` from their own preimages), the full operation variant set (entity creation, migrations, capability grants, key rotation), and the binding of the datastore ID and schema epoch into the signed context are M0 deliverables ([ISSUES C1, C4](ISSUES.md)).
 
 ### 2.6 Merkle Sync Tree
 
@@ -207,6 +210,8 @@ Buckets are organized in a balanced tree where:
 Sync protocol walks from root downward: if a subtree matches, skip it entirely.  This gives O(log N) sync negotiation where N is the number of time buckets since divergence.
 
 The Merkle sync tree is a **derived structure** — it is computed from the oplog and can be rebuilt at any time.  It is not part of the causal graph and carries no semantic meaning beyond enabling efficient sync.
+
+**Open (M0):** Canonical bucket boundaries, leaf ordering, empty-node hashes, tree shape, and the subtree-traversal messages needed to actually execute the root-down walk are M0 deliverables ([ISSUES C3](ISSUES.md)).
 
 ### 2.7 State Materialization
 
@@ -242,6 +247,8 @@ await db.batch((tx) => {
 - **Sync atomicity:** During sync, a group is transmitted as a unit.  The receiving peer buffers operations until the full group arrives before materializing.
 - **No cross-peer atomicity:** Operation groups do not provide distributed transaction semantics.  Two peers can independently create conflicting groups; CRDT merge rules still apply per-field.
 
+**Open (M0):** Group completion detection (a signed manifest or member count/index) and abort/expiry semantics, plus the storage transaction boundary that makes local atomicity real, are M0 deliverables ([ISSUES C8](ISSUES.md)).
+
 ### 2.9 Referential Integrity
 
 Edges reference source and target nodes by `NodeId`.  ZeroDB enforces referential integrity through **cascading tombstones**:
@@ -251,6 +258,8 @@ Edges reference source and target nodes by `NodeId`.  ZeroDB enforces referentia
 - **Dangling edge queries:** By default, queries exclude dangling edges.  The query API provides an `includeDangling` option for debugging and sync diagnostics.
 
 This design respects eventual consistency — operations can arrive in any order, and the materialized state converges regardless of whether a node or its edges arrive first.
+
+**Open (M1):** Cascade authority (which peer emits the edge tombstones, and how it is authorized to delete edges authored by others), late-dangling-edge tombstoning, resurrection policy, and the CRDT governing `__tombstone` need a deterministic delete state machine — possibly derived visibility rather than generated cascades ([ISSUES H3](ISSUES.md)).
 
 ---
 
@@ -359,6 +368,8 @@ migration('002_simplify_title', {
 - Changing a CRDT type requires a resolver function to convert existing state.
 - Migrations are themselves operations in the oplog, so they propagate to all peers.
 
+**Open (M0):** JavaScript resolver closures (as in the example above) cannot replicate deterministically across Rust, JS, Swift, Kotlin, and third-party implementations — migrations need a serializable, deterministic resolver DSL, and every data operation needs a schema-epoch binding so historical replay across type changes is well-defined ([ISSUES C2](ISSUES.md)).
+
 ### 3.4 Schemaless Mode
 
 To prioritize onboarding speed, ZeroDB supports a **schemaless mode** where no schema declaration is required.  This lets developers start prototyping immediately and add type safety incrementally.
@@ -368,7 +379,7 @@ To prioritize onboarding speed, ZeroDB supports a **schemaless mode** where no s
 **Warnings:**  Schemaless operation emits warnings at two levels:
 
 - **Client console** — On startup when no schema is provided: `"No schema defined — all fields default to LWW. Define a schema for type safety and richer CRDT semantics."`  Additionally, the first write to each undeclared `(label, field)` pair logs: `"Field 'User.score' has no schema entry — defaulting to LWW."`
-- **Relay / admin** — Relay nodes log a persistent warning when serving a database with no registered schema.  This surfaces in the admin dashboard (§ Phase 5 roadmap) so operators can identify unschema'd databases in production.
+- **Relay-side warnings are not possible** — relays are schema-blind by design ([RELAY-SPEC.md](RELAY-SPEC.md)) and have no schema-registration channel.  Schema warnings are strictly a client-side concern.
 
 **Strict mode:**  For production deployments, `ZeroDB.open({ schema, strict: true })` rejects writes to any field not declared in the schema, throwing a `SchemaViolationError` instead of falling back to LWW.  This is the recommended setting once a schema is defined.
 
@@ -431,7 +442,7 @@ ZeroDB is peer-to-peer, but relay servers exist for:
 
 Relays are untrusted — they cannot forge operations (signatures verify origin) and they cannot censor without detection (Merkle roots must match). A peer can use any relay, run their own, or operate without one in direct P2P mode.
 
-The relay protocol is fully specified in the companion [Relay Protocol Specification](RELAY-SPEC.md), which defines conformance levels, wire format, message types, and operational requirements for third-party relay implementations.
+The relay protocol is drafted in the companion [Relay Protocol Specification](RELAY-SPEC.md), which defines conformance levels, wire format, message types, and operational requirements for third-party relay implementations.  The draft is **not yet implementation-ready**: no relay conformance may be claimed until the M0 exit gate (§10) resolves the Critical issues in [ISSUES.md](ISSUES.md) — notably Merkle traversal (C3), datastore admission (C4), author-key resolution (C5), and delivery/replay semantics (H4).
 
 ---
 
@@ -625,7 +636,9 @@ function PostCard({ post }) {
 
 ### 6.1 Identity Model
 
-Each peer generates an **Ed25519 keypair** on first run. The public key hash serves as the `PeerId`. All operations can optionally be signed, creating a verifiable chain of authorship.
+Each peer generates an **Ed25519 keypair** on first run. The public key hash serves as the `PeerId`. Every operation that syncs to another peer **MUST be signed** — unsigned operation is permitted only for explicitly local-only databases and is non-interoperable.
+
+Because `PeerId` is a hash, a receiving peer cannot recover the author's public key from it.  Forwarded operations (peer bridging, relay-to-relay sync) therefore require the author's key to be carried alongside or resolvable via an authenticated lookup; that distribution/rotation contract is an M0 deliverable ([ISSUES C5](ISSUES.md)).
 
 ```
 PeerId = BLAKE3(Ed25519PublicKey)  // full 32 bytes stored; truncated to 16 hex chars for display
@@ -654,7 +667,7 @@ pub trait CryptoProvider: Send + Sync {
 }
 ```
 
-Applications can swap in their own provider — e.g., hardware security modules, institutional PKI, or WebAuthn-backed keys.
+Applications can swap in their own provider — e.g., hardware security modules or WebAuthn-backed keys — but interoperable peers **MUST produce the fixed wire suite**: Ed25519 signatures, BLAKE3 hashing and `PeerId` derivation, X25519 + XChaCha20-Poly1305 encryption.  Custom providers change key custody, not algorithms or identifier derivation.
 
 ---
 
@@ -670,7 +683,7 @@ The storage layer is decomposed into focused traits.  Backends implement each tr
 pub trait OplogStore: Send + Sync {
     async fn append_ops(&self, ops: &[Operation]) -> Result<()>;
     async fn read_ops(&self, range: OpRange) -> Result<Vec<Operation>>;
-    async fn ops_since(&self, version: &VersionVector) -> Result<Vec<Operation>>;
+    async fn ops_since(&self, after: &HLCTimestamp) -> Result<Vec<Operation>>;  // Merkle sync is the cross-peer delta mechanism; this is a local read primitive
 }
 
 /// Materialized graph state: read and write the computed current state.
@@ -727,6 +740,8 @@ The oplog grows indefinitely without intervention. Compaction strategies:
 - **CRDT metadata pruning:** ORSet and RGA maintain internal metadata (tombstone markers, vector clocks per element) that grows with the history of add/remove operations.  After causal stability, internal CRDT metadata for acknowledged operations is compacted — e.g., ORSet tombstones for elements that all peers agree are removed can be dropped.
 
 **GC granularity: time-bucket.**  Garbage collection operates on time buckets (ranges of HLC timestamps) rather than per-entity.  All CRDT metadata, tombstones, and compactable oplog entries within a bucket become eligible for collection once the bucket's upper bound is causally stable — i.e., below every known peer's acknowledged minimum.  This may retain metadata slightly longer for long-lived entities whose last mutation falls in a recent bucket, but it eliminates the need for per-entity causal stability tracking.  The trade-off is acceptable because the approach is eventually consistent: all reclaimable metadata is collected eventually, just not at the earliest possible moment for every individual entity.
+
+**Status: disabled until specified.**  "Acknowledged by all known peers" is not yet a sound causal-stability rule — it needs per-peer durable acknowledgement frontiers, a peer-membership lifecycle (retirement/leases for departed peers), checkpoint identity for comparing compacted and uncompacted histories, and anti-replay commitments that survive compaction.  Compaction and GC remain disabled until these contracts are specified and partition/rejoin, forgotten-peer, late-operation, and restore tests pass ([ISSUES C7](ISSUES.md)).
 
 ### 7.4 Indexing
 
@@ -808,14 +823,16 @@ The Lean proofs serve double duty:
 
 | Threat | Mitigation |
 |--------|------------|
-| **Malicious peer injects forged operations** | Ed25519 signatures on all operations; unsigned ops rejected by default |
-| **Relay censors or drops operations** | Merkle root comparison detects omissions; peers can switch relays |
-| **Replay attack** | HLC monotonicity + operation deduplication by OpId |
-| **Clock manipulation** | HLC bounded drift detection; logical counter caps prevent runaway timestamps |
-| **Data exfiltration from relay** | E2E encrypted properties; relay sees only ciphertext |
-| **Sybil attack (fake peers flood network)** | Rate limiting per PeerId; optional proof-of-work for peer registration |
+| **Malicious peer injects forged operations** | Mandatory Ed25519 signatures on all synced operations; unsigned ops rejected |
+| **Relay censors or drops operations** | Merkle root comparison against a **second independent source** detects omissions; a sole relay can present a self-consistent censored view ([ISSUES H8](ISSUES.md)) |
+| **Replay attack** | Operation deduplication by OpId; a durable anti-replay commitment must survive dedup-state compaction ([ISSUES H4](ISSUES.md)) |
+| **Clock manipulation** | HLC drift detection; acceptance/quarantine rule for far-future timestamps under design ([ISSUES H1](ISSUES.md)) |
+| **Data exfiltration from relay** | Only **encrypted** properties are confidential; public properties are visible to relays ([ISSUES H10](ISSUES.md)) |
+| **Sybil attack (fake peers flood network)** | Datastore-membership admission + per-PeerId rate limiting; per-identity limits alone do not stop Sybils ([ISSUES H8](ISSUES.md)) |
 
 ### 9.2 Access Control
+
+> **Status: post-v0.1 design.**  v0.1 ships **datastore-level access control only**: mandatory operation signatures plus datastore-membership capabilities verified at admission ([ISSUES C4](ISSUES.md)).  The entity-level declarative ACLs below are deferred until a causal authorization model is specified — root authority, grant/revoke ordering, deterministic accept/reject/quarantine, and reevaluation ([ISSUES C6](ISSUES.md)).  Read-ACL filtering is a convenience, **not a confidentiality boundary**: any peer holding replicated plaintext can read it outside the SDK.  Confidentiality comes from replication boundaries (separate datastores) and encryption (§6.2).
 
 ZeroDB supports **declarative, capability-based access control** at the schema level.  Policies are expressed as data (not closures) so they can be serialized, replicated through the oplog, and evaluated consistently across all peers.
 
@@ -869,52 +886,109 @@ node Post {
 
 ## 10. Roadmap
 
-### Phase 1: Foundation
+Development proceeds in **milestones**, each ending in a runnable outcome and beginning with failing contract/acceptance tests for its stated behavior (red/green).  The [Exemplar ToDo app](EXEMPLAR.md) supplies end-to-end acceptance scenarios from M1 onward.  Blocking issues are tracked by ID in [ISSUES.md](ISSUES.md).
 
-- [ ] Rust core: HLC, LWW register, GCounter, PNCounter, ORSet
-- [ ] Oplog with Merkle DAG (in-memory)
-- [ ] SQLite storage adapter
-- [ ] CLI: `init`, `schema apply`, `repl`, basic queries
-- [ ] TypeScript SDK: WASM build, `open`, `create`, `query`, `mutate`
-- [ ] Cold sync + live sync over WebSocket
+**v0.1 commitments (decided 2026-07-13):**
 
-### Phase 2: Browser & DX
+- First runtime: **Rust core + SQLite + CLI** — no binding layer in the first slice.
+- Trust model: **mandatory operation signatures + datastore-membership capabilities**; entity-level distributed ACLs deferred (ISSUES C6).
+- Non-goals for v0.1: distributed entity ACLs, mobile bindings, Richtext, hosted relay, GunDB migration tooling.
 
-- [ ] IndexedDB + OPFS storage adapters
-- [ ] React hooks package
-- [ ] MVRegister, RGA, LWWMap CRDT types
-- [ ] Schema migrations
-- [ ] CLI: `oplog`, `inspect`, `peers`, `keys`
-- [ ] WebRTC P2P transport
+### M0 — Decisions & executable contracts
 
-### Phase 3: Production Hardening
+**Outcome:** two independent toy implementations can encode, sign, hash, decode, and validate the same operations and Merkle fixtures.
 
+- [ ] Query subset and schema-source-of-truth decisions (ISSUES O2, O3)
+- [ ] Canonical operation algebra: all variants (entity creation, property ops, tombstones, migrations, capability grants, key rotation), deterministic CBOR encoding, domain-separated hash/signature preimages including `DatastoreId` + schema epoch (ISSUES C1, C4)
+- [ ] Canonical schema representation, immutable schema epochs, serializable migration DSL (ISSUES C2)
+- [ ] Author-key distribution & rotation model (ISSUES C5)
+- [ ] Canonical Merkle tree structure + complete sync state machine with subtree traversal (ISSUES C3)
+- [ ] Delivery/ack/retry/group contracts and version compatibility policy (ISSUES C8, H4, H7, H11)
+- [ ] Executable Lean 4 models + proof statements drafted while formats are still changeable
+- [ ] Stable requirement/decision IDs; golden and negative fixtures
+
+**Exit gate:** all Critical issues (C1–C8) have approved normative resolutions with red conformance tests.  **No wire or persistent format freezes before this gate.**
+
+### M1 — Local durable core (Rust + SQLite + CLI)
+
+**Outcome:** offline exemplar CRUD and deterministic restart/replay on a single peer.
+
+- [ ] Graph entities, HLC, oplog, incremental materializer, operation groups
+- [ ] CRDTs: LWW, GCounter, PNCounter, ORSet, Flag
+- [ ] Deterministic delete/referential-integrity state machine (ISSUES H3)
+- [ ] Canonical schema, strict + schemaless modes, secondary indexes
+- [ ] CLI: `init`, `schema apply`, `repl`, query subset, `inspect`
+- [ ] Atomic oplog+state transaction and crash recovery (ISSUES C8, local half)
+
+**Exit gate:** property/model tests, randomized replay equivalence, crash atomicity at every commit boundary, storage contract tests, duplicate/replay tests, offline exemplar acceptance.
+
+### M2 — One SDK vertical (Node/NAPI + SQLite)
+
+**Outcome:** the TypeScript SDK runs the same exemplar and produces byte-identical core fixtures.
+
+- [ ] NAPI binding; `open`/`create`/`query`/`mutate`/`subscribe`
+- [ ] MVRegister + `resolve` flow, RGA, LWWMap
+- [ ] Schema source-of-truth pipeline implemented (one canonical, one generated — ISSUES O2)
+
+**Exit gate:** binding parity vectors, subscription/mutation/conflict lifecycle tests, artifact-size and baseline performance budgets.
+
+### M3 — Secure multi-peer sync
+
+**Outcome:** three peers converge through partition/reorder/retry over one WebSocket profile and a minimal relay level.
+
+- [ ] Mandatory signing policy, author-key resolution, datastore-membership admission (ISSUES C4, C5)
+- [ ] Complete Merkle/delta wire protocol + delivery/ack/resume semantics (ISSUES C3, H4, H11)
+- [ ] Handshake hardening: fixed encoding through auth, transcript signatures, resumption key proof (ISSUES H5)
+- [ ] E2E encrypted-property envelope; recipient/group key distribution, rotation, revocation (ISSUES H10)
+- [ ] Future-clock acceptance/quarantine rule (ISSUES H1)
+- [ ] Peer handshake shared by direct P2P and relay participation (ISSUES H6)
+- [ ] Reference relay + conformance harness with golden/negative vectors in two languages (ISSUES H9)
+
+**Exit gate:** two-language interoperability; partition/rejoin; duplicate/loss/reorder; malicious-peer negatives (forged ops, wrong datastore, clock abuse, auth bypass, resource limits); exemplar sharing + private-data scenarios.
+
+### M4 — Browser, P2P & evolution
+
+**Outcome:** browser storage, WebRTC direct sync, cross-peer schema migration, snapshot bootstrap, and adjacent-version sync — without data loss.
+
+- [ ] IndexedDB + OPFS adapters; WASM build within size budget (ISSUES O4); React hooks
+- [ ] WebRTC direct sync using the shared peer protocol
+- [ ] Schema epochs across mixed-version peers (ISSUES C2, cross-peer half)
+- [ ] Snapshot sync with authenticated snapshot format (ISSUES C7, snapshot half)
+- [ ] Large-payload decision implemented (ISSUES O1)
+
+**Exit gate:** upgrade/downgrade/rollback matrix, mixed-schema peers, snapshot + tail recovery, direct/relay parity, browser restart/offline tests.
+
+### M5 — Production readiness & GA
+
+**Outcome:** a deployable, observable, recoverable system with evidence for its published guarantees.
+
+- [ ] Compaction & GC with causal frontiers and peer lifecycle (ISSUES C7)
+- [ ] Unique-index conflict semantics (ISSUES H2)
 - [ ] Richtext CRDT (Peritext-based)
-- [ ] Compaction & garbage collection
-- [ ] E2E encryption + key rotation
-- [ ] Snapshot sync for new peers
-- [ ] Relay server reference implementation
+- [ ] Backup/restore with restore drills; packaging/configuration; metrics/logs/traces; SLOs
+- [ ] Fuzzing (decoders, ops, queries, migrations, sync state machines), load/soak, failure injection
+- [ ] Lean 4 proof artifacts (LWW, Counters, ORSet, MVRegister, RGA, HLC, sync completeness, migration safety) + Rust conformance to the Lean reference
+- [ ] External security audit; findings closed
 - [ ] Performance benchmarks vs. GunDB, Automerge, Loro, Yjs
 
-### Phase 4: Formal Verification & Trust
+**Exit gate:** restore drill, forgotten/offline-peer GC cases, rolling upgrade, published conformance suite, proof/Rust conformance, performance budgets, security sign-off.
 
-- [ ] Lean 4 proofs: LWW, Counter, ORSet convergence
-- [ ] Lean 4 proofs: HLC correctness
-- [ ] Lean 4 proofs: Merkle sync completeness
-- [ ] Published proof artifacts + independent verification guide
-- [ ] Security audit (external)
+### M6 — Ecosystem
 
-### Phase 5: Ecosystem
+Only after format and compatibility commitments are stable:
 
-- [ ] Swift / Kotlin bindings for mobile
-- [ ] Plugin system for custom CRDT types
+- [ ] Swift / Kotlin / Dart (Flutter) bindings over a shared stable C ABI from the Rust core
+- [ ] Custom CRDT plugin policy
+- [ ] Entity-level distributed ACLs (successor design to ISSUES C6)
 - [ ] Hosted relay service (optional, SaaS)
-- [ ] Visual graph inspector (web UI)
-- [ ] Cypher query optimizer
+- [ ] Visual graph inspector / admin UI
+- [ ] Cypher query optimizer; GunDB migration decision (ISSUES O5)
 
 ---
 
 ## 11. Competitive Landscape
+
+*The ZeroDB column states design goals, not demonstrated properties; the other columns describe shipped systems.*
 
 | | GunDB | Automerge | Yjs | Loro | CR-SQLite | **ZeroDB** |
 |---|---|---|---|---|---|---|
@@ -934,43 +1008,17 @@ node Post {
 
 ## 12. Open Questions
 
-These are design decisions that need further research or community input:
+All specification issues and open decisions are tracked by ID in **[ISSUES.md](ISSUES.md)** — Critical (C1–C8) and High (H1–H11) findings gate the roadmap milestones in §10; resolved items move to the Decision Log there.  The open design questions, in brief:
 
-### Data Model & CRDTs
-
-1. ~~**CRDT garbage collection granularity:**~~ **Resolved — per-time-bucket** (see §7.3).
-
-2. ~~**Large value handling:**~~ **Deferred** — What are the size limits for operation payloads?  A Richtext CRDT on a 100MB document produces large operations.  Options: chunked operations (adds complexity to the causal graph), external blob storage with oplog references, or hard size caps per operation.
-
-3. ~~**Schema enforcement strictness:**~~ **Resolved — schemaless-with-warnings** (see §3.4).  Schemaless mode exists for prototyping; untyped fields default to `LWW<any>`; console and relay warnings alert developers and admins to the lack of a schema.
-
-4. ~~**Custom ACL rule types:**~~ **Resolved — application-level.**  The five built-in rule types (§9.2) are composable primitives; applications build richer policies by combining `capability` tokens, `peer_in_set` membership, and `field_equals` predicates with their own data model.  Engine-level custom rules (WASM, DSL) are out of scope because consistent cross-peer evaluation of arbitrary code is a versioning and security hazard in a P2P system.
-
-### Sync & Replication
-
-5. ~~**Partial replication:**~~ **Resolved — multiple datastores + RBAC.**  Rather than complicating the Merkle sync tree with per-label subtrees or filtered sync state, data requiring separate replication boundaries lives in **separate datastores**.  Each datastore syncs independently with its own complete Merkle tree — no filtering needed.  RBAC (§9) controls which peers can access which datastores.  Cross-datastore references are explicit application-level concerns, avoiding edge-visibility ambiguity within the sync protocol.
-
-6. ~~**Dual sync mechanism justification:**~~ **Resolved — unified Merkle sync.**  A single Merkle-based protocol handles all reconnection scenarios (short and long offline periods alike).  Version vectors removed; the Merkle tree comparison is the sole mechanism for computing deltas between peers.  The slight overhead for the common case is acceptable given the simplicity of a single protocol and the O(log N) efficiency of the Merkle tree walk.
-
-7. ~~**Relay protocol standardization:**~~ **Resolved — separate specification.**  The relay protocol is defined in its own [Relay Protocol Specification](RELAY-SPEC.md), enabling third-party relay implementations.  The relay spec defines three conformance levels (Signal, Stateless, Persistent), a CBOR-based wire format, message types, authentication handshake, fan-out routing, and operational concerns (rate limiting, backpressure, monitoring).
-
-### Schema & Evolution
-
-8. **Schema versioning across peers:** When migrations are oplog operations, peers may be at different migration versions simultaneously.  How should a peer handle operations referencing fields from a migration it hasn't yet received?  Options: buffer until migration arrives (risks blocking), apply with best-effort (risks data loss), or require migration ordering via causal dependencies.
-
-9. **Schema DSL canonical source:** The spec defines two schema languages: TypeScript SDK and `.zerodb` DSL files.  Which is the source of truth?  One should be canonical and the other generated.  Maintaining both manually is a maintenance burden and a source of inconsistency.
-
-### Developer Experience
-
-10. **Query language scope:** Full Cypher, or a minimal subset?  Full Cypher is a large specification with OPTIONAL MATCH, aggregation, path patterns, etc.  A minimal subset (MATCH, WHERE, RETURN, ORDER BY, LIMIT) covers most use cases with far less implementation effort.  Aggregation (COUNT, SUM, AVG) and path-length queries are the most-requested extensions.
-
-11. **WASM binary size budget:** Automerge's WASM is ~250KB gzipped.  Loro is ~200KB.  What's our target?  Each additional CRDT type adds size.  Should less-common types (RGA, Richtext) be loadable as optional WASM modules?
-
-### Ecosystem
-
-12. **Backwards compatibility with GunDB:** Is a migration path from GunDB worth engineering, or is a clean break cleaner?  A migration tool could convert GunDB's flat graph to ZeroDB's property graph, but GunDB's lack of operation history means the migration would be a state snapshot, not a history import.
-
-13. **Operation size limits and backpressure:** Should the sync protocol enforce maximum operation sizes or batch sizes?  Without limits, a malicious or buggy peer could send arbitrarily large payloads.  Related: should there be rate limiting at the protocol level, or only at the relay level?
+| ID | Question | Decide by |
+|----|----------|-----------|
+| O1 | Large operation payloads — chunking, external blobs, or hard caps (blocks Richtext) | M4 |
+| O2 | Schema source of truth — TypeScript vs. `.zerodb` DSL; one canonical, one generated | M0 |
+| O3 | Query language subset — minimal (MATCH/WHERE/RETURN/ORDER BY/LIMIT) vs. aggregation/paths; grammar + semantics | M0 |
+| O4 | WASM size budget; optional modules for RGA/Richtext | M4 |
+| O5 | GunDB migration path (state-snapshot converter) or clean break | unscheduled |
+| O6 | Operation/batch size limits and protocol-level rate limiting | M0/M3 |
+| O7 | Causal `deps` scale — compact causal frontier + checkpoint translation | M0/M5 |
 
 ---
 
