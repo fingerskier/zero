@@ -27,7 +27,7 @@ Core says peers walk the remote tree root-down; the relay protocol exchanges onl
 
 ### C4 — Datastore boundary is neither authorized nor signed
 Datastores are declared replication/RBAC boundaries, but the relay has no datastore admission credential — any authenticated key can subscribe to guessed datastores. The datastore ID sits outside the signed operation, so a valid op can be replayed into another datastore without breaking its signature; global OpId dedup can also suppress legitimate reuse across independent datastores.
-**Resolution (direction decided 2026-07-13):** relay-verifiable **datastore-membership capabilities**; canonical `DatastoreId`, protocol version, and schema epoch inside the signed/hashed operation context; dedup scoped per datastore. → **M0** (enforcement ships M3)
+**Resolution (direction decided 2026-07-13):** relay-verifiable **datastore-membership capabilities**; canonical `DatastoreId`, protocol version, and schema epoch inside the signed/hashed operation context; dedup scoped per datastore (already normative in RELAY-SPEC 0.2 §6.2). → **M0** (enforcement ships M3)
 
 ### C5 — Forwarded author signatures cannot be verified
 Operations carry an author `PeerId` (a key *hash*) and signature but no resolvable public key. Relay validation verifies against the transport sender's key — which necessarily rejects legitimately forwarded history (bridging, relay-to-relay sync). Key rotation compounds the missing lookup contract.
@@ -50,19 +50,19 @@ A grouped op carries only `GroupId` — no member count, manifest, or commit mar
 ## High
 
 ### H1 — Future-clock poisoning detected but not mitigated
-Logical-counter caps don't bound attacker-controlled `physical_time`; a far-future signed HLC wins LWW until real time catches up. Core warns-never-blocks while relays may reject — divergent behavior. Define one peer-side acceptance/quarantine rule, max forward skew, recovery path, and semantics for locally-accepted-relay-rejected ops. → M3
+Logical-counter caps don't bound attacker-controlled `physical_time`; a far-future signed HLC wins LWW until real time catches up. Core warns-never-blocks while relays may reject — divergent behavior.  Define one peer-side acceptance/quarantine rule, max forward skew, recovery path, and semantics for locally-accepted-relay-rejected ops. → M3
 
 ### H2 — Offline unique indexes have no conflict semantics
-Two offline peers can create the same "unique" value; mapping `unique: true` to SQLite/IDB uniqueness makes remote materialization fail platform-dependently. Define advisory/conflict-reporting uniqueness, an ownership CRDT, or required coordination — plus query/resolution behavior. → M5
+Two offline peers can create the same "unique" value; mapping `unique: true` to SQLite/IDB uniqueness makes remote materialization fail platform-dependently.  Define advisory/conflict-reporting uniqueness, an ownership CRDT, or required coordination — plus query/resolution behavior. → M5
 
 ### H3 — Delete/resurrection semantics incomplete
 Unclear which peer generates cascading edge tombstones, how it's authorized to delete others' edges, whether late dangling edges get tombstoned or only hidden, whether node resurrection revives them, and which CRDT governs `__tombstone`. Cascades generated from each peer's current view produce divergent op sets. Define a deterministic delete state machine (or derived visibility instead of generated cascades). → M1
 
 ### H4 — Delivery, dedup, and replay semantics incomplete
-Dedup state is bounded/resettable (L1) or compactable (L2), so old signed counter/set ops can replay after it disappears. No explicit delivery contract; `request_id: 0` misused in the transcript; rate-limit outcomes undefined; multi-batch deltas lack sequence/resume cursors. Define at-least-once semantics, durable anti-replay commitment surviving compaction, request-ID lifetime, per-op outcomes, resumable cursors, retry/backoff. → M0/M3
+Dedup state is bounded/resettable (L1) or compactable (L2), so old signed counter/set ops can replay after it disappears. No explicit delivery contract; per-op outcomes within a batch undefined; multi-batch deltas lack sequence/resume cursors. Define at-least-once semantics, durable anti-replay commitment surviving compaction, request-ID lifetime, per-op outcomes, resumable cursors, retry/backoff. → M0/M3
 
 ### H5 — Handshake, resumption, and serialization underspecified
-Encoding is negotiated in `WELCOME` but `HELLO`/`CHALLENGE`/`AUTH` must be decoded first; `session_id` resumption is a bearer token skipping key proof while plaintext TCP is allowed; mutual-auth flag and `relay_signature` are absent from normative schemas; the signature covers `nonce || peer_id`, not the negotiated transcript. Fix: fixed encoding through handshake, authenticated encryption required for auth/resumption, fresh key proof on resume, domain-separated transcript signature. → M3
+Narrowed by RELAY-SPEC 0.2 (CBOR-only, no session resumption, no in-protocol mutual auth, TLS required outside dev, domain-separated nonce signature). Remaining: the `AUTH` signature covers only the nonce, not the negotiated handshake transcript (version, limits, transport binding) — bind it to a full transcript. → M3
 
 ### H6 — Direct P2P sync has no protocol
 Core promises WebRTC/`connectPeer`; relay spec excludes direct sync; no peer handshake, role negotiation, datastore admission, reconnect, or conformance profile exists. Define a shared peer-sync protocol reused by relay participation (M3), or keep P2P out of the SDK surface until M4.
@@ -71,10 +71,10 @@ Core promises WebRTC/`connectPeer`; relay spec excludes direct sync; no peer han
 No owner or compatibility policy relating wire, operation, schema, snapshot, and on-disk format versions; protocol version appears in four places without selection/negotiation rules; document versions (`0.x-draft`) don't map to wire `protocol_version: 1`. Define per-format authority, a supported version window, and rolling upgrade/downgrade tests. → M0 policy; M4 tests
 
 ### H8 — Security claims stronger than mechanisms
-Remaining gaps after the 2026-07-13 spec pass: optional proof-of-work fields are unspecified (specify or remove); censorship detection needs its independent-second-source requirement stated normatively in RELAY-SPEC; whole-operation encryption (vs. property-level) remains an open choice for metadata privacy. → M3
+Narrowed by RELAY-SPEC 0.2 (proof-of-work removed; independent-second-source censorship requirement now normative in RELAY-SPEC §12.3). Remaining: whole-operation encryption (vs. property-level) is an open choice for metadata privacy. → M3
 
 ### H9 — RELAY-SPEC wire inconsistencies
-`LIVE_OP_BATCH` bidirectional despite separate `RELAY_OP`; signaling forwarding requires sender identity no payload shape carries; `max_batch_bytes` and bytes/sec absent from `WELCOME.limits`; no normative identifier/hash encoding-and-length table. Generate registry, schemas, transcript, and limits from one machine-readable protocol definition; validate golden + negative fixtures in two languages. → M0/M3
+Message-set inconsistencies fixed in RELAY-SPEC 0.2 (single bidirectional `OPS`; `SIGNAL` forwarded form carries `sender`; `max_batch_bytes`/`bytes_per_second` in `WELCOME.limits`). Remaining: no normative identifier/hash encoding-and-length table; generate registry, schemas, transcript, and limits from one machine-readable protocol definition; validate golden + negative fixtures in two languages. → M0/M3
 
 ### H10 — Encrypted-property envelope and key lifecycle missing
 X25519/XChaCha20-Poly1305 are named but there is no ciphertext envelope, nonce construction, AAD, key IDs, recipient/group-key distribution, recipient add/remove, post-compromise rotation, offline-peer revocation, or bootstrap ordering of keys vs. data. Required before any private-data claim (EXEMPLAR). → M3
@@ -90,7 +90,7 @@ X25519/XChaCha20-Poly1305 are named but there is no ciphertext envelope, nonce c
 - **O2 — Schema source of truth.** TypeScript SDK vs. `.zerodb` DSL: one canonical, the other generated. → decide M0, implement M2
 - **O3 — Query language subset.** Minimal (MATCH/WHERE/RETURN/ORDER BY/LIMIT) vs. aggregation/paths; grammar, null/conflict semantics, parameterization, traversal limits. → decide M0
 - **O4 — WASM size budget.** Target vs. Automerge ~250 KB / Loro ~200 KB gz; optional modules for RGA/Richtext. → M4
-- **O5 — GunDB migration path.** State-snapshot converter (no history import possible) or clean break. → unscheduled
+- ~**O5 — GunDB migration path.** ~~State-snapshot converter (no history import possible) or clean break.~~ → unscheduled / won't do
 - **O6 — Operation/batch size limits & protocol-level rate limiting.** Interacts with H4/H9. → M0/M3
 - **O7 — Causal `deps` scale.** Last-seen-op-per-peer grows with peer count and can reference compacted ops; needs a compact causal frontier + checkpoint translation. Interacts with C7. → M0/M5
 
@@ -100,6 +100,7 @@ X25519/XChaCha20-Poly1305 are named but there is no ciphertext envelope, nonce c
 
 | Date | Decision |
 |------|----------|
+| 2026-07-13 | **Relay protocol 0.2:** pruned for simplicity — CBOR-only over WebSocket/DataChannel; 22 message types (`OPS`, `SIGNAL`, `THROTTLE` consolidations); removed JSON mode, session resumption, in-protocol mutual auth, proof-of-work, TCP/QUIC bindings, DNS/well-known discovery, and relay-side causal/group buffering. TLS required outside dev; per-datastore dedup; domain-separated auth signature. |
 | 2026-07-13 | **Roadmap:** M0–M6 milestone plan adopted (SPEC §10), replacing Phase 1–5. M0 spec-stabilization precedes all implementation; no format freezes before its exit gate. |
 | 2026-07-13 | **First product slice:** Rust core + SQLite + CLI (M1). Node/NAPI SDK follows as M2; browser/WASM in M4. |
 | 2026-07-13 | **v0.1 trust model:** operation signatures mandatory for all synced ops; datastore-membership capabilities for admission; entity-level distributed ACLs deferred (C6). |

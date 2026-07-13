@@ -1,7 +1,7 @@
 # ZeroDB Relay Protocol Specification
 
-**Version:** 0.1.0-draft
-**Date:** 2026-03-19
+**Version:** 0.2.0-draft
+**Date:** 2026-07-13
 **Author:** Matt / Turing Automations
 **Status:** Draft
 **Companion to:** [ZeroDB Technical Specification](SPEC.md)
@@ -34,16 +34,20 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 - **Peer:** A ZeroDB client instance (browser, Node.js, CLI, mobile).
 - **Relay:** A server implementing this protocol. Does not run application logic or CRDT merges.
-- **Datastore:** An independent unit of replication with its own oplog and Merkle tree (see SPEC.md §4.4, resolved open question #5).
+- **Datastore:** An independent unit of replication with its own oplog and Merkle tree (see SPEC.md §4.4).
 
 ### 1.3 Non-Goals
 
 This specification does **not** define:
 
-- Peer-to-peer direct sync behavior (see SPEC.md §4)
+- Peer-to-peer direct sync behavior (see SPEC.md §4, ISSUES H6)
 - CRDT merge semantics (see SPEC.md §3)
 - Storage engine internals for relay persistence
 - Application-level access control evaluation (see SPEC.md §9.2)
+
+### 1.4 Design Principle
+
+The protocol is deliberately minimal: one serialization, two transports, one message per job. Features that can live peer-side (causal ordering, group atomicity, censorship detection) live peer-side. Anything a relay cannot implement correctly from peer-visible information is excluded rather than approximated.
 
 ---
 
@@ -57,11 +61,12 @@ Minimal implementation for peer discovery and WebRTC signaling.
 
 **Capabilities:**
 - Accept peer connections and authenticate identity
-- Forward WebRTC signaling messages between peers
+- Track datastore subscriptions (for presence/signaling scope only)
+- Forward signaling messages between peers
 - Respond to peer list queries
 - Keepalive (PING/PONG)
 
-**Does NOT:** store operations, participate in sync, or forward live operations.
+**Does NOT:** store operations, participate in sync, or forward operations.
 
 A Level 0 relay can be implemented in ~200 lines of code in any language with WebSocket support.
 
@@ -70,11 +75,10 @@ A Level 0 relay can be implemented in ~200 lines of code in any language with We
 Signal relay plus live operation forwarding.
 
 **Capabilities (in addition to L0):**
-- Accept datastore subscriptions from peers
-- Forward live operations to subscribed peers (fan-out)
+- Forward operations to subscribed peers (fan-out)
 - Validate operation signatures before forwarding
-- Deduplicate operations by OpId
-- Enforce rate limits and backpressure
+- Deduplicate operations by `(datastore, OpId)`
+- Enforce limits and throttling
 
 **Does NOT:** persist operations or participate in Merkle sync. If the relay restarts, no history is available.
 
@@ -85,28 +89,22 @@ Full relay with oplog persistence and sync participation. This is the "always-on
 **Capabilities (in addition to L1):**
 - Persist all operations to durable storage
 - Maintain a Merkle sync tree per datastore
-- Participate in the full sync protocol (Merkle sync, delta exchange)
-- Serve snapshot sync to new peers
-- Compact oplog per SPEC.md §7.3 rules
+- Participate in the sync protocol (Merkle sync, delta exchange)
+- Compact oplog per SPEC.md §7.3 rules (subject to ISSUES C7 — GC disabled by default)
 
 ---
 
 ## 3. Wire Format
 
-### 3.1 Framing
+### 3.1 Serialization
 
-The protocol operates over byte-stream or message-oriented transports.
+The wire format is **CBOR** ([RFC 8949](https://www.rfc-editor.org/rfc/rfc8949)) — binary, compact, well-specified, broad cross-language support. There is no alternative or negotiated serialization; every message on every transport is CBOR. (Tooling that wants human-readable output decodes CBOR to JSON out-of-band.)
 
-- **Message-oriented transports** (WebSocket binary frames, WebRTC DataChannel): each transport message carries exactly one protocol message. No additional framing is needed.
-- **Stream transports** (TCP): messages are length-prefixed with a 4-byte big-endian unsigned integer indicating the payload length in bytes, followed by the payload.
+Canonical/deterministic encoding rules for *operation* bytes (hash and signature preimages) are defined by the operation format (ISSUES C1, SPEC §2.5), not by this document. Protocol envelope bytes are never hashed or signed and need not be canonical.
 
-### 3.2 Serialization
+### 3.2 Framing
 
-The canonical serialization format is **CBOR** ([RFC 8949](https://www.rfc-editor.org/rfc/rfc8949)). CBOR is binary, compact, well-specified, and has broad cross-language support.
-
-- All protocol messages MUST be serializable to and from CBOR.
-- Relay implementations SHOULD also support **JSON** serialization as a debug and development mode. Peers MAY negotiate JSON mode during the handshake (see §4.1).
-- The serialization mode is established during the `HELLO`/`WELCOME` exchange and applies for the duration of the session.
+Both supported transports are message-oriented (see §14): each transport message carries exactly one protocol message. No additional framing is defined.
 
 ### 3.3 Message Envelope
 
@@ -115,13 +113,14 @@ Every protocol message shares a common envelope structure:
 ```
 {
   type:       uint8       // Message type discriminator (see §4)
-  version:    uint8       // Protocol version (currently 1)
   request_id: uint32      // Request/response correlation ID (0 for unsolicited messages)
   payload:    map         // Type-specific payload fields
 }
 ```
 
-The `request_id` field enables request/response correlation. A response message carries the same `request_id` as the request that triggered it. Unsolicited messages (e.g., `LIVE_OP` fan-out) use `request_id: 0`.
+A response message carries the same `request_id` as the request that triggered it. Unsolicited messages (relay-initiated forwards, THROTTLE, ERROR not tied to a request) use `request_id: 0`. Peers MUST use a non-zero `request_id` on any message for which they expect a reply.
+
+The protocol version is carried once, in `HELLO`/`WELCOME` (§4.1) — not per message.
 
 ---
 
@@ -139,11 +138,9 @@ Initiates a connection. Sent by the peer immediately after transport establishme
 
 ```
 {
-  peer_id:      PeerId          // Claimed peer identity
-  public_key:   bytes           // Ed25519 public key (32 bytes)
-  protocol_version: uint8       // Requested protocol version
-  features:     [string]        // Optional feature flags (e.g., "json-debug")
-  datastores:   [string]?       // Optional: datastores to subscribe to immediately
+  peer_id:          PeerId      // Claimed peer identity
+  public_key:       bytes       // Ed25519 public key (32 bytes)
+  protocol_version: uint8       // Requested protocol version (currently 1)
 }
 ```
 
@@ -153,27 +150,25 @@ Relay sends a random nonce for the peer to sign, proving ownership of the claime
 
 ```
 {
-  nonce:        bytes           // 32 random bytes
-  relay_id:     PeerId?         // Relay's own PeerId (if relay supports mutual auth)
-  relay_pubkey: bytes?          // Relay's Ed25519 public key (if mutual auth)
+  nonce:  bytes     // 32 cryptographically random bytes, fresh per connection
 }
 ```
 
 #### `AUTH` (0x03) — P→R [L0]
 
-Peer signs the challenge nonce.
+Peer signs the challenge nonce with domain separation:
 
 ```
 {
-  signature:    Signature       // Ed25519 signature over the nonce
+  signature:  Signature   // Ed25519.sign(private_key, "zerodb-relay-auth-v1" || nonce)
 }
 ```
 
 The relay MUST verify:
-1. The signature is valid for the nonce and the public key from `HELLO`
+1. `Ed25519.verify("zerodb-relay-auth-v1" || nonce, signature, public_key)` for the key from `HELLO`
 2. `BLAKE3(public_key) == peer_id` from `HELLO`
 
-If verification fails, the relay MUST respond with `ERROR` and close the connection.
+If verification fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
 
 #### `WELCOME` (0x04) — R→P [L0]
 
@@ -181,28 +176,20 @@ Sent after successful authentication. Establishes the session.
 
 ```
 {
-  session_id:       string          // Opaque session identifier
-  relay_level:      uint8           // Conformance level (0, 1, or 2)
-  relay_features:   [string]        // Supported features
-  serialization:    string          // Negotiated serialization ("cbor" or "json")
+  protocol_version: uint8       // Selected protocol version
+  relay_level:      uint8       // Conformance level (0, 1, or 2)
   limits: {
-    max_payload_bytes:   uint32     // Maximum operation payload size
-    max_batch_size:      uint16     // Maximum operations per batch
-    max_subscriptions:   uint16     // Maximum concurrent datastore subscriptions
-    ops_per_second:      uint32?    // Per-peer rate limit (null = unlimited)
+    max_payload_bytes:  uint32  // Maximum operation payload size
+    max_batch_ops:      uint16  // Maximum operations per OPS message
+    max_batch_bytes:    uint32  // Maximum total bytes per OPS message
+    max_subscriptions:  uint16  // Maximum concurrent datastore subscriptions
+    ops_per_second:     uint32? // Per-peer rate limit (null = unlimited)
+    bytes_per_second:   uint32? // Per-peer bandwidth limit (null = unlimited)
   }
-  known_relays:     [RelayInfo]?    // Optional list of other known relays
-  merkle_roots:     map?            // Datastore ID → MerkleRoot (L2 only, for datastores requested in HELLO)
 }
 ```
 
-```
-RelayInfo = {
-  url:    string        // Relay connection URL
-  level:  uint8         // Conformance level
-  pubkey: bytes?        // Relay's public key (if known)
-}
-```
+There is no session resumption: a reconnecting peer repeats the full handshake (one signature — cheap by design).
 
 #### `ERROR` (0xFF) — ↔ [L0]
 
@@ -222,7 +209,7 @@ Clean disconnection.
 
 ```
 {
-  reason:   uint16      // Reason code (0 = normal, 1 = going offline, 2 = switching relay, ...)
+  reason:   uint16      // 0 = normal, 1 = going offline, 2 = switching relay, 3 = limit violations
   message:  string?     // Optional human-readable message
 }
 ```
@@ -231,37 +218,35 @@ After sending `GOODBYE`, the sender SHOULD close the transport connection. The r
 
 ### 4.2 Datastore Subscription
 
-#### `SUBSCRIBE` (0x10) — P→R [L1]
+Subscription is the single membership verb: it scopes presence, peer listing, signaling, and (L1+) operation forwarding.
 
-Subscribe to receive operations for one or more datastores.
+#### `SUBSCRIBE` (0x10) — P→R [L0]
 
 ```
 {
-  datastores: [string]  // Datastore IDs to subscribe to
+  datastores:   [string]    // Datastore IDs to subscribe to
+  connectable:  bool        // Whether this peer accepts direct P2P connections
+  metadata:     map?        // Optional transport hints for signaling
 }
 ```
 
-#### `SUBSCRIBED` (0x11) — R→P [L1]
+> **Note:** datastore admission is currently unauthenticated — any authenticated peer can subscribe to a guessed datastore ID. Datastore-membership capabilities (ISSUES C4) will add an admission credential to this message; enforcement ships M3.
+
+#### `SUBSCRIBED` (0x11) — R→P [L0]
 
 Confirms subscription. Sent once per `SUBSCRIBE` request.
 
 ```
 {
-  datastores: [DatastoreInfo]
+  datastores: [{
+    id:           string
+    peer_count:   uint32        // Currently connected subscribers
+    merkle_root:  MerkleRoot?   // Current Merkle root (L2 only)
+  }]
 }
 ```
 
-```
-DatastoreInfo = {
-  id:           string
-  peer_count:   uint32          // Number of currently connected peers
-  merkle_root:  MerkleRoot?     // Current Merkle root (L2 only)
-}
-```
-
-#### `UNSUBSCRIBE` (0x12) — P→R [L1]
-
-Stop receiving operations for the specified datastores.
+#### `UNSUBSCRIBE` (0x12) — P→R [L0]
 
 ```
 {
@@ -271,13 +256,11 @@ Stop receiving operations for the specified datastores.
 
 ### 4.3 Sync Protocol (L2)
 
-These messages mirror the sync lifecycle defined in SPEC.md §4.1, adapted for relay participation. A Level 2 relay participates in sync as a peer — it has its own Merkle tree and oplog.
+> **Provisional.** This message set is a placeholder pending ISSUES C3 (canonical Merkle tree, subtree traversal). As written it supports only the degenerate cases: roots already match, or the requester independently knows which hashes it lacks. M0 defines the canonical tree; the complete traversal wire protocol ships M3 and will extend or replace `DELTA_REQUEST`.
 
-Level 0 and Level 1 relays MUST reject these messages with an `ERROR` (code `0x401`).
+A Level 2 relay participates in sync as a peer — it has its own Merkle tree and oplog. Level 0 and Level 1 relays MUST reject these messages with `ERROR` (code `0x401`).
 
 #### `SYNC_REQUEST` (0x20) — ↔ [L2]
-
-Initiates Merkle sync for a datastore.
 
 ```
 {
@@ -288,21 +271,16 @@ Initiates Merkle sync for a datastore.
 
 #### `SYNC_RESPONSE` (0x21) — ↔ [L2]
 
-Response to `SYNC_REQUEST` with the receiver's Merkle root.
-
 ```
 {
   datastore:    string
   merkle_root:  MerkleRoot
-  match:        bool            // True if roots match (already in sync)
 }
 ```
 
-If `match` is true, both sides skip delta exchange and enter live mode.
+If the roots match, both sides skip delta exchange and enter live mode.
 
 #### `DELTA_REQUEST` (0x22) — ↔ [L2]
-
-Request operations for divergent Merkle subtrees.
 
 ```
 {
@@ -313,17 +291,15 @@ Request operations for divergent Merkle subtrees.
 
 #### `DELTA_BATCH` (0x23) — ↔ [L2]
 
-A batch of operations in response to `DELTA_REQUEST`.
-
 ```
 {
   datastore:    string
-  operations:   [Operation]     // Operations (see SPEC.md §2.5)
+  operations:   [Operation]     // See SPEC.md §2.5
   remaining:    uint32          // Estimated remaining operations (0 = last batch)
 }
 ```
 
-The sender MUST respect the receiver's `max_batch_size` and `max_payload_bytes` limits from `WELCOME`. If the delta exceeds a single batch, multiple `DELTA_BATCH` messages are sent with `remaining > 0` until the final batch (`remaining = 0`).
+The sender MUST respect the receiver's `max_batch_ops` and `max_batch_bytes` limits from `WELCOME`. If the delta exceeds a single batch, multiple `DELTA_BATCH` messages are sent with `remaining > 0` until the final batch (`remaining = 0`).
 
 #### `SYNC_ACK` (0x24) — ↔ [L2]
 
@@ -336,35 +312,22 @@ Confirms convergence after delta exchange.
 }
 ```
 
-### 4.4 Live Operation Relay
+### 4.4 Operations
 
-#### `LIVE_OP` (0x30) — P→R [L1]
+One message type carries operations in both directions. Peer→relay it is a submission (correlated with `OP_ACK` via `request_id`); relay→peer it is a forward (`request_id: 0`). Direction is unambiguous from the transport, so no separate forward type exists.
 
-A peer sends a single operation to the relay for distribution.
-
-```
-{
-  datastore:    string
-  operation:    Operation       // See SPEC.md §2.5
-}
-```
-
-#### `LIVE_OP_BATCH` (0x31) — ↔ [L1]
-
-Multiple operations sent together. Used for operation groups (shared `GroupId`) and relay fan-out batching.
+#### `OPS` (0x30) — ↔ [L1]
 
 ```
 {
   datastore:    string
-  operations:   [Operation]
+  operations:   [Operation]     // 1..max_batch_ops, see SPEC.md §2.5
 }
 ```
 
-Operations in a batch sharing a `GroupId` MUST be kept together during forwarding (see §6.4).
+#### `OP_ACK` (0x31) — R→P [L1]
 
-#### `OP_ACK` (0x32) — R→P [L1]
-
-Relay acknowledges receipt of operation(s).
+Relay acknowledges receipt of a peer's `OPS` submission, echoing its `request_id`.
 
 ```
 {
@@ -373,34 +336,11 @@ Relay acknowledges receipt of operation(s).
 }
 ```
 
-#### `RELAY_OP` (0x33) — R→P [L1]
-
-Relay forwards operation(s) from other peers to a subscribed peer. Structurally identical to `LIVE_OP_BATCH` but distinguished by message type to indicate relay-originated delivery.
-
-```
-{
-  datastore:    string
-  operations:   [Operation]
-}
-```
+> **Note:** `OP_ACK` is a *receipt* acknowledgement. A durable-commit acknowledgement for L2 relays (persistence-before-ack or a separate durable ack) is pending ISSUES H11 → M3.
 
 ### 4.5 Peer Discovery & Signaling
 
-#### `PEER_ANNOUNCE` (0x40) — P→R [L0]
-
-Announce presence on a datastore. Used for peer discovery even without subscription (L0 relays).
-
-```
-{
-  datastores:   [string]        // Datastores this peer is interested in
-  connectable:  bool            // Whether this peer accepts direct P2P connections
-  metadata:     map?            // Optional: transport hints (e.g., STUN candidates)
-}
-```
-
-#### `PEER_LIST_REQUEST` (0x41) — P→R [L0]
-
-Request the list of peers connected to a datastore.
+#### `PEER_LIST_REQUEST` (0x40) — P→R [L0]
 
 ```
 {
@@ -408,7 +348,7 @@ Request the list of peers connected to a datastore.
 }
 ```
 
-#### `PEER_LIST_RESPONSE` (0x42) — R→P [L0]
+#### `PEER_LIST_RESPONSE` (0x41) — R→P [L0]
 
 ```
 {
@@ -421,46 +361,31 @@ Request the list of peers connected to a datastore.
 }
 ```
 
-#### `SIGNAL_OFFER` (0x43) — P→R→P [L0]
+#### `SIGNAL` (0x42) — ↔ [L0]
 
-WebRTC signaling: session description offer. The relay forwards this to the target peer without inspecting content.
+Opaque signaling forwarding (WebRTC SDP offers/answers, ICE candidates — the relay neither inspects nor distinguishes them).
+
+Peer→relay:
 
 ```
 {
   target:   PeerId      // Intended recipient
-  payload:  bytes       // Opaque signaling data (SDP offer)
+  payload:  bytes       // Opaque signaling data
 }
 ```
 
-#### `SIGNAL_ANSWER` (0x44) — P→R→P [L0]
-
-WebRTC signaling: session description answer.
+Relay→target (forwarded form — the relay replaces `target` with the authenticated sender):
 
 ```
 {
-  target:   PeerId
-  payload:  bytes       // Opaque signaling data (SDP answer)
+  sender:   PeerId      // Authenticated originator, set by the relay
+  payload:  bytes
 }
 ```
 
-#### `SIGNAL_ICE` (0x45) — P→R→P [L0]
+The relay MUST: verify the sender is authenticated, look up the target among connected subscribers, forward with `sender` attached, and respond with `ERROR` (code `0x307`) if the target is not connected.
 
-WebRTC signaling: ICE candidate exchange.
-
-```
-{
-  target:   PeerId
-  payload:  bytes       // Opaque ICE candidate data
-}
-```
-
-For all signaling messages, the relay MUST:
-1. Verify the sender is authenticated
-2. Look up the target peer by `PeerId`
-3. Forward the message with the sender's `PeerId` attached
-4. Respond with `ERROR` if the target peer is not connected
-
-### 4.6 Administrative
+### 4.6 Control
 
 #### `PING` (0x50) / `PONG` (0x51) — ↔ [L0]
 
@@ -474,49 +399,15 @@ Keepalive. The sender SHOULD send `PING` at a regular interval (RECOMMENDED: eve
 { timestamp: uint64 }      // Echo of the PING timestamp
 ```
 
-#### `STATUS_REQUEST` (0x52) — P→R [L0]
+#### `THROTTLE` (0x52) — R→P [L1]
 
-Request relay health and status information.
-
-```
-{}
-```
-
-#### `STATUS_RESPONSE` (0x53) — R→P [L0]
+Unified flow-control signal, covering both per-peer rate limiting and relay-wide backpressure.
 
 ```
 {
-  relay_level:      uint8
-  uptime_seconds:   uint64
-  peer_count:       uint32
-  datastore_count:  uint32
-  ops_per_second:   float32         // Recent throughput
-  version:          string          // Relay software version
-  protocol_version: uint8
-}
-```
-
-#### `RATE_LIMIT` (0x54) — R→P [L1]
-
-Notifies a peer that it has exceeded rate limits.
-
-```
-{
+  scope:            string      // "peer" (this peer exceeded its limits) | "relay" (relay under global load)
   retry_after_ms:   uint32      // Minimum delay before resuming sends
-  limit_type:       string      // "ops_per_second" | "bytes_per_second" | "batch_size"
-  current:          uint32      // The peer's current rate
-  allowed:          uint32      // The allowed rate
-}
-```
-
-#### `BACKPRESSURE` (0x55) — R→P [L1]
-
-Relay is overwhelmed and requests all peers slow down. Unlike `RATE_LIMIT` (which targets a specific peer exceeding its limits), `BACKPRESSURE` is a system-wide signal.
-
-```
-{
-  delay_ms:     uint32          // Suggested delay between sends
-  reason:       string?         // Optional: "queue_depth" | "memory" | "io"
+  reason:           string?     // Optional: "ops_per_second" | "bytes_per_second" | "queue_depth" | "memory" | "io"
 }
 ```
 
@@ -531,13 +422,13 @@ Peer                            Relay
   │                               │
   ├── [transport connect] ───────►│
   │                               │
-  ├── HELLO ─────────────────────►│  (peer_id, public_key, features)
+  ├── HELLO ─────────────────────►│  (peer_id, public_key, protocol_version)
   │                               │
-  │◄── CHALLENGE ─────────────────┤  (nonce, optional relay_id)
+  │◄── CHALLENGE ─────────────────┤  (nonce)
   │                               │
-  ├── AUTH ──────────────────────►│  (signature over nonce)
+  ├── AUTH ──────────────────────►│  (domain-separated signature over nonce)
   │                               │
-  │◄── WELCOME ───────────────────┤  (session_id, limits, features)
+  │◄── WELCOME ───────────────────┤  (protocol_version, relay_level, limits)
   │                               │
   │  [session established]        │
 ```
@@ -547,32 +438,22 @@ Peer                            Relay
 The handshake proves the peer controls the Ed25519 private key corresponding to their claimed `PeerId`:
 
 1. Peer sends `HELLO` with their `peer_id` and `public_key`.
-2. Relay generates 32 cryptographically random bytes as a `nonce`.
-3. Peer signs the nonce with their Ed25519 private key.
-4. Relay verifies: `Ed25519.verify(nonce, signature, public_key) == true`
-5. Relay verifies: `BLAKE3(public_key) == peer_id`
+2. Relay generates 32 cryptographically random bytes as a `nonce`, fresh per connection.
+3. Peer signs `"zerodb-relay-auth-v1" || nonce` with their Ed25519 private key. The domain-separation prefix prevents the signature from being confused with any other ZeroDB signature (operations, future transcript bindings).
+4. Relay verifies the signature against the public key from `HELLO`.
+5. Relay verifies `BLAKE3(public_key) == peer_id`.
 
 If either check fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
 
-### 5.3 Mutual Authentication (Optional)
+> Binding the signature to the full negotiated transcript (rather than the nonce alone) is tracked in ISSUES H5 → M3.
 
-Peers MAY request that the relay also prove its identity. If the relay includes `relay_id` and `relay_pubkey` in the `CHALLENGE` message, the peer can verify the relay's identity. The relay signs a concatenation of the nonce and the peer's `peer_id`:
+### 5.3 Relay Identity
 
-```
-relay_proof = Ed25519.sign(relay_private_key, nonce || peer_id)
-```
+The relay is authenticated at the transport layer: peers verify the relay's TLS certificate (see §5.4). In-protocol mutual authentication (relay key pinning independent of the certificate chain) is deliberately excluded from this version; if a deployment threat model requires it, it will be added alongside the transcript binding (ISSUES H5 → M3) rather than as an ad-hoc field.
 
-This is included in the `WELCOME` message as an additional `relay_signature` field. Mutual auth protects against relay impersonation when peers are configured with a specific relay's public key.
+### 5.4 Transport Security
 
-### 5.4 Session Tokens
-
-After successful authentication, the `WELCOME` message includes a `session_id`. Relay implementations MAY support reconnection using the session token to skip re-authentication, subject to an expiry window (RECOMMENDED: 5 minutes).
-
-To reconnect with a session token, the peer sends `HELLO` with an additional `session_id` field. If the relay accepts the session, it skips `CHALLENGE`/`AUTH` and proceeds directly to `WELCOME`.
-
-### 5.5 Transport Security
-
-Relay connections SHOULD use TLS (for WebSocket: `wss://`; for TCP: TLS wrapper). TLS provides transport-level encryption and server authentication via certificates.
+Relay connections MUST use TLS (`wss://`) except for loopback and explicitly configured development environments.
 
 **Important:** TLS does NOT replace ZeroDB's operation-level E2E encryption (SPEC.md §6.2). TLS protects the transport; E2E encryption protects operation payloads from the relay itself.
 
@@ -584,41 +465,32 @@ Relay connections SHOULD use TLS (for WebSocket: `wss://`; for TCP: TLS wrapper)
 
 The relay maintains a **subscription table**: a mapping from `datastore_id` to the set of connected `PeerId`s subscribed to that datastore.
 
-When the relay receives a `LIVE_OP` or `LIVE_OP_BATCH` from a peer:
+When the relay receives an `OPS` submission from a peer:
 
 1. Validate the operation(s) per §9
 2. Acknowledge receipt with `OP_ACK`
 3. Persist the operation(s) if L2
-4. Forward via `RELAY_OP` to all other peers subscribed to the same datastore
+4. Forward via `OPS` (`request_id: 0`) to all other peers subscribed to the same datastore
 
 The relay MUST NOT forward operations back to the peer that sent them.
 
 ### 6.2 Deduplication
 
-The relay MUST deduplicate operations by `OpId`. If an operation with a given `OpId` has already been received (from any peer), it MUST NOT be forwarded again.
+The relay MUST deduplicate operations by `(datastore, OpId)` — dedup is scoped per datastore (ISSUES C4), so a legitimately re-signed operation in an independent datastore is not suppressed. If an operation has already been received for a datastore (from any peer), it MUST NOT be forwarded again.
 
-Implementation: the relay maintains a set of recently seen `OpId`s. For L1 relays (no persistence), this set MAY be bounded (e.g., last 100,000 OpIds). For L2 relays, the oplog itself serves as the deduplication index.
+Implementation: L1 relays maintain a bounded set of recently seen `(datastore, OpId)` pairs (e.g., last 100,000). For L2 relays, the oplog serves as the deduplication index. (Replay after dedup-state loss is tracked in ISSUES H4.)
 
-### 6.3 Causal Ordering
+### 6.3 Ordering
 
-The relay SHOULD forward operations in causal order — an operation should not be forwarded before its dependencies (`deps` field) have been forwarded.
+The relay forwards operations in arrival order and makes **no causal-ordering guarantee**. Peers already handle out-of-order delivery (SPEC.md §4) — relay-side dependency buffering would duplicate that logic with worse information, so it is deliberately excluded.
 
-- **L2 relays:** SHOULD buffer operations with unmet dependencies and forward them once dependencies arrive. If dependencies do not arrive within a timeout (RECOMMENDED: 30 seconds), forward anyway — the receiving peer can handle out-of-order operations.
-- **L1 relays:** MAY forward operations immediately regardless of causal order, as they lack the state to track dependencies.
+### 6.4 Groups
 
-### 6.4 Group Atomicity
+Operations sharing a `GroupId` that arrive in one `OPS` message MUST be forwarded in one `OPS` message. The relay performs **no group-completeness buffering**: it cannot know a group's membership (ISSUES C8), so group atomicity is a peer-side concern. If group operations arrive across multiple messages, they are forwarded across multiple messages.
 
-Operations sharing a `GroupId` (see SPEC.md §2.8) SHOULD be forwarded together in a single `RELAY_OP` batch.
+### 6.5 Fan-Out Batching
 
-- If all operations in a group arrive in a single `LIVE_OP_BATCH`, the relay forwards them as a single `RELAY_OP`.
-- If group operations arrive across multiple messages, the relay SHOULD buffer until the group is complete. The relay MUST impose a timeout on group buffering (RECOMMENDED: 5 seconds) to prevent indefinite buffering from incomplete groups.
-
-### 6.5 Fan-Out Efficiency
-
-The relay MAY batch operations from multiple peers into a single `RELAY_OP` for downstream peers, provided:
-- Causal ordering is preserved within each datastore
-- Group atomicity is preserved (operations with the same `GroupId` stay together)
-- The batch does not exceed the receiver's `max_batch_size`
+The relay MAY coalesce operations from multiple submissions into a single forwarded `OPS` per receiver, provided per-datastore arrival order is preserved and the batch respects the receiver's `max_batch_ops` / `max_batch_bytes`.
 
 ---
 
@@ -626,34 +498,28 @@ The relay MAY batch operations from multiple peers into a single `RELAY_OP` for 
 
 ### 7.1 Oplog Storage
 
-A Level 2 relay MUST persist all validated operations to durable storage, keyed by `OpId`. The storage MUST support:
+A Level 2 relay MUST persist all validated operations to durable storage, keyed by `(datastore, OpId)`. The storage MUST support:
 
 - **Append:** Store new operations
 - **Lookup by OpId:** Retrieve a specific operation by its content hash
 - **Range query by HLC:** Retrieve operations within an HLC timestamp range (for time-bucket Merkle tree construction and delta serving)
 - **Iteration by datastore:** Enumerate all operations belonging to a datastore
 
-The specification does NOT mandate a specific storage engine. Implementers may use SQLite, RocksDB, PostgreSQL, or any system satisfying these requirements.
+The specification does NOT mandate a storage engine. SQLite, RocksDB, PostgreSQL, or any system satisfying these requirements is acceptable.
 
 ### 7.2 Merkle Sync Tree
 
-A Level 2 relay MUST maintain a Merkle sync tree per datastore, as defined in SPEC.md §2.6. The Merkle tree is a derived structure computed from the oplog.
+A Level 2 relay MUST maintain a Merkle sync tree per datastore, as defined in SPEC.md §2.6 (canonical construction pending ISSUES C3). The tree is a derived structure computed from the oplog and MUST be updated as operations are persisted.
 
-The relay MUST update its Merkle tree as new operations are persisted. The relay MUST be able to serve `SYNC_REQUEST`, `SYNC_RESPONSE`, `DELTA_REQUEST`, and `DELTA_BATCH` messages as part of the standard sync protocol.
+### 7.3 Compaction
 
-### 7.3 Snapshot Sync
+Compaction follows SPEC.md §7.3 and is gated on ISSUES C7: garbage collection is **disabled by default** until causal-frontier, peer-retirement, and restore semantics are specified and tested. Independent of GC, the relay MUST retain the full oplog for a configurable retention window (RECOMMENDED default: 30 days).
 
-A Level 2 relay SHOULD support snapshot sync (SPEC.md §4.2) for new peers joining a datastore with no history. The relay serves a compressed state snapshot plus the recent oplog tail, enabling new peers to bootstrap without replaying the entire oplog.
-
-### 7.4 Compaction
-
-A Level 2 relay MAY compact its oplog per the rules in SPEC.md §7.3 (causal stability pruning, tombstone GC, snapshot checkpointing, CRDT metadata pruning).
-
-**Minimum retention:** The relay MUST retain at least the full oplog for a configurable retention window (RECOMMENDED default: 30 days). Operations older than the retention window that have been acknowledged by all currently known peers MAY be compacted.
+Snapshot sync for bootstrapping new peers is deferred to the C7 resolution (M5); this version of the protocol has no snapshot messages.
 
 ---
 
-## 8. Rate Limiting & Backpressure
+## 8. Limits & Throttling
 
 ### 8.1 Protocol-Level Limits
 
@@ -661,39 +527,24 @@ The relay announces its limits in the `WELCOME` message. Recommended defaults:
 
 | Limit | Default | Notes |
 |-------|---------|-------|
-| Max operation payload | 1 MB | Per-operation; configurable by relay operator |
-| Max batch size | 64 operations | Per `LIVE_OP_BATCH` message |
-| Max batch bytes | 16 MB | Per batch; whichever limit is hit first applies |
-| Max subscriptions | 64 | Per-peer concurrent datastore subscriptions |
+| `max_payload_bytes` | 1 MB | Per-operation; configurable by relay operator |
+| `max_batch_ops` | 64 | Per `OPS` message |
+| `max_batch_bytes` | 16 MB | Per `OPS` message; whichever limit is hit first applies |
+| `max_subscriptions` | 64 | Per-peer concurrent datastore subscriptions |
+| `ops_per_second` | 100 | Per-peer |
+| `bytes_per_second` | 10 MB/s | Per-peer |
 
-### 8.2 Per-Peer Rate Limiting
+### 8.2 Enforcement
 
-The relay MAY enforce per-`PeerId` rate limits:
+When a peer exceeds its limits, or the relay is under global load (queue depth, memory, I/O):
 
-- **Operations per second** (RECOMMENDED default: 100 ops/s)
-- **Bytes per second** (RECOMMENDED default: 10 MB/s)
+1. The relay MUST NOT silently drop operations — it MUST accept, reject with `ERROR`, or signal with `THROTTLE`.
+2. `THROTTLE` with `scope: "peer"` targets the offending peer; `scope: "relay"` asks all peers to slow down.
+3. Peers SHOULD respect `retry_after_ms`. If a peer persistently ignores throttling, the relay MAY disconnect it with `GOODBYE` (reason `3`).
 
-When a peer exceeds its rate limit:
+### 8.3 Abuse Mitigation
 
-1. The relay MUST send a `RATE_LIMIT` message indicating the violated limit and a `retry_after_ms` duration
-2. The relay MUST NOT silently drop operations — it MUST either accept, reject with `ERROR`, or signal with `RATE_LIMIT`
-3. If the peer continues to exceed limits after receiving `RATE_LIMIT`, the relay MAY disconnect with `GOODBYE` (reason code `3`: rate limit exceeded)
-
-### 8.3 System-Wide Backpressure
-
-When the relay is under global load pressure (high queue depth, memory pressure, I/O saturation):
-
-1. The relay sends `BACKPRESSURE` to connected peers with a suggested delay
-2. Peers SHOULD respect backpressure by reducing their send rate
-3. If peers ignore backpressure, the relay MAY disconnect them with `GOODBYE`
-
-### 8.4 Abuse Mitigation
-
-Relay operators SHOULD implement:
-
-- **Per-PeerId connection limits:** Maximum concurrent connections from a single `PeerId` (RECOMMENDED: 3)
-- **Proof-of-work for connection:** Optional computational puzzle in the `CHALLENGE` message to mitigate Sybil attacks (see SPEC.md §9.1)
-- **IP-based rate limiting:** Transport-level defense, outside the scope of this protocol but RECOMMENDED for production deployments
+Relay operators SHOULD limit concurrent connections per `PeerId` (RECOMMENDED: 3). IP-based rate limiting and DDoS mitigation are transport-level defenses outside this protocol, RECOMMENDED for production deployments.
 
 ---
 
@@ -705,13 +556,13 @@ The relay MUST validate operations before forwarding or persisting them. Validat
 
 All Level 1 and Level 2 relays MUST perform these checks on every received operation:
 
-1. **Signature verification:** `Ed25519.verify(operation_content, operation.signature, sender_public_key)` — the operation's signature MUST be valid. If the operation is unsigned and the relay is configured to require signatures (RECOMMENDED default), reject with `ERROR` (code `0x301`).
+1. **Signature presence and verification:** operation signatures are mandatory for all synced operations (v0.1 trust model). Unsigned operations are rejected with `ERROR` (code `0x301`). Signature verification against the *author's* key requires the author-key resolution contract (ISSUES C5 → M0/M3); until then relays verify what they can resolve and MUST NOT reject forwarded operations solely because the author key is not the transport sender's key.
 
-2. **Content hash integrity:** `BLAKE3(operation_content) == operation.id` — the `OpId` MUST match the content hash. This detects corruption and tampering.
+2. **Content hash integrity:** `BLAKE3(operation_content) == operation.id` — the `OpId` MUST match the content hash (canonical `operation_content` bytes pending ISSUES C1). This detects corruption and tampering.
 
-3. **Author consistency:** The operation's `peer` field MUST correspond to the public key that produced the signature. This prevents peers from claiming operations authored by others.
+3. **Author consistency:** The operation's `peer` field MUST correspond to the public key that produced the signature.
 
-4. **Timestamp bounds:** The operation's HLC `physical_time` SHOULD be within `max_clock_drift` (configurable, RECOMMENDED default: 60 seconds) of the relay's own clock. Operations with timestamps far in the future are suspect (see SPEC.md §2.4, §9.1). The relay SHOULD reject such operations with `ERROR` (code `0x302`) but MAY accept them with a warning logged.
+4. **Timestamp bounds:** The operation's HLC `physical_time` SHOULD be within `max_clock_drift` (configurable, RECOMMENDED default: 60 seconds) of the relay's clock. The relay MAY reject far-future operations with `ERROR` (code `0x302`). A unified peer/relay acceptance rule is tracked in ISSUES H1 → M3.
 
 ### 9.2 Checks the Relay MUST NOT Perform
 
@@ -727,13 +578,13 @@ This boundary is fundamental to the untrusted relay model: the relay ensures ope
 
 ### 10.1 Error Code Space
 
-| Range | Category | Examples |
-|-------|----------|----------|
-| `0x100–0x1FF` | Protocol errors | Bad framing, unknown message type, version mismatch, malformed CBOR |
-| `0x200–0x2FF` | Authentication errors | Bad signature, unknown peer, expired session, challenge failed |
-| `0x300–0x3FF` | Validation / resource errors | Rate exceeded, payload too large, too many subscriptions, invalid OpId |
-| `0x400–0x4FF` | Sync errors | Unknown datastore, Merkle mismatch, missing dependencies, unsupported at this level |
-| `0x500–0x5FF` | Internal relay errors | Storage failure, out of memory, internal timeout |
+| Range | Category |
+|-------|----------|
+| `0x100–0x1FF` | Protocol errors |
+| `0x200–0x2FF` | Authentication errors |
+| `0x300–0x3FF` | Validation / resource errors |
+| `0x400–0x4FF` | Sync errors |
+| `0x500–0x5FF` | Internal relay errors |
 
 ### 10.2 Specific Error Codes
 
@@ -744,13 +595,13 @@ This boundary is fundamental to the untrusted relay model: the relay ensures ope
 | `0x102` | `VERSION_MISMATCH` | Yes | Incompatible protocol version |
 | `0x103` | `MALFORMED_MESSAGE` | No | Message failed to decode |
 | `0x201` | `AUTH_FAILED` | Yes | Authentication challenge failed |
-| `0x202` | `SESSION_EXPIRED` | No | Session token no longer valid |
 | `0x301` | `UNSIGNED_OP` | No | Operation lacks required signature |
 | `0x302` | `CLOCK_DRIFT` | No | Operation timestamp too far in future |
-| `0x303` | `PAYLOAD_TOO_LARGE` | No | Operation exceeds max payload size |
-| `0x304` | `RATE_EXCEEDED` | No | Rate limit exceeded (see also `RATE_LIMIT` message) |
+| `0x303` | `PAYLOAD_TOO_LARGE` | No | Operation or batch exceeds limits |
+| `0x304` | `RATE_EXCEEDED` | No | Rate limit exceeded (see also `THROTTLE`) |
 | `0x305` | `TOO_MANY_SUBS` | No | Max subscriptions reached |
 | `0x306` | `INVALID_OPID` | No | OpId does not match content hash |
+| `0x307` | `TARGET_NOT_CONNECTED` | No | Signaling target peer not connected |
 | `0x401` | `UNSUPPORTED_LEVEL` | No | Message requires a higher conformance level |
 | `0x402` | `UNKNOWN_DATASTORE` | No | Datastore ID not recognized |
 | `0x500` | `INTERNAL_ERROR` | No | Unspecified internal relay error |
@@ -763,11 +614,11 @@ This boundary is fundamental to the untrusted relay model: the relay ensures ope
 
 ---
 
-## 11. Relay Discovery
+## 11. Discovery & Federation
 
-### 11.1 Static Configuration
+### 11.1 Discovery
 
-The most common discovery method. Peers are configured with one or more relay URLs:
+Peers are configured with one or more relay URLs:
 
 ```typescript
 const db = await ZeroDB.open({
@@ -777,68 +628,17 @@ const db = await ZeroDB.open({
 });
 ```
 
-### 11.2 DNS-Based Discovery
+Static configuration is the only discovery mechanism in this version. Automatic discovery (DNS SRV, well-known URLs, relay-advertised relay lists) is deliberately excluded — it adds attack surface and specification weight without being needed for any current milestone.
 
-Organizations running their own relays MAY publish DNS SRV records:
+### 11.2 Federation
 
-```
-_zerodb-relay._tcp.example.com. 86400 IN SRV 10 0 443 relay.example.com.
-```
-
-Peers supporting DNS discovery SHOULD look up `_zerodb-relay._tcp.<domain>` and connect to advertised relays.
-
-### 11.3 Well-Known URL
-
-A domain MAY serve relay metadata at a well-known path:
-
-```
-GET https://example.com/.well-known/zerodb-relay
-```
-
-Response:
-
-```json
-{
-  "relays": [
-    {
-      "url": "wss://relay.example.com/v1/relay",
-      "level": 2,
-      "pubkey": "<hex-encoded Ed25519 public key>"
-    }
-  ]
-}
-```
-
-### 11.4 Relay Lists
-
-A relay MAY include a list of other known relays in its `WELCOME` message (`known_relays` field). This enables peers to discover backup relays without out-of-band configuration.
+Peers MAY connect to multiple relays simultaneously for redundancy. A peer connected to Relay A and Relay B naturally bridges them: operations received from one are synced to the other. This is the only federation model; no relay-to-relay coordination protocol exists or is required. (Two Level 2 relays MAY nevertheless connect to each other as ordinary peers using this same protocol — nothing about it is peer-exclusive.)
 
 ---
 
-## 12. Multi-Relay Federation
+## 12. Security Considerations
 
-### 12.1 Peer-Bridged Replication
-
-Peers MAY connect to multiple relays simultaneously for redundancy and availability. When a peer is connected to both Relay A and Relay B, it naturally bridges them: operations received from Relay A are synced to Relay B and vice versa.
-
-This is the default federation model — no relay-to-relay coordination is required.
-
-### 12.2 Relay-to-Relay Peering (Optional)
-
-Relay operators MAY connect relays directly to each other. In this mode, relays behave as peers toward each other, using the standard sync protocol (§4.3) to exchange operations.
-
-This is marked as **MAY** because:
-- Peer bridging (§12.1) handles the common case
-- Relay-to-relay peering adds operational complexity
-- It is an optimization for large deployments where peer bridging introduces unacceptable latency
-
-When relay-to-relay peering is used, both relays MUST be Level 2 (persistent).
-
----
-
-## 13. Security Considerations
-
-### 13.1 Relay Trust Model
+### 12.1 Relay Trust Model
 
 Relays are **untrusted intermediaries**. This is a core design principle inherited from SPEC.md §4.4 and §9.1.
 
@@ -853,121 +653,53 @@ Relays are **untrusted intermediaries**. This is a core design principle inherit
 - Read E2E encrypted operation payloads (relay sees only ciphertext)
 - Impersonate a peer (challenge-response authentication)
 
-### 13.2 Metadata Leakage
+### 12.2 Metadata Leakage
 
-Even with E2E encryption on operation payloads, the relay necessarily observes:
+Even with E2E encryption on operation payloads, the relay necessarily observes which peers are connected and when, which datastores each peer subscribes to, and operation frequency, timing, and sizes. Peer-side mitigations (padding, cover traffic, anonymizing transports) are outside this spec's scope.
 
-- Which peers are connected and when
-- Which datastores each peer subscribes to
-- Operation frequency and timing patterns
-- Operation sizes (though not content)
+### 12.3 Censorship Detection
 
-**Mitigations (peer-side, outside this spec's scope):**
-- Peers MAY pad operations to uniform sizes
-- Peers MAY inject dummy operations at random intervals
-- Peers MAY route through Tor or similar anonymization layers
+A single relay is a trivially effective censor for any peer that depends on it alone. Therefore, normatively: **peers SHOULD maintain at least two independent sync sources** — two relays, or one relay plus direct peer connections. Peers detect censorship by comparing Merkle roots across sources; a relay whose root consistently diverges is suspect.
 
-### 13.3 Relay Censorship Detection
+### 12.4 Denial of Service
 
-Peers detect relay censorship by comparing Merkle roots from multiple sources:
-
-1. If a peer is connected to multiple relays, it compares Merkle roots across relays
-2. If a peer has direct P2P connections, it compares relay Merkle roots with peer Merkle roots
-3. A relay whose Merkle root consistently diverges from other sources is suspect
-
-Peers SHOULD connect to at least two relays or one relay plus direct peer connections for censorship resistance.
-
-### 13.4 Denial of Service
-
-The relay is a natural target for denial-of-service attacks. Defenses:
-
-- Protocol-level rate limiting (§8)
-- Proof-of-work for connection establishment (§8.4)
-- Transport-level defenses (firewalls, CDN, DDoS mitigation) — outside this spec's scope but RECOMMENDED for production
+Defenses: protocol-level limits and throttling (§8), per-PeerId connection caps (§8.3), and transport-level protections (firewalls, DDoS mitigation) outside this spec's scope. Authentication requires only one signature verification per connection attempt, which bounds the relay's per-connection crypto cost; deployments needing stronger Sybil resistance should apply transport-level controls.
 
 ---
 
-## 14. Monitoring & Observability
+## 13. Operational Guidance
 
-Guidance for relay operators. These are RECOMMENDED practices, not protocol requirements.
+RECOMMENDED practices, not protocol requirements:
 
-### 14.1 Metrics
+- Expose an HTTP health endpoint separate from the protocol port (`GET /health` returning status, level, uptime, peer count, version).
+- Export operational metrics (connected peers, active datastores, ops received/forwarded/rejected, auth failures, forward latency) via the deployment's usual telemetry stack.
+- Log connection events, authentication failures, throttle triggers, and sync session lifecycle. OpIds and PeerIds are public identifiers and MAY be logged.
 
-Relay implementations SHOULD expose the following metrics:
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `zerodb_relay_peers_connected` | Gauge | Currently connected peers |
-| `zerodb_relay_datastores_active` | Gauge | Datastores with at least one subscriber |
-| `zerodb_relay_ops_received_total` | Counter | Operations received from peers |
-| `zerodb_relay_ops_forwarded_total` | Counter | Operations forwarded to peers |
-| `zerodb_relay_ops_stored_total` | Counter | Operations persisted (L2) |
-| `zerodb_relay_ops_rejected_total` | Counter | Operations rejected (by reason) |
-| `zerodb_relay_sync_sessions_active` | Gauge | Active Merkle sync sessions (L2) |
-| `zerodb_relay_auth_failures_total` | Counter | Failed authentication attempts |
-| `zerodb_relay_message_latency_ms` | Histogram | Time from receive to forward |
-
-### 14.2 Health Endpoint
-
-The relay SHOULD expose an HTTP health endpoint **separate** from the protocol port:
-
-```
-GET /health
-```
-
-```json
-{
-  "status": "healthy",
-  "level": 2,
-  "uptime_seconds": 86400,
-  "peers": 142,
-  "version": "0.1.0"
-}
-```
-
-### 14.3 Logging
-
-- The relay SHOULD log connection events, authentication failures, rate limit triggers, and sync session lifecycle.
-- The relay MUST NOT log operation payloads (privacy).
-- The relay MAY log OpIds and PeerIds for debugging (these are public identifiers).
-
-### 14.4 Telemetry
-
-The relay MAY expose traces and metrics via OpenTelemetry (OTLP). This is RECOMMENDED for production deployments integrated into existing observability infrastructure.
+One requirement: the relay MUST NOT log operation payloads (privacy).
 
 ---
 
-## 15. Transport Bindings
+## 14. Transport Bindings
 
-### 15.1 WebSocket
+Two transports, both message-oriented. Additional bindings (e.g., QUIC) may be defined in future versions.
 
-The primary transport for browser-to-relay and general-purpose connections.
+### 14.1 WebSocket
+
+The primary transport for all connections — browser, server, and CLI.
 
 - **Path:** `/v1/relay`
 - **Subprotocol:** `zerodb-relay-v1` (negotiated via `Sec-WebSocket-Protocol`)
 - **Mode:** Binary frames. Each WebSocket message is one protocol message.
-- **TLS:** `wss://` RECOMMENDED for production
+- **TLS:** `wss://` REQUIRED except loopback/development (§5.4)
 
-### 15.2 TCP
+### 14.2 WebRTC DataChannel
 
-For server-to-server and CLI connections.
-
-- **Default ports:** `7433` (plaintext), `7434` (TLS)
-- **Framing:** 4-byte big-endian length prefix + payload (see §3.1)
-- **TLS:** RECOMMENDED for production
-
-### 15.3 WebRTC DataChannel
-
-For relay-to-browser connections where WebSocket is not available or for relay-facilitated P2P upgrade.
+For relay-facilitated P2P upgrade or environments without WebSocket.
 
 - **Channel label:** `zerodb-relay`
 - **Ordered:** Yes
 - **Reliable:** Yes
 - Each DataChannel message is one protocol message
-
-### 15.4 QUIC (Future)
-
-QUIC is a natural fit for the relay protocol due to its multiplexed streams and built-in TLS. A future version of this specification MAY define a QUIC transport binding. This is noted as a forward-looking consideration and is not required for conformance.
 
 ---
 
@@ -979,30 +711,22 @@ QUIC is a natural fit for the relay protocol due to its multiplexed streams and 
 | `0x02` | `CHALLENGE` | R→P | L0 |
 | `0x03` | `AUTH` | P→R | L0 |
 | `0x04` | `WELCOME` | R→P | L0 |
-| `0x10` | `SUBSCRIBE` | P→R | L1 |
-| `0x11` | `SUBSCRIBED` | R→P | L1 |
-| `0x12` | `UNSUBSCRIBE` | P→R | L1 |
+| `0x10` | `SUBSCRIBE` | P→R | L0 |
+| `0x11` | `SUBSCRIBED` | R→P | L0 |
+| `0x12` | `UNSUBSCRIBE` | P→R | L0 |
 | `0x20` | `SYNC_REQUEST` | ↔ | L2 |
 | `0x21` | `SYNC_RESPONSE` | ↔ | L2 |
 | `0x22` | `DELTA_REQUEST` | ↔ | L2 |
 | `0x23` | `DELTA_BATCH` | ↔ | L2 |
 | `0x24` | `SYNC_ACK` | ↔ | L2 |
-| `0x30` | `LIVE_OP` | P→R | L1 |
-| `0x31` | `LIVE_OP_BATCH` | ↔ | L1 |
-| `0x32` | `OP_ACK` | R→P | L1 |
-| `0x33` | `RELAY_OP` | R→P | L1 |
-| `0x40` | `PEER_ANNOUNCE` | P→R | L0 |
-| `0x41` | `PEER_LIST_REQUEST` | P→R | L0 |
-| `0x42` | `PEER_LIST_RESPONSE` | R→P | L0 |
-| `0x43` | `SIGNAL_OFFER` | P→R→P | L0 |
-| `0x44` | `SIGNAL_ANSWER` | P→R→P | L0 |
-| `0x45` | `SIGNAL_ICE` | P→R→P | L0 |
+| `0x30` | `OPS` | ↔ | L1 |
+| `0x31` | `OP_ACK` | R→P | L1 |
+| `0x40` | `PEER_LIST_REQUEST` | P→R | L0 |
+| `0x41` | `PEER_LIST_RESPONSE` | R→P | L0 |
+| `0x42` | `SIGNAL` | ↔ | L0 |
 | `0x50` | `PING` | ↔ | L0 |
 | `0x51` | `PONG` | ↔ | L0 |
-| `0x52` | `STATUS_REQUEST` | P→R | L0 |
-| `0x53` | `STATUS_RESPONSE` | R→P | L0 |
-| `0x54` | `RATE_LIMIT` | R→P | L1 |
-| `0x55` | `BACKPRESSURE` | R→P | L1 |
+| `0x52` | `THROTTLE` | R→P | L1 |
 | `0xFE` | `GOODBYE` | ↔ | L0 |
 | `0xFF` | `ERROR` | ↔ | L0 |
 
@@ -1012,157 +736,93 @@ Message type codes `0x60–0xEF` are reserved for future use. Codes `0xF0–0xFD
 
 ## Appendix B: Example Session Transcript
 
-An annotated example of a complete session. Shown in JSON for readability (actual wire format is CBOR).
+An annotated example of a complete session. Shown as JSON for readability; the wire format is CBOR.
 
 ```
 // 1. Peer connects via WebSocket to wss://relay.example.com/v1/relay
 
 // 2. Peer sends HELLO
-→ {
-    "type": 1,
-    "version": 1,
-    "request_id": 1,
-    "payload": {
+→ { "type": 1, "request_id": 1, "payload": {
       "peer_id": "a1b2c3d4e5f6...",
       "public_key": "<32 bytes, hex>",
-      "protocol_version": 1,
-      "features": ["json-debug"],
-      "datastores": ["app:main"]
-    }
-  }
+      "protocol_version": 1
+  } }
 
 // 3. Relay sends CHALLENGE
-← {
-    "type": 2,
-    "version": 1,
-    "request_id": 1,
-    "payload": {
+← { "type": 2, "request_id": 1, "payload": {
       "nonce": "<32 random bytes, hex>"
-    }
-  }
+  } }
 
 // 4. Peer sends AUTH
-→ {
-    "type": 3,
-    "version": 1,
-    "request_id": 1,
-    "payload": {
-      "signature": "<Ed25519 signature over nonce, hex>"
-    }
-  }
+→ { "type": 3, "request_id": 1, "payload": {
+      "signature": "<Ed25519 sig over 'zerodb-relay-auth-v1' || nonce, hex>"
+  } }
 
-// 5. Relay sends WELCOME (authentication successful)
-← {
-    "type": 4,
-    "version": 1,
-    "request_id": 1,
-    "payload": {
-      "session_id": "sess_abc123",
+// 5. Relay sends WELCOME
+← { "type": 4, "request_id": 1, "payload": {
+      "protocol_version": 1,
       "relay_level": 2,
-      "relay_features": ["json-debug", "snapshot-sync"],
-      "serialization": "json",
       "limits": {
         "max_payload_bytes": 1048576,
-        "max_batch_size": 64,
+        "max_batch_ops": 64,
+        "max_batch_bytes": 16777216,
         "max_subscriptions": 64,
-        "ops_per_second": 100
-      },
-      "merkle_roots": {
-        "app:main": "<merkle root hash, hex>"
+        "ops_per_second": 100,
+        "bytes_per_second": 10485760
       }
-    }
-  }
+  } }
 
-// 6. Peer initiates Merkle sync (roots differ)
-→ {
-    "type": 32,
-    "version": 1,
-    "request_id": 2,
-    "payload": {
+// 6. Peer subscribes
+→ { "type": 16, "request_id": 2, "payload": {
+      "datastores": ["app:main"],
+      "connectable": true
+  } }
+
+← { "type": 17, "request_id": 2, "payload": {
+      "datastores": [{ "id": "app:main", "peer_count": 3,
+                       "merkle_root": "<hash, hex>" }]
+  } }
+
+// 7. Merkle sync (roots differ → delta exchange, omitted; see §4.3 provisional note)
+→ { "type": 32, "request_id": 3, "payload": {
+      "datastore": "app:main", "merkle_root": "<peer's root, hex>"
+  } }
+← { "type": 33, "request_id": 3, "payload": {
+      "datastore": "app:main", "merkle_root": "<relay's root, hex>"
+  } }
+// ... DELTA_REQUEST / DELTA_BATCH / SYNC_ACK ...
+
+// 8. Live mode: peer submits an operation
+→ { "type": 48, "request_id": 4, "payload": {
       "datastore": "app:main",
-      "merkle_root": "<peer's merkle root, hex>"
-    }
-  }
-
-// 7. Relay responds with its root
-← {
-    "type": 33,
-    "version": 1,
-    "request_id": 2,
-    "payload": {
-      "datastore": "app:main",
-      "merkle_root": "<relay's merkle root, hex>",
-      "match": false
-    }
-  }
-
-// 8. Delta exchange happens (DELTA_REQUEST / DELTA_BATCH)...
-// ... (omitted for brevity)
-
-// 9. Sync confirmed
-← {
-    "type": 36,
-    "version": 1,
-    "request_id": 2,
-    "payload": {
-      "datastore": "app:main",
-      "merkle_root": "<converged merkle root>"
-    }
-  }
-
-// 10. Live mode: peer sends an operation
-→ {
-    "type": 48,
-    "version": 1,
-    "request_id": 0,
-    "payload": {
-      "datastore": "app:main",
-      "operation": {
+      "operations": [{
         "id": "<BLAKE3 hash>",
-        "hlc": { "physical_time": 1742428800000, "logical_counter": 0, "peer_id": "a1b2c3d4e5f6..." },
+        "hlc": { "physical_time": 1783987200000, "logical_counter": 0, "peer_id": "a1b2c3d4e5f6..." },
         "peer": "a1b2c3d4e5f6...",
         "deps": ["<dep OpId>"],
         "entity": "<node UUIDv7>",
         "field": "name",
         "payload": { "type": "LWW", "value": "Alice" },
         "signature": "<Ed25519 signature>"
-      }
-    }
-  }
+      }]
+  } }
 
-// 11. Relay acknowledges
-← {
-    "type": 50,
-    "version": 1,
-    "request_id": 0,
-    "payload": {
+// 9. Relay acknowledges receipt
+← { "type": 49, "request_id": 4, "payload": {
       "op_ids": ["<BLAKE3 hash>"],
-      "merkle_root": "<updated merkle root>"
-    }
-  }
+      "merkle_root": "<updated root>"
+  } }
 
-// 12. Relay forwards to other subscribers
-// (sent to all other peers subscribed to "app:main")
-← {
-    "type": 51,
-    "version": 1,
-    "request_id": 0,
-    "payload": {
+// 10. Relay forwards to other subscribers (unsolicited → request_id 0)
+← { "type": 48, "request_id": 0, "payload": {
       "datastore": "app:main",
       "operations": [{ ... same operation ... }]
-    }
-  }
+  } }
 
-// 13. Clean disconnect
-→ {
-    "type": 254,
-    "version": 1,
-    "request_id": 0,
-    "payload": {
-      "reason": 0,
-      "message": "going offline"
-    }
-  }
+// 11. Clean disconnect
+→ { "type": 254, "request_id": 0, "payload": {
+      "reason": 0, "message": "going offline"
+  } }
 ```
 
 ---
@@ -1175,13 +835,12 @@ An annotated example of a complete session. Shown in JSON for readability (actua
 |-------------------|----------------|-------|
 | §3 Wire Format | §2.5 | Operation structure |
 | §4.3 Sync Protocol | §4.1–4.2 | Sync lifecycle and modes |
-| §4.4 Live Relay | §2.5, §2.8 | Operation structure, GroupId |
+| §4.4 Operations | §2.5, §2.8 | Operation structure, GroupId |
 | §5 Authentication | §6.1–6.2 | Ed25519 identity, BLAKE3 PeerId |
 | §6 Fan-Out | §2.5, §2.6, §2.8 | OpId dedup, Merkle tree, groups |
 | §7 Persistence | §2.6, §7.3 | Merkle sync tree, compaction |
-| §8 Rate Limiting | §9.1 | Sybil attack mitigation |
 | §9 Validation | §6.1, §9.2 | Signatures, ACL boundary |
-| §13 Security | §4.4, §9.1 | Trust model, threat model |
+| §12 Security | §4.4, §9.1 | Trust model, threat model |
 
 ### External References
 
@@ -1189,3 +848,37 @@ An annotated example of a complete session. Shown in JSON for readability (actua
 - [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) — CBOR (Concise Binary Object Representation)
 - [Ed25519](https://ed25519.cr.yp.to/) — High-speed high-security signatures
 - [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) — Cryptographic hash function
+
+---
+
+## Appendix D: Changes from 0.1.0-draft
+
+Pruned (each removable without loss for any current milestone):
+
+- **JSON serialization mode + negotiation** — resolved the bootstrap paradox (encoding negotiated in messages that must already be decoded, ISSUES H5). CBOR only.
+- **Session-token resumption** — bearer token skipping key proof (ISSUES H5). Reconnect = one signature.
+- **In-protocol mutual auth** (`relay_id`/`relay_pubkey`/`relay_signature`) — underspecified; TLS authenticates the relay. Revisit with transcript binding (M3).
+- **Proof-of-work challenge** — fields were never specified (ISSUES H8).
+- **TCP and QUIC transports** — removed length-prefix framing, plaintext ports, and the plaintext-auth hazard. WebSocket + DataChannel only.
+- **`LIVE_OP` / `LIVE_OP_BATCH` / `RELAY_OP`** → single bidirectional `OPS` (ISSUES H9 direction confusion).
+- **`SIGNAL_OFFER` / `SIGNAL_ANSWER` / `SIGNAL_ICE`** → single `SIGNAL`; payloads were already opaque. Forwarded form now carries `sender` (H9 gap).
+- **`RATE_LIMIT` + `BACKPRESSURE`** → single `THROTTLE` with `scope`.
+- **`STATUS_REQUEST` / `STATUS_RESPONSE`** — duplicated the HTTP health endpoint.
+- **`PEER_ANNOUNCE`** — folded into `SUBSCRIBE` (one membership verb); `SUBSCRIBE` moved to L0.
+- **`HELLO.datastores` / `HELLO.features` / `WELCOME.merkle_roots` / `WELCOME.known_relays` / `WELCOME.session_id`** — handshake carries identity and limits, nothing else.
+- **DNS SRV / well-known URL / relay-list discovery** — static configuration only.
+- **Relay-side causal-ordering buffering** — peers must handle out-of-order delivery anyway.
+- **Relay-side group-completeness buffering** — unimplementable without group manifests (ISSUES C8).
+- **Snapshot-sync obligation** — no snapshot messages existed; deferred to C7 resolution (M5).
+- **Per-message envelope `version` field** — version lives in `HELLO`/`WELCOME` only (ISSUES H7).
+- **Metrics table / OTLP section** — condensed to operational guidance.
+
+Added / fixed:
+
+- `max_batch_bytes` and `bytes_per_second` in `WELCOME.limits` (ISSUES H9).
+- Domain-separated auth signature (`"zerodb-relay-auth-v1"` prefix, partial H5).
+- Dedup scoped per `(datastore, OpId)` (ISSUES C4 direction).
+- TLS now REQUIRED outside loopback/development.
+- Normative two-independent-sources censorship-resistance statement (ISSUES H8).
+- `request_id` correlation for `OPS`/`OP_ACK`; `0x307 TARGET_NOT_CONNECTED`.
+- Provisional/pending notes tying §4.3 to C3, §4.4 to H11, §9.1 to C1/C5/H1.
