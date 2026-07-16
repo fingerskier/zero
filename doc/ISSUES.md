@@ -55,7 +55,7 @@ Datastores are declared replication/RBAC boundaries, but the relay has no datast
 **Resolution (direction decided 2026-07-13):** relay-verifiable **datastore-membership capabilities**; canonical `DatastoreId`, protocol version, and schema epoch inside the signed/hashed operation context; dedup scoped per datastore (already normative in RELAY-SPEC 0.2 §6.2). → **M0a** (signed context fields) + **M0d** (membership capability format); enforcement ships M3.  *Direction only until checklist complete.*
 
 ### C5 — Forwarded author signatures cannot be verified
-Operations carry an author `PeerId` (a key *hash*) and signature but no resolvable public key. Relay validation verifies against the transport sender's key — which necessarily rejects legitimately forwarded history (bridging, relay-to-relay sync). Key rotation compounds the missing lookup contract.
+Operations carry an author `PeerId` (a key *hash*) and signature but no resolvable public key. Relay validation verifies against the transport sender's key when author == sender; for forwarded history (bridging, relay-to-relay sync) RELAY-SPEC 0.2 currently instructs relays **not to reject** unresolved authors — i.e. forward unverified — which contradicts the validate-every-operation MUST. One deterministic unresolved-author outcome (reject, quarantine, or authenticated key resolution) is required. Key rotation compounds the missing lookup contract.
 **Resolution:** distinguish transport sender from author; carry or resolve an authenticated author key/certificate verified against `operation.peer`; specify rotation/revocation and historical-key lookup; define out-of-order arrival of key records vs. signed ops. → **M0d** (resolution protocol / enforcement ships M3)
 
 ### C6 — Entity-level ACLs conflict with SEC and read confidentiality
@@ -67,7 +67,7 @@ An HLC scalar acknowledged by "all known peers" is not a causal frontier; no dur
 **Resolution:** causal frontiers independent of wall-clock; durable peer acks + retirement; authenticated checkpoint/snapshot identity and tail boundaries; anti-replay commitments; root comparison across checkpoints; decide whether L2 materializes or only stores peer-produced authenticated snapshots. GC stays **disabled** until partition/rejoin, forgotten-peer, late-op, and restore tests pass. → **contracts M0f**; snapshot shipping M4; GC implementation M5
 
 ### C8 — Group and crash atomicity cannot be implemented from the contracts
-A grouped op carries only `GroupId` — no member count, manifest, or commit marker, so no peer or relay can know a group is complete; the relay's five-second timeout has no defined post-timeout behavior. Storage traits expose `append_ops` and `put_materialized` with no transaction/recovery boundary spanning both.
+A grouped op carries only `GroupId` — no member count, manifest, or commit marker, so no peer or relay can know a group is complete (relay 0.2 removed group buffering for exactly this reason; group atomicity is peer-side). Storage traits expose `append_ops` and `put_materialized` with no transaction/recovery boundary spanning both.
 **Resolution:** signed group manifest (or cardinality/index/member hashes) + abort/expiry semantics; atomic storage transaction or WAL/replay protocol with explicit crash points and idempotent recovery tests. → **contracts M0e**; local half M1; sync half M3
 
 ---
@@ -115,7 +115,6 @@ X25519/XChaCha20-Poly1305 are named but there is no ciphertext envelope, nonce c
 - **O2 — Schema source of truth.** TypeScript SDK vs. `.zerodb` DSL: one canonical, the other generated. → **decide M0b**, implement generation M2
 - **O3 — Query language subset.** Minimal (MATCH/WHERE/RETURN/ORDER BY/LIMIT) vs. aggregation/paths; grammar, null/conflict semantics, parameterization, traversal limits. → **decide M0b** (minimal grammar required before M1 CLI)
 - **O4 — WASM size budget.** Target vs. Automerge ~250 KB / Loro ~200 KB gz; optional modules for RGA/Richtext. → M4
-- ~**O5 — GunDB migration path.** ~~State-snapshot converter (no history import possible) or clean break.~~ → unscheduled / won't do
 - **O6 — Operation/batch size limits & protocol-level rate limiting.** Interacts with H4/H9. → **provisional limits M0a**; rate limiting M3
 - **O7 — Causal `deps` scale.** Last-seen-op-per-peer grows with peer count and can reference compacted ops; needs a compact causal frontier + checkpoint translation. Interacts with C7. → **contract M0f**; scale tests M5
 
@@ -125,6 +124,8 @@ X25519/XChaCha20-Poly1305 are named but there is no ciphertext envelope, nonce c
 
 | Date | Decision |
 |------|----------|
+| 2026-07-16 | **O5 GunDB migration: won't do.** Clean break; no state-snapshot converter or migration tooling. "Successor to GunDB" refers to the developer experience, not data portability. |
+| 2026-07-16 | **Delivery plan adopted:** `plan/PLAN.md` is the path-to-MVP delivery/tracking plan (P0 readiness package, revised M0 packages, M3a/b/c split, decision queue DQ-1..DQ-12). SPEC §10 remains the normative roadmap. |
 | 2026-07-15 | **M0 package-split:** composite M0 delivered as **M0a–M0f** (op encoding; schema/query; Merkle SM; keys/membership; groups/delivery/versions; frontiers/snapshots). C6 excluded from composite M0 exit. Second M0 implementation = TS pure encoder under `conformance/`. Lean proofs do not gate M0. Pre-M0 implementation policy + approved-resolution checklist in SPEC §10. Release labels: `v0.1.0-local`=M1, `v0.1.0-sdk`=M2, `v0.1.0`=M3. (Responds to FINDINGS.GROK C-P1.) |
 | 2026-07-13 | **Relay protocol 0.2:** pruned for simplicity — CBOR-only over WebSocket/DataChannel; 22 message types (`OPS`, `SIGNAL`, `THROTTLE` consolidations); removed JSON mode, session resumption, in-protocol mutual auth, proof-of-work, TCP/QUIC bindings, DNS/well-known discovery, and relay-side causal/group buffering. TLS required outside dev; per-datastore dedup; domain-separated auth signature. |
 | 2026-07-13 | **Roadmap:** M0–M6 milestone plan adopted (SPEC §10), replacing Phase 1–5. M0 spec-stabilization precedes format freezes; no wire/persistent format freezes before composite M0 exit. |

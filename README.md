@@ -14,13 +14,16 @@ Existing `zerodb-core` / `zerodb-storage` crates are **experimental** until M0a 
 | [Relay Protocol Specification](doc/RELAY-SPEC.md) | Draft wire protocol for relay servers (not yet implementation-ready — see ISSUES) |
 | [Issues & Decisions](doc/ISSUES.md) | Tracked specification issues (C/H/O IDs), M0 package map, and the decision log |
 | [Exemplar](doc/EXEMPLAR.md) | Distributed ToDo app used as the end-to-end acceptance target |
-| [Findings (Grok)](FINDINGS.GROK.md) | Plan review that motivated the M0 package-split (2026-07-15) |
+| [Execution Plan](plan/PLAN.md) | Path-to-MVP delivery plan: P0 readiness package, revised M0 packages, decision queue |
+| [Findings (Codex)](plan/FINDINGS.CODEX.md) | Specification & plan review driving the current P0/M0 corrections (2026-07-16) |
+| [Findings (Grok)](plan/FINDINGS.GROK.md) | Historical plan review that motivated the M0 package-split (2026-07-15) |
 
 ## v0.1 scope
 
 - **Runtime:** Rust core + SQLite + CLI (M1 → `v0.1.0-local`); Node/NAPI TypeScript SDK (M2 → `v0.1.0-sdk`); first multi-peer secure product at M3 (`v0.1.0`); browser/WASM later (M4)
 - **Trust model:** mandatory Ed25519 operation signatures + datastore-membership capabilities
-- **Non-goals for v0.1:** entity-level distributed ACLs, mobile bindings, Richtext, hosted relay, GunDB migration tooling
+- **Non-goals for v0.1:** entity-level distributed ACLs, mobile bindings, Richtext, hosted relay
+- **GunDB migration tooling: won't do** (clean break — "successor to GunDB" means the developer experience, not data portability)
 
 ## Roadmap (SPEC §10)
 

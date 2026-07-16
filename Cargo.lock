@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "zerodb-core"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "blake3",
  "serde",
@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "zerodb-storage"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "async-trait",
  "thiserror",

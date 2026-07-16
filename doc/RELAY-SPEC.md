@@ -455,7 +455,7 @@ The relay is authenticated at the transport layer: peers verify the relay's TLS 
 
 Relay connections MUST use TLS (`wss://`) except for loopback and explicitly configured development environments.
 
-**Important:** TLS does NOT replace ZeroDB's operation-level E2E encryption (SPEC.md §6.2). TLS protects the transport; E2E encryption protects operation payloads from the relay itself.
+**Important:** TLS does NOT replace ZeroDB's E2E encryption of operation content (SPEC.md §6.2; whether the encryption unit is individual properties or whole operations is an open choice — ISSUES H8/H10). TLS protects the transport; E2E encryption protects operation content from the relay itself.
 
 ---
 
@@ -513,9 +513,9 @@ A Level 2 relay MUST maintain a Merkle sync tree per datastore, as defined in SP
 
 ### 7.3 Compaction
 
-Compaction follows SPEC.md §7.3 and is gated on ISSUES C7: garbage collection is **disabled by default** until causal-frontier, peer-retirement, and restore semantics are specified and tested. Independent of GC, the relay MUST retain the full oplog for a configurable retention window (RECOMMENDED default: 30 days).
+Compaction follows SPEC.md §7.3 and is gated on ISSUES C7: garbage collection is **disabled by default** until causal-frontier, peer-retirement, and restore semantics are specified and tested. Independent of GC, the relay MUST retain the full oplog: the configurable retention window (RECOMMENDED: 30 days) is a **minimum service commitment**, not a deletion license — deleting operations after the window is still forbidden until C7 GC semantics ship (M5).
 
-Snapshot sync for bootstrapping new peers is deferred to the C7 resolution (M5); this version of the protocol has no snapshot messages.
+Snapshot sync for bootstrapping new peers has no messages in this protocol version; contracts are M0f work and snapshot shipping is scheduled M4 (SPEC §10, ISSUES C7).
 
 ---
 
@@ -649,9 +649,9 @@ Relays are **untrusted intermediaries**. This is a core design principle inherit
 
 **A malicious relay CANNOT:**
 - Forge operations (Ed25519 signatures verify authorship)
-- Undetectably drop operations (Merkle root comparison exposes omissions)
-- Read E2E encrypted operation payloads (relay sees only ciphertext)
-- Impersonate a peer (challenge-response authentication)
+- Undetectably drop operations **from a peer that compares Merkle roots with a second independent source** (§12.3) — a peer relying on this relay alone can be censored
+- Read E2E-encrypted operation content (relay sees only ciphertext; encryption scope per ISSUES H8/H10)
+- Impersonate a peer **to the relay's own auth layer** (challenge-response). Caveat: the forwarded `SIGNAL.sender` field is relay-asserted — signaling identity is not end-to-end authenticated until the signed peer handshake ships (ISSUES H6, M3)
 
 ### 12.2 Metadata Leakage
 
@@ -869,7 +869,7 @@ Pruned (each removable without loss for any current milestone):
 - **DNS SRV / well-known URL / relay-list discovery** — static configuration only.
 - **Relay-side causal-ordering buffering** — peers must handle out-of-order delivery anyway.
 - **Relay-side group-completeness buffering** — unimplementable without group manifests (ISSUES C8).
-- **Snapshot-sync obligation** — no snapshot messages existed; deferred to C7 resolution (M5).
+- **Snapshot-sync obligation** — no snapshot messages existed; contracts M0f, shipping M4 (ISSUES C7).
 - **Per-message envelope `version` field** — version lives in `HELLO`/`WELCOME` only (ISSUES H7).
 - **Metrics table / OTLP section** — condensed to operational guidance.
 

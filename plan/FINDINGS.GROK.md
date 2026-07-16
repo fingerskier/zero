@@ -1,3 +1,5 @@
+> **Historical document (disposition recorded).**  The headline items C-P1–C-P3 were substantially resolved by commit `3aba801` (M0a–M0f split, pre-M0 implementation policy, release labels); remaining items are superseded by the newer review.  Per-finding disposition: [FINDINGS.CODEX.md §7](FINDINGS.CODEX.md) and [PLAN.md §2](PLAN.md).  Do not treat recommendations below as open work items.
+
 # ZeroDB Project Plan Review — FINDINGS.GROK
 
 **Date:** 2026-07-15  

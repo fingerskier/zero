@@ -31,7 +31,7 @@ ZeroDB fixes all of these while keeping what made GunDB compelling: instant loca
 ### Target Environments
 
 - **Browser:** IndexedDB + OPFS storage, WASM core, WebSocket/WebRTC transport
-- **Node.js:** SQLite storage, native Rust or WASM core, TCP/WebSocket transport
+- **Node.js:** SQLite storage, native Rust or WASM core, WebSocket transport
 - **CLI:** First-class `zerodb` command for administration, migration, inspection, and scripting
 - **Mobile (future):** Swift and Kotlin bindings from the Rust core via FFI
 
@@ -62,7 +62,7 @@ ZeroDB fixes all of these while keeping what made GunDB compelling: instant loca
 │    IndexedDB  ·  OPFS  ·  SQLite  ·  (pluggable)     │
 ├──────────────────────────────────────────────────────┤
 │                   Transport Layer                    │
-│    WebSocket  ·  WebRTC  ·  TCP  ·  (pluggable)      │
+│    WebSocket  ·  WebRTC  ·  (pluggable)              │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -83,8 +83,7 @@ zerodb/
 │   └── zerodb-sqlite/    # SQLite adapter (rusqlite)
 ├── zerodb-transport/     # Transport trait + implementations
 │   ├── zerodb-ws/        # WebSocket
-│   ├── zerodb-webrtc/    # WebRTC (browser P2P)
-│   └── zerodb-tcp/       # TCP (server-to-server)
+│   └── zerodb-webrtc/    # WebRTC (browser P2P)
 ├── zerodb-crypto/        # Signing, encryption, key management
 ├── zerodb-wasm/          # wasm-bindgen entry point
 ├── zerodb-napi/          # napi-rs entry point for Node.js
@@ -109,10 +108,11 @@ interface Node {
     updated: HLCTimestamp;
     tombstone: boolean;   // soft delete — GC'd after causal stability
     origin: PeerId;       // peer that created this node
-    signature?: Signature; // optional cryptographic signature
   };
 }
 ```
+
+Materialized entities are multi-author aggregates and carry no signature of their own; signatures live on **operations** (§6.1), where authorship is well-defined.
 
 #### Edge
 
@@ -128,7 +128,6 @@ interface Edge {
     updated: HLCTimestamp;
     tombstone: boolean;
     origin: PeerId;
-    signature?: Signature;
   };
 }
 ```
@@ -281,7 +280,7 @@ The schema is a contract: "when concurrent edits happen to this field, here's ho
 | `MVRegister<T>` | Multi-Value Register. Concurrent writes produce multiple values; application resolves via `db.resolve()`. | Fields where conflicts must be surfaced to the user (e.g., conflicting title edits). |
 | `LWWMap<K, V>` | Map where each key is an independent LWW register. Values must be scalar types (string, number, boolean, null). | Metadata bags, preferences, configuration. |
 | `RGA<T>` | Replicated Growable Array. Ordered sequence with positional insert/delete. | Ordered lists, playlists, task orderings. |
-| `Richtext` | Peritext-style rich text CRDT. Character-level insert/delete + formatting ranges. *(Phase 3)* | Document content, comments, descriptions. |
+| `Richtext` | Peritext-style rich text CRDT. Character-level insert/delete + formatting ranges. *(post-v0.1 — M5 feature track)* | Document content, comments, descriptions. |
 | `Flag` | Enable-Wins Flag. Concurrent enable + disable = enabled. | Feature flags, active/inactive status where enabling should win. |
 
 ### 3.2 Schema Definition
@@ -304,7 +303,7 @@ const User = schema.node('User', {
 
 const Post = schema.node('Post', {
   title:       MVRegister(z.string()),     // surface conflicts to user
-  body:        LWW(z.string()),            // Richtext available in Phase 3
+  body:        LWW(z.string()),            // Richtext is post-v0.1 (M5 feature track)
   viewCount:   GCounter(),                 // grow-only
   score:       PNCounter(),                // upvote/downvote: can increment and decrement
   tags:        ORSet(z.string()),
@@ -412,8 +411,10 @@ Peer A                          Peer B
   │                               │
   │  [Subscribe to live ops]      │  [Subscribe to live ops]
   │                               │
-  ├── LiveOp ◄──────────────────► │  (bidirectional real-time stream)
+  ├── OPS ◄─────────────────────► │  (bidirectional real-time stream)
 ```
+
+*Informative sketch; message names follow the relay protocol registry ([RELAY-SPEC](RELAY-SPEC.md) 0.2 — live streaming is the bidirectional `OPS` message).*
 
 ### 4.2 Sync Modes
 
@@ -429,8 +430,9 @@ The sync protocol operates on abstract streams of operations. The transport laye
 
 - **WebSocket:** Primary for browser-to-relay and Node-to-Node.
 - **WebRTC DataChannel:** Browser-to-browser direct P2P.
-- **TCP:** Server-to-server federation.
 - **Custom:** Implement the `Transport` trait for exotic environments (Bluetooth, serial, carrier pigeon).
+
+TCP/QUIC bindings were removed with relay protocol 0.2; a server-to-server transport profile is post-v0.1 and currently unscheduled.
 
 ### 4.4 Relay Servers
 
@@ -440,7 +442,7 @@ ZeroDB is peer-to-peer, but relay servers exist for:
 - **Always-on persistence:** A relay that stores the full oplog serves as a backup and catch-up point for peers that go offline.
 - **Fan-out efficiency:** Rather than every peer connecting to every other, relays aggregate and redistribute operations.
 
-Relays are untrusted — they cannot forge operations (signatures verify origin) and they cannot censor without detection (Merkle roots must match). A peer can use any relay, run their own, or operate without one in direct P2P mode.
+Relays are untrusted — they cannot forge operations (signatures verify origin), and censorship is detectable **only when a peer compares Merkle roots against a second independent source** ([RELAY-SPEC §12.3](RELAY-SPEC.md)): a sole relay can present a self-consistent censored view. A peer can use any relay, run their own, or operate without one in direct P2P mode.
 
 The relay protocol is drafted in the companion [Relay Protocol Specification](RELAY-SPEC.md), which defines conformance levels, wire format, message types, and operational requirements for third-party relay implementations.  The draft is **not yet implementation-ready**: no relay conformance may be claimed until composite **M0** (§10, packages M0a–M0f) resolves the Critical contracts in [ISSUES.md](ISSUES.md) — notably op encoding (C1/M0a), Merkle traversal (C3/M0c), datastore admission (C4/M0a+M0d), author-key resolution (C5/M0d), and delivery/replay semantics (H4/M0e).
 
@@ -878,7 +880,7 @@ node Post {
 
 **Capability tokens** are operations in the oplog — a peer with the `grant` capability can issue a `GrantCapability` operation that gives another peer a named capability.  Revocation is also an oplog operation.  Because capabilities travel through the oplog, all peers converge on the same access control state.
 
-**Enforcement:** ACL evaluation happens at the storage layer.  When a peer receives an operation via sync, it evaluates the write ACL.  Operations that fail the check are **quarantined** — stored separately, not applied to materialized state, and flagged for the application to review.  This avoids permanent divergence: the originating peer keeps the operation, but receiving peers don't materialize it.
+**Enforcement:** ACL evaluation happens at the storage layer.  When a peer receives an operation via sync, it evaluates the write ACL.  Operations that fail the check are **quarantined** — stored separately, not applied to materialized state, and flagged for the application to review.  Note that quarantine does **not** by itself guarantee convergence: the originating peer and receivers can materialize different accepted sets, which is exactly the unresolved problem in [ISSUES C6](ISSUES.md); this section stays non-normative until C6 defines deterministic accept/reject/quarantine and reevaluation.
 
 **Composing richer policies:** The built-in rules are intentionally minimal primitives.  Applications express complex access patterns — role hierarchies, time-based expiry, approval workflows — by designing their data model around capabilities and set-membership fields, then referencing those fields in declarative ACL rules.  This keeps ACL evaluation deterministic across all peers without requiring custom code execution at the engine level.
 
@@ -1049,7 +1051,7 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 - [ ] Mandatory signing policy, author-key resolution, datastore-membership admission (ISSUES C4, C5)
 - [ ] Complete Merkle/delta wire protocol + delivery/ack/resume semantics (ISSUES C3, H4, H11)
-- [ ] Handshake hardening: fixed encoding through auth, transcript signatures, resumption key proof (ISSUES H5)
+- [ ] Handshake hardening: fixed encoding through auth, transcript signature binding version/limits/transport (ISSUES H5; session resumption was removed in relay 0.2)
 - [ ] E2E encrypted-property envelope; recipient/group key distribution, rotation, revocation (ISSUES H10)
 - [ ] Future-clock acceptance/quarantine rule (ISSUES H1)
 - [ ] Peer handshake shared by direct P2P and relay participation (ISSUES H6)
@@ -1093,7 +1095,7 @@ Only after format and compatibility commitments are stable:
 - [ ] Entity-level distributed ACLs (successor design to ISSUES C6)
 - [ ] Hosted relay service (optional, SaaS)
 - [ ] Visual graph inspector / admin UI
-- [ ] Cypher query optimizer; GunDB migration decision (ISSUES O5)
+- [ ] Cypher query optimizer
 
 ---
 
@@ -1127,7 +1129,6 @@ All specification issues and open decisions are tracked by ID in **[ISSUES.md](I
 | O2 | Schema source of truth — TypeScript vs. `.zerodb` DSL; one canonical, one generated | **M0b** (implement generation M2) |
 | O3 | Query language subset — minimal (MATCH/WHERE/RETURN/ORDER BY/LIMIT) vs. aggregation/paths; grammar + semantics | **M0b** (minimal grammar required for M1) |
 | O4 | WASM size budget; optional modules for RGA/Richtext | M4 |
-| O5 | GunDB migration path (state-snapshot converter) or clean break | unscheduled |
 | O6 | Operation/batch size limits and protocol-level rate limiting | **M0a** provisional limits; rate limiting M3 |
 | O7 | Causal `deps` scale — compact causal frontier + checkpoint translation | **M0f** contract; scale tests M5 |
 
