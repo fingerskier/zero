@@ -888,7 +888,7 @@ node Post {
 
 ## 10. Roadmap
 
-Development proceeds in **milestones**, each ending in a runnable outcome and beginning with failing contract/acceptance tests for its stated behavior (red/green).  The [Exemplar ToDo app](EXEMPLAR.md) supplies end-to-end acceptance scenarios from M1 onward (scenario IDs still to be written).  Blocking issues are tracked by ID in [ISSUES.md](ISSUES.md).
+Development proceeds in **milestones**, each ending in a runnable outcome and beginning with failing contract/acceptance tests for its stated behavior (red/green).  The [Exemplar ToDo app](EXEMPLAR.md) supplies end-to-end acceptance scenarios from M1 onward (scenario IDs **E1–E11**, mapped to [INVARIANTS](INVARIANTS.md) IDs).  Blocking issues are tracked by ID in [ISSUES.md](ISSUES.md).
 
 **v0.1 commitments (decided 2026-07-13):**
 
@@ -934,6 +934,13 @@ Directions marked “direction decided” (e.g. C4, C6) are **not** resolutions 
 **Composite outcome:** independent encoders can produce and validate the same operation, schema-epoch, Merkle, auth, group/delivery, and snapshot/frontier fixtures.  Second implementation for package golden vectors is a **TypeScript pure encoder/decoder** under `conformance/` (no storage, not the full SDK).
 
 **Composite exit gate:** Critical issues **C1–C5, C7–C8** have approved resolutions (checklist above) with red→green conformance tests for each package.  **No wire or persistent format freezes before this composite gate.**  Individual packages may land fixtures and experimental codecs; freezes require composite M0 exit (or an explicit Decision Log exception naming which format subset is frozen).
+
+**Two conformance layers (auditable gate rule):**
+
+1. **M0 contract-model conformance** — every package exit above means its *executable reference model* (pure state machines, fixtures, transcripts — no production backend, no SQLite) is green in Rust and the TypeScript conformance runner.  This and only this closes an M0 package and the composite gate.
+2. **M1 backend conformance** — the SQLite/production backend re-runs the same contracts as implementation tests (crash injection at every named boundary, durability, recovery).  These tests belong to M1's exit gate and are **not** required for any M0 package to close.
+
+A milestone may never both require and defer the same artifact: if a test needs a production backend, it is layer 2 and gates M1, not M0.
 
 **Package order and dependencies:**
 
@@ -1006,7 +1013,7 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 - [ ] Per-format version authority and supported window ([ISSUES H7](ISSUES.md)); map document `0.x-draft` to wire `protocol_version`
 - [ ] Identifier/hash encoding registry shared with RELAY-SPEC ([ISSUES H9](ISSUES.md) contract half)
 
-**Exit gate:** C8 + H4/H7 contracts normative; group/crash/dedup red tests defined (green where pure; local crash green at M1).
+**Exit gate:** C8 + H4/H7 contracts normative; group/crash/dedup suites green against the executable reference model (WAL/crash-point state machine, layer 1 above).  The SQLite crash-injection versions of the same suites are layer 2 and gate M1.
 
 #### M0f — Causal frontiers & snapshot contracts
 
@@ -1022,7 +1029,7 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 ### M1 — Local durable core (Rust + SQLite + CLI)
 
-**Depends on:** composite M0 (at minimum M0a, M0b, M0e contracts; M0c/M0d/M0f may still be in fixture-only form if local-only builds omit sync/auth wire).
+**Depends on:** composite M0 at the **contract-model layer** (layer 1 above) for M0a, M0b, and M0e; M0c/M0d/M0f model suites may close in parallel with early M1 work since local-only builds omit sync/auth wire.  M1 owns the **backend layer** (layer 2): SQLite crash-injection versions of the M0e storage/group contracts become green here.
 
 **Outcome:** offline exemplar CRUD and deterministic restart/replay on a single peer (`v0.1.0-local`).
 
@@ -1033,7 +1040,7 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 - [ ] CLI (M1 subset only): `init`, `schema apply`, `repl`, minimal query (O3), `inspect` — not the full §5.1 surface
 - [ ] Atomic oplog+state transaction and crash recovery (ISSUES C8, local half of M0e)
 
-**Exit gate:** property/model tests, randomized replay equivalence, crash atomicity at every commit boundary, storage contract tests, duplicate/replay tests, offline exemplar acceptance (scenario IDs when EXEMPLAR is expanded).
+**Exit gate:** property/model tests, randomized replay equivalence, crash atomicity at every commit boundary, storage contract tests, duplicate/replay tests, offline exemplar acceptance (**E1, E2 model-level, E4, E9**).
 
 ### M2 — One SDK vertical (Node/NAPI + SQLite)
 
@@ -1043,7 +1050,7 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 - [ ] MVRegister + `resolve` flow, RGA, LWWMap
 - [ ] Schema source-of-truth pipeline implemented (one canonical, one generated — ISSUES O2)
 
-**Exit gate:** binding parity vectors, subscription/mutation/conflict lifecycle tests, artifact-size and baseline performance budgets.
+**Exit gate:** binding parity vectors, subscription/mutation/conflict lifecycle tests, artifact-size and baseline performance budgets (**E11 provisional**).
 
 ### M3 — Secure multi-peer sync
 
@@ -1057,7 +1064,7 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 - [ ] Peer handshake shared by direct P2P and relay participation (ISSUES H6)
 - [ ] Reference relay + conformance harness with golden/negative vectors in two languages (ISSUES H9)
 
-**Exit gate:** two-language interoperability; partition/rejoin; duplicate/loss/reorder; malicious-peer negatives (forged ops, wrong datastore, clock abuse, auth bypass, resource limits); exemplar sharing + private-data scenarios.
+**Exit gate:** two-language interoperability; partition/rejoin; duplicate/loss/reorder; malicious-peer negatives (forged ops, wrong datastore, clock abuse, auth bypass, resource limits); exemplar scenarios **E2 live, E3, E5–E8**.
 
 ### M4 — Browser, P2P & evolution
 
@@ -1069,7 +1076,7 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 - [ ] Snapshot sync with authenticated snapshot format (ISSUES C7, snapshot half)
 - [ ] Large-payload decision implemented (ISSUES O1)
 
-**Exit gate:** upgrade/downgrade/rollback matrix, mixed-schema peers, snapshot + tail recovery, direct/relay parity, browser restart/offline tests.
+**Exit gate:** upgrade/downgrade/rollback matrix, mixed-schema peers (**E10**), snapshot + tail recovery, direct/relay parity, browser restart/offline tests.
 
 ### M5 — Production readiness & GA
 
