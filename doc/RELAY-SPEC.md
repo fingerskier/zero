@@ -230,7 +230,7 @@ Subscription is the single membership verb: it scopes presence, peer listing, si
 }
 ```
 
-> **Note:** datastore admission is currently unauthenticated — any authenticated peer can subscribe to a guessed datastore ID. Datastore-membership capabilities (ISSUES C4) will add an admission credential to this message; enforcement ships M3.
+> **Note:** datastore admission is currently unauthenticated — any authenticated peer can subscribe to a guessed datastore ID. Datastore-membership capabilities (ISSUES C4 → **M0d** format, M3 enforcement) will add an admission credential to this message.
 
 #### `SUBSCRIBED` (0x11) — R→P [L0]
 
@@ -256,7 +256,7 @@ Confirms subscription. Sent once per `SUBSCRIBE` request.
 
 ### 4.3 Sync Protocol (L2)
 
-> **Provisional.** This message set is a placeholder pending ISSUES C3 (canonical Merkle tree, subtree traversal). As written it supports only the degenerate cases: roots already match, or the requester independently knows which hashes it lacks. M0 defines the canonical tree; the complete traversal wire protocol ships M3 and will extend or replace `DELTA_REQUEST`.
+> **Provisional.** This message set is a placeholder pending ISSUES C3 (canonical Merkle tree, subtree traversal). As written it supports only the degenerate cases: roots already match, or the requester independently knows which hashes it lacks. **M0c** defines the canonical tree and sync state-machine transcripts; the complete traversal wire protocol ships M3 and will extend or replace `DELTA_REQUEST`.
 
 A Level 2 relay participates in sync as a peer — it has its own Merkle tree and oplog. Level 0 and Level 1 relays MUST reject these messages with `ERROR` (code `0x401`).
 
@@ -509,7 +509,7 @@ The specification does NOT mandate a storage engine. SQLite, RocksDB, PostgreSQL
 
 ### 7.2 Merkle Sync Tree
 
-A Level 2 relay MUST maintain a Merkle sync tree per datastore, as defined in SPEC.md §2.6 (canonical construction pending ISSUES C3). The tree is a derived structure computed from the oplog and MUST be updated as operations are persisted.
+A Level 2 relay MUST maintain a Merkle sync tree per datastore, as defined in SPEC.md §2.6 (canonical construction pending ISSUES C3 / **M0c**). The tree is a derived structure computed from the oplog and MUST be updated as operations are persisted.
 
 ### 7.3 Compaction
 
@@ -556,7 +556,7 @@ The relay MUST validate operations before forwarding or persisting them. Validat
 
 All Level 1 and Level 2 relays MUST perform these checks on every received operation:
 
-1. **Signature presence and verification:** operation signatures are mandatory for all synced operations (v0.1 trust model). Unsigned operations are rejected with `ERROR` (code `0x301`). Signature verification against the *author's* key requires the author-key resolution contract (ISSUES C5 → M0/M3); until then relays verify what they can resolve and MUST NOT reject forwarded operations solely because the author key is not the transport sender's key.
+1. **Signature presence and verification:** operation signatures are mandatory for all synced operations (v0.1 trust model). Unsigned operations are rejected with `ERROR` (code `0x301`). Signature verification against the *author's* key requires the author-key resolution contract (ISSUES C5 → **M0d** contract / M3 enforcement); until then relays verify what they can resolve and MUST NOT reject forwarded operations solely because the author key is not the transport sender's key.
 
 2. **Content hash integrity:** `BLAKE3(operation_content) == operation.id` — the `OpId` MUST match the content hash (canonical `operation_content` bytes pending ISSUES C1). This detects corruption and tampering.
 

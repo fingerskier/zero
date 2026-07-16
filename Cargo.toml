@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "zerodb-core",
+    "zerodb-storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/fingerskier/zero"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+blake3 = "1"
+uuid = { version = "1", features = ["v7", "serde"] }
+thiserror = "2"

@@ -1,10 +1,10 @@
 # ZeroDB — Technical Specification
 
-**Version:** 0.2.0-draft
-**Date:** 2026-07-13
+**Version:** 0.2.1-draft
+**Date:** 2026-07-15
 **Author:** Matt / Turing Automations
 **Status:** Draft — seeking contributors and co-architects
-**Normative authority:** This document is authoritative for core semantics; [RELAY-SPEC.md](RELAY-SPEC.md) is authoritative for the relay wire protocol.  Open specification issues are tracked by ID in [ISSUES.md](ISSUES.md); no wire or persistent format is frozen until the M0 exit gate (§10).
+**Normative authority:** This document is authoritative for core semantics; [RELAY-SPEC.md](RELAY-SPEC.md) is authoritative for the relay wire protocol.  Open specification issues are tracked by ID in [ISSUES.md](ISSUES.md); no wire or persistent format is frozen until the composite **M0** exit gate (§10) — packages **M0a–M0f**.
 
 ---
 
@@ -194,7 +194,7 @@ Operations form a **causal graph** — each operation references its causal depe
 
 **Note:** The CRDT type for each operation is not stored in the operation itself.  It is resolved from the schema by looking up `(entity.label, field)`.  This avoids redundancy between the schema and the oplog, and prevents inconsistencies where an operation claims a different CRDT type than the schema declares.  Because the schema can evolve, this lookup must be bound to a **schema epoch**, not the mutable current schema ([ISSUES C2](ISSUES.md)).
 
-**Open (M0):** The canonical byte encoding, the hash/signature preimages (including exclusion of `id`/`signature` from their own preimages), the full operation variant set (entity creation, migrations, capability grants, key rotation), and the binding of the datastore ID and schema epoch into the signed context are M0 deliverables ([ISSUES C1, C4](ISSUES.md)).
+**Open (M0a):** The canonical byte encoding, the hash/signature preimages (including exclusion of `id`/`signature` from their own preimages), the full operation variant set (entity creation, migrations, capability grants, key rotation), and the binding of `DatastoreId` (and related context fields) into the signed/hashed preimage are **M0a** deliverables ([ISSUES C1, C4](ISSUES.md)).  Schema-epoch binding of the CRDT type is completed in **M0b** ([ISSUES C2](ISSUES.md)).
 
 ### 2.6 Merkle Sync Tree
 
@@ -211,7 +211,7 @@ Sync protocol walks from root downward: if a subtree matches, skip it entirely. 
 
 The Merkle sync tree is a **derived structure** — it is computed from the oplog and can be rebuilt at any time.  It is not part of the causal graph and carries no semantic meaning beyond enabling efficient sync.
 
-**Open (M0):** Canonical bucket boundaries, leaf ordering, empty-node hashes, tree shape, and the subtree-traversal messages needed to actually execute the root-down walk are M0 deliverables ([ISSUES C3](ISSUES.md)).
+**Open (M0c):** Canonical bucket boundaries, leaf ordering, empty-node hashes, tree shape, and the subtree-traversal messages needed to actually execute the root-down walk are **M0c** deliverables ([ISSUES C3](ISSUES.md)).  Wire shipping of the traversal protocol is M3.
 
 ### 2.7 State Materialization
 
@@ -247,7 +247,7 @@ await db.batch((tx) => {
 - **Sync atomicity:** During sync, a group is transmitted as a unit.  The receiving peer buffers operations until the full group arrives before materializing.
 - **No cross-peer atomicity:** Operation groups do not provide distributed transaction semantics.  Two peers can independently create conflicting groups; CRDT merge rules still apply per-field.
 
-**Open (M0):** Group completion detection (a signed manifest or member count/index) and abort/expiry semantics, plus the storage transaction boundary that makes local atomicity real, are M0 deliverables ([ISSUES C8](ISSUES.md)).
+**Open (M0e):** Group completion detection (a signed manifest or member count/index) and abort/expiry semantics, plus the storage transaction boundary that makes local atomicity real, are **M0e** deliverables ([ISSUES C8](ISSUES.md)).  Local implementation is M1; sync-side group completion is M3.
 
 ### 2.9 Referential Integrity
 
@@ -368,7 +368,7 @@ migration('002_simplify_title', {
 - Changing a CRDT type requires a resolver function to convert existing state.
 - Migrations are themselves operations in the oplog, so they propagate to all peers.
 
-**Open (M0):** JavaScript resolver closures (as in the example above) cannot replicate deterministically across Rust, JS, Swift, Kotlin, and third-party implementations — migrations need a serializable, deterministic resolver DSL, and every data operation needs a schema-epoch binding so historical replay across type changes is well-defined ([ISSUES C2](ISSUES.md)).
+**Open (M0b):** JavaScript resolver closures (as in the example above) cannot replicate deterministically across Rust, JS, Swift, Kotlin, and third-party implementations — migrations need a serializable, deterministic resolver DSL, and every data operation needs a schema-epoch binding so historical replay across type changes is well-defined ([ISSUES C2](ISSUES.md)).  Cross-peer mixed-version migration shipping is M4.
 
 ### 3.4 Schemaless Mode
 
@@ -442,7 +442,7 @@ ZeroDB is peer-to-peer, but relay servers exist for:
 
 Relays are untrusted — they cannot forge operations (signatures verify origin) and they cannot censor without detection (Merkle roots must match). A peer can use any relay, run their own, or operate without one in direct P2P mode.
 
-The relay protocol is drafted in the companion [Relay Protocol Specification](RELAY-SPEC.md), which defines conformance levels, wire format, message types, and operational requirements for third-party relay implementations.  The draft is **not yet implementation-ready**: no relay conformance may be claimed until the M0 exit gate (§10) resolves the Critical issues in [ISSUES.md](ISSUES.md) — notably Merkle traversal (C3), datastore admission (C4), author-key resolution (C5), and delivery/replay semantics (H4).
+The relay protocol is drafted in the companion [Relay Protocol Specification](RELAY-SPEC.md), which defines conformance levels, wire format, message types, and operational requirements for third-party relay implementations.  The draft is **not yet implementation-ready**: no relay conformance may be claimed until composite **M0** (§10, packages M0a–M0f) resolves the Critical contracts in [ISSUES.md](ISSUES.md) — notably op encoding (C1/M0a), Merkle traversal (C3/M0c), datastore admission (C4/M0a+M0d), author-key resolution (C5/M0d), and delivery/replay semantics (H4/M0e).
 
 ---
 
@@ -638,7 +638,7 @@ function PostCard({ post }) {
 
 Each peer generates an **Ed25519 keypair** on first run. The public key hash serves as the `PeerId`. Every operation that syncs to another peer **MUST be signed** — unsigned operation is permitted only for explicitly local-only databases and is non-interoperable.
 
-Because `PeerId` is a hash, a receiving peer cannot recover the author's public key from it.  Forwarded operations (peer bridging, relay-to-relay sync) therefore require the author's key to be carried alongside or resolvable via an authenticated lookup; that distribution/rotation contract is an M0 deliverable ([ISSUES C5](ISSUES.md)).
+Because `PeerId` is a hash, a receiving peer cannot recover the author's public key from it.  Forwarded operations (peer bridging, relay-to-relay sync) therefore require the author's key to be carried alongside or resolvable via an authenticated lookup; that distribution/rotation contract is an **M0d** deliverable ([ISSUES C5](ISSUES.md)).  On-wire enforcement ships M3.
 
 ```
 PeerId = BLAKE3(Ed25519PublicKey)  // full 32 bytes stored; truncated to 16 hex chars for display
@@ -741,7 +741,7 @@ The oplog grows indefinitely without intervention. Compaction strategies:
 
 **GC granularity: time-bucket.**  Garbage collection operates on time buckets (ranges of HLC timestamps) rather than per-entity.  All CRDT metadata, tombstones, and compactable oplog entries within a bucket become eligible for collection once the bucket's upper bound is causally stable — i.e., below every known peer's acknowledged minimum.  This may retain metadata slightly longer for long-lived entities whose last mutation falls in a recent bucket, but it eliminates the need for per-entity causal stability tracking.  The trade-off is acceptable because the approach is eventually consistent: all reclaimable metadata is collected eventually, just not at the earliest possible moment for every individual entity.
 
-**Status: disabled until specified.**  "Acknowledged by all known peers" is not yet a sound causal-stability rule — it needs per-peer durable acknowledgement frontiers, a peer-membership lifecycle (retirement/leases for departed peers), checkpoint identity for comparing compacted and uncompacted histories, and anti-replay commitments that survive compaction.  Compaction and GC remain disabled until these contracts are specified and partition/rejoin, forgotten-peer, late-operation, and restore tests pass ([ISSUES C7](ISSUES.md)).
+**Status: disabled until specified.**  "Acknowledged by all known peers" is not yet a sound causal-stability rule — it needs per-peer durable acknowledgement frontiers, a peer-membership lifecycle (retirement/leases for departed peers), checkpoint identity for comparing compacted and uncompacted histories, and anti-replay commitments that survive compaction.  Contracts are **M0f** deliverables; compaction and GC remain disabled until those contracts exist **and** partition/rejoin, forgotten-peer, late-operation, and restore tests pass at M5 ([ISSUES C7](ISSUES.md)).
 
 ### 7.4 Indexing
 
@@ -886,41 +886,152 @@ node Post {
 
 ## 10. Roadmap
 
-Development proceeds in **milestones**, each ending in a runnable outcome and beginning with failing contract/acceptance tests for its stated behavior (red/green).  The [Exemplar ToDo app](EXEMPLAR.md) supplies end-to-end acceptance scenarios from M1 onward.  Blocking issues are tracked by ID in [ISSUES.md](ISSUES.md).
+Development proceeds in **milestones**, each ending in a runnable outcome and beginning with failing contract/acceptance tests for its stated behavior (red/green).  The [Exemplar ToDo app](EXEMPLAR.md) supplies end-to-end acceptance scenarios from M1 onward (scenario IDs still to be written).  Blocking issues are tracked by ID in [ISSUES.md](ISSUES.md).
 
 **v0.1 commitments (decided 2026-07-13):**
 
-- First runtime: **Rust core + SQLite + CLI** — no binding layer in the first slice.
+- First runtime: **Rust core + SQLite + CLI** — no binding layer in the first slice (ships at **M1**; multi-peer trust/sync at **M3**).
 - Trust model: **mandatory operation signatures + datastore-membership capabilities**; entity-level distributed ACLs deferred (ISSUES C6).
 - Non-goals for v0.1: distributed entity ACLs, mobile bindings, Richtext, hosted relay, GunDB migration tooling.
 
-### M0 — Decisions & executable contracts
+**Release naming (informational):**
 
-**Outcome:** two independent toy implementations can encode, sign, hash, decode, and validate the same operations and Merkle fixtures.
+| Label | Milestone exit | Meaning |
+|-------|----------------|---------|
+| `v0.1.0-local` | M1 | Offline single-peer core + CLI |
+| `v0.1.0-sdk` | M2 | Node/NAPI vertical, byte-identical fixtures |
+| `v0.1.0` | M3 | First multi-peer secure product slice |
 
-- [ ] Query subset and schema-source-of-truth decisions (ISSUES O2, O3)
-- [ ] Canonical operation algebra: all variants (entity creation, property ops, tombstones, migrations, capability grants, key rotation), deterministic CBOR encoding, domain-separated hash/signature preimages including `DatastoreId` + schema epoch (ISSUES C1, C4)
-- [ ] Canonical schema representation, immutable schema epochs, serializable migration DSL (ISSUES C2)
-- [ ] Author-key distribution & rotation model (ISSUES C5)
-- [ ] Canonical Merkle tree structure + complete sync state machine with subtree traversal (ISSUES C3)
-- [ ] Delivery/ack/retry/group contracts and version compatibility policy (ISSUES C8, H4, H7, H11)
-- [ ] Executable Lean 4 models + proof statements drafted while formats are still changeable
-- [ ] Stable requirement/decision IDs; golden and negative fixtures
+### Pre-M0 implementation policy
 
-**Exit gate:** all Critical issues (C1–C8) have approved normative resolutions with red conformance tests.  **No wire or persistent format freezes before this gate.**
+Until composite **M0** exits:
+
+| May land now | Must not freeze yet |
+|--------------|---------------------|
+| Pure CRDT merge math, HLC algorithms, exploratory tests | Wire codecs (CBOR op encoding), content-addressed `OpId` preimages |
+| Throwaway prototypes under explicit `experimental` docs | Persistent on-disk layouts, SQLite schemas intended as stable |
+| Fixture harness scaffolding (empty / red tests) | `PeerId` derivation, Merkle bucket rules, membership capability bytes |
+| Documentation and conformance directory layout | RELAY message extensions claiming completeness |
+
+Existing `zerodb-core` / `zerodb-storage` crates are **experimental** until M0a golden vectors exist.  Types there must not be treated as normative.
+
+### Approved resolution checklist
+
+A Critical (or High-contract) issue is **resolved for M0 package exit** only when all of the following exist:
+
+1. **Normative prose** in SPEC.md and/or RELAY-SPEC.md (not only a direction line in ISSUES.md)
+2. **Machine-readable artifact** where applicable (schema, registry, or fixture set)
+3. **Golden positive + negative vectors** checked by at least one automated harness
+4. **Decision Log** entry in [ISSUES.md](ISSUES.md)
+5. Issue **removed** from the open list per ISSUES policy (outcome preserved in the Decision Log)
+
+Directions marked “direction decided” (e.g. C4, C6) are **not** resolutions until steps 1–5 complete.  **C6** is deferred past v0.1 and is **not** part of the composite M0 exit.
+
+### M0 — Executable contracts (packages M0a–M0f)
+
+**Composite outcome:** independent encoders can produce and validate the same operation, schema-epoch, Merkle, auth, group/delivery, and snapshot/frontier fixtures.  Second implementation for package golden vectors is a **TypeScript pure encoder/decoder** under `conformance/` (no storage, not the full SDK).
+
+**Composite exit gate:** Critical issues **C1–C5, C7–C8** have approved resolutions (checklist above) with red→green conformance tests for each package.  **No wire or persistent format freezes before this composite gate.**  Individual packages may land fixtures and experimental codecs; freezes require composite M0 exit (or an explicit Decision Log exception naming which format subset is frozen).
+
+**Package order and dependencies:**
+
+```
+M0a (ops/encoding) ──► M0b (schema epochs) ──► M0c (Merkle SM)
+        │                      │
+        └──────────► M0d (keys + membership)
+                              │
+M0a ──► M0e (groups, delivery, versions)
+M0c + M0e ──► M0f (frontiers / snapshot contracts)
+```
+
+Lean 4: **proof statements / model sketches** may be drafted anytime during M0 while formats are still changeable.  **Machine-checked proofs do not gate M0** (they track under M5 / assurance).
+
+#### M0a — Operation algebra & canonical encoding
+
+**Outcome:** two encoders (Rust + TypeScript conformance) produce identical `OpId` hashes and signature preimages for the same logical operations.
+
+- [ ] Versioned operation algebra: all variants (entity creation, property ops, tombstones, migrations, capability grants, key rotation)
+- [ ] Fixed identifier encodings/lengths (`OpId`, `PeerId`, `NodeId`, `EdgeId`, `DatastoreId`, `GroupId`, keys, signatures)
+- [ ] Deterministic CBOR rules, duplicate-key rejection, domain-separated hash/signature preimages (exclude `id`/`signature` from their own preimages as specified)
+- [ ] `DatastoreId` (and protocol version) inside the signed/hashed operation context ([ISSUES C1, C4](ISSUES.md) context half)
+- [ ] Provisional operation/batch size limits ([ISSUES O6](ISSUES.md))
+- [ ] Seed [INVARIANTS.md](INVARIANTS.md) with encoding, content-addressing, and SEC statements
+- [ ] Golden byte-level + negative fixtures; generate typed bindings from the canonical schema where practical
+
+**Exit gate:** C1 normative + fixtures green in Rust and TS conformance.  C4 context fields specified (admission credential format may complete in M0d).
+
+#### M0b — Schema IR, epochs & query subset
+
+**Outcome:** every data operation binds to an immutable schema epoch; migrations are a deterministic DSL (no JS closures); M1 has a frozen minimal query grammar.
+
+- [ ] One canonical schema IR with immutable IDs/versions; TypeScript SDK vs `.zerodb` DSL: one canonical, one generated ([ISSUES O2](ISSUES.md) **decide**; implement generation in M2)
+- [ ] Causally ordered schema epoch on every data operation; CRDT variant in the op or bound to an immutable schema version ([ISSUES C2](ISSUES.md))
+- [ ] Serializable migration DSL; mixed-version buffering/rejection and rollback rules (cross-peer shipping M4)
+- [ ] Minimal query subset frozen for M1 CLI: grammar + null/conflict semantics for MATCH/WHERE/RETURN/ORDER BY/LIMIT ([ISSUES O3](ISSUES.md)); aggregation/paths deferred
+
+**Exit gate:** C2 normative; O2/O3 decided; epoch-bound replay vectors (including a type-change migration) red→green.
+
+#### M0c — Merkle tree & sync state machine
+
+**Outcome:** equal oplogs hash to equal roots; unequal roots are traversable to a concrete delta via a published state machine (transcript fixtures), independent of the eventual WebSocket framing.
+
+- [ ] Canonical authenticated tree: bucket boundaries, leaf ordering, empty-node hashes, shape, internal encoding ([ISSUES C3](ISSUES.md))
+- [ ] Path/range subtree request/response (or paginated bucket manifests)
+- [ ] `sync_id`, checkpoint/epoch hooks, pagination/retry, concurrent-write semantics
+- [ ] Complete two-way mismatch-recovery transcript (fixture form; wire ships M3)
+
+**Exit gate:** C3 normative; published root vectors; at least one full mismatch-recovery transcript green in both conformance encoders.
+
+#### M0d — Author keys & datastore membership
+
+**Outcome:** author signatures are verifiable under forwarding; datastore admission has a capability format relays can check without schema.
+
+- [ ] Distinguish transport sender from author; carry or resolve authenticated author key/certificate vs `operation.peer` ([ISSUES C5](ISSUES.md))
+- [ ] Key rotation/revocation and historical-key lookup; out-of-order key records vs signed ops
+- [ ] Relay-verifiable **datastore-membership capabilities** (format + verification algorithm) ([ISSUES C4](ISSUES.md) admission half)
+- [ ] Negative vectors: forged author, wrong datastore, missing membership, revoked key
+
+**Exit gate:** C4 admission + C5 normative; negative auth vectors green.  On-wire enforcement remains M3.
+
+#### M0e — Groups, delivery, ack & version policy
+
+**Outcome:** group completeness and crash/recovery boundaries are specified; delivery is at-least-once with durable anti-replay intent; version authority is named.
+
+- [ ] Signed group manifest (or cardinality/index/member hashes) + abort/expiry ([ISSUES C8](ISSUES.md))
+- [ ] Atomic storage transaction or WAL/replay protocol with explicit crash points (local half implemented M1)
+- [ ] Delivery/dedup/replay: at-least-once semantics, anti-replay surviving compaction intent, per-op batch outcomes, resume cursors, retry/backoff ([ISSUES H4](ISSUES.md))
+- [ ] Receipt vs durable ack contract for L2 relays ([ISSUES H11](ISSUES.md) — contract only; impl M3+)
+- [ ] Per-format version authority and supported window ([ISSUES H7](ISSUES.md)); map document `0.x-draft` to wire `protocol_version`
+- [ ] Identifier/hash encoding registry shared with RELAY-SPEC ([ISSUES H9](ISSUES.md) contract half)
+
+**Exit gate:** C8 + H4/H7 contracts normative; group/crash/dedup red tests defined (green where pure; local crash green at M1).
+
+#### M0f — Causal frontiers & snapshot contracts
+
+**Outcome:** GC and snapshot bootstrap have implementable contracts **without enabling GC**.  No compaction ships until M5 tests pass.
+
+- [ ] Causal frontiers independent of wall-clock; durable peer acks + retirement/lease/reconnect rules ([ISSUES C7](ISSUES.md))
+- [ ] Authenticated checkpoint/snapshot identity, tail boundaries, anti-replay commitments
+- [ ] Root comparison across checkpoints; L2 materializes vs stores peer-produced snapshots (decision recorded)
+- [ ] Compact causal frontier + checkpoint translation for `deps` scale ([ISSUES O7](ISSUES.md) contract)
+- [ ] Explicit: **GC remains disabled** until partition/rejoin, forgotten-peer, late-op, and restore tests pass (M5)
+
+**Exit gate:** C7/O7 contracts normative; snapshot identity fixtures; no GC implementation required.
 
 ### M1 — Local durable core (Rust + SQLite + CLI)
 
-**Outcome:** offline exemplar CRUD and deterministic restart/replay on a single peer.
+**Depends on:** composite M0 (at minimum M0a, M0b, M0e contracts; M0c/M0d/M0f may still be in fixture-only form if local-only builds omit sync/auth wire).
 
-- [ ] Graph entities, HLC, oplog, incremental materializer, operation groups
+**Outcome:** offline exemplar CRUD and deterministic restart/replay on a single peer (`v0.1.0-local`).
+
+- [ ] Graph entities, HLC, oplog, incremental materializer, operation groups (per M0a/M0e)
 - [ ] CRDTs: LWW, GCounter, PNCounter, ORSet, Flag
-- [ ] Deterministic delete/referential-integrity state machine (ISSUES H3)
-- [ ] Canonical schema, strict + schemaless modes, secondary indexes
-- [ ] CLI: `init`, `schema apply`, `repl`, query subset, `inspect`
-- [ ] Atomic oplog+state transaction and crash recovery (ISSUES C8, local half)
+- [ ] Deterministic delete/referential-integrity state machine (ISSUES H3) — prefer derived visibility over multi-peer cascade generation unless a single deterministic emitter is specified
+- [ ] Canonical schema IR (M0b), strict + schemaless modes, secondary indexes
+- [ ] CLI (M1 subset only): `init`, `schema apply`, `repl`, minimal query (O3), `inspect` — not the full §5.1 surface
+- [ ] Atomic oplog+state transaction and crash recovery (ISSUES C8, local half of M0e)
 
-**Exit gate:** property/model tests, randomized replay equivalence, crash atomicity at every commit boundary, storage contract tests, duplicate/replay tests, offline exemplar acceptance.
+**Exit gate:** property/model tests, randomized replay equivalence, crash atomicity at every commit boundary, storage contract tests, duplicate/replay tests, offline exemplar acceptance (scenario IDs when EXEMPLAR is expanded).
 
 ### M2 — One SDK vertical (Node/NAPI + SQLite)
 
@@ -1008,17 +1119,17 @@ Only after format and compatibility commitments are stable:
 
 ## 12. Open Questions
 
-All specification issues and open decisions are tracked by ID in **[ISSUES.md](ISSUES.md)** — Critical (C1–C8) and High (H1–H11) findings gate the roadmap milestones in §10; resolved items move to the Decision Log there.  The open design questions, in brief:
+All specification issues and open decisions are tracked by ID in **[ISSUES.md](ISSUES.md)** — Critical (C1–C8) and High (H1–H11) findings gate the roadmap milestones in §10 (M0 is packages **M0a–M0f**); resolved items move to the Decision Log there.  The open design questions, in brief:
 
 | ID | Question | Decide by |
 |----|----------|-----------|
 | O1 | Large operation payloads — chunking, external blobs, or hard caps (blocks Richtext) | M4 |
-| O2 | Schema source of truth — TypeScript vs. `.zerodb` DSL; one canonical, one generated | M0 |
-| O3 | Query language subset — minimal (MATCH/WHERE/RETURN/ORDER BY/LIMIT) vs. aggregation/paths; grammar + semantics | M0 |
+| O2 | Schema source of truth — TypeScript vs. `.zerodb` DSL; one canonical, one generated | **M0b** (implement generation M2) |
+| O3 | Query language subset — minimal (MATCH/WHERE/RETURN/ORDER BY/LIMIT) vs. aggregation/paths; grammar + semantics | **M0b** (minimal grammar required for M1) |
 | O4 | WASM size budget; optional modules for RGA/Richtext | M4 |
 | O5 | GunDB migration path (state-snapshot converter) or clean break | unscheduled |
-| O6 | Operation/batch size limits and protocol-level rate limiting | M0/M3 |
-| O7 | Causal `deps` scale — compact causal frontier + checkpoint translation | M0/M5 |
+| O6 | Operation/batch size limits and protocol-level rate limiting | **M0a** provisional limits; rate limiting M3 |
+| O7 | Causal `deps` scale — compact causal frontier + checkpoint translation | **M0f** contract; scale tests M5 |
 
 ---
 

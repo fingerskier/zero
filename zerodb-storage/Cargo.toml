@@ -1,0 +1,10 @@
+[package]
+name = "zerodb-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zerodb-core = { path = "../zerodb-core" }
+thiserror.workspace = true
+async-trait = "0.1"
