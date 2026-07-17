@@ -24,14 +24,14 @@ DQ-1..DQ-12 are defined in [PLAN.md §6](PLAN.md). Track resolution here; closur
 
 | ID | Status | Blocks |
 |----|--------|--------|
-| DQ-1 identity model | open | M0d |
-| DQ-2 datastore genesis/root authority | open | M0d |
-| DQ-3 per-op membership verification + historical auth | open | M0d |
-| DQ-4 C8 executable model w/o SQLite | open | M0e.1 |
-| DQ-5 encryption envelope scope + frozen bytes | open | M0a/M0b |
-| DQ-6 extension/blob strategy | open | M0a |
-| DQ-7 durable HLC state rule | open | M0a, M1 |
-| DQ-8 equal-timestamp equivocation/tie-break | open | M0a |
+| DQ-1 identity model | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0d |
+| DQ-2 datastore genesis/root authority | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0d |
+| DQ-3 per-op membership verification + historical auth | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0d |
+| DQ-4 C8 executable model w/o SQLite | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0e.1 |
+| DQ-5 encryption envelope scope + frozen bytes | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0a/M0b |
+| DQ-6 extension/blob strategy | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0a |
+| DQ-7 durable HLC state rule | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0a, M1 |
+| DQ-8 equal-timestamp equivocation/tie-break | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0a |
 | DQ-9 L2 catch-up mandatory for v0.1 | plan default: **yes** | M3a |
 | DQ-10 `unique` removed from v0.1 profile | plan default: **removed** | M0b |
 | DQ-11 resolution approver + records location | plan default: **this ledger** | — |
