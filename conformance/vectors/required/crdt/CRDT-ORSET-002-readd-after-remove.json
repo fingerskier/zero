@@ -1,0 +1,14 @@
+{
+  "id": "CRDT-ORSET-002",
+  "type": "crdt-apply",
+  "crdt": "orset",
+  "invariants": ["I-1", "I-2"],
+  "description": "Re-add after a fully-observed remove: the removal tombstones the old dot, and a later add creates a fresh dot that revives the element under every arrival order.",
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 30, "logical": 0 }, "payload": { "add": "milk" } },
+    { "op_id": "r1", "author": "bb", "ts": { "physical_ms": 31, "logical": 0 }, "payload": { "remove": "milk", "observed": ["a1"] } },
+    { "op_id": "a2", "author": "aa", "ts": { "physical_ms": 32, "logical": 0 }, "payload": { "add": "milk" } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0], [1, 2, 0], [2, 0, 1]],
+  "expect": { "elements": ["milk"] }
+}

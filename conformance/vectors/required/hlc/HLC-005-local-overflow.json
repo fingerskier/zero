@@ -1,0 +1,14 @@
+{
+  "id": "HLC-005",
+  "type": "hlc-transition",
+  "invariants": ["I-4"],
+  "description": "Local logical-counter overflow at a stalled wall clock advances physical time by 1 ms and resets the counter (KERNEL §5 local transition).",
+  "peer": "05",
+  "wall_ms": 3000000,
+  "max_drift_ms": 60000,
+  "resume_from": { "physical_ms": 3000000, "logical": 65535 },
+  "steps": [
+    { "action": "local", "expect": { "physical_ms": 3000001, "logical": 0 } },
+    { "action": "local", "expect": { "physical_ms": 3000001, "logical": 1 } }
+  ]
+}

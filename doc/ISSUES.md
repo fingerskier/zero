@@ -17,7 +17,7 @@ Consolidated 2026-07-13 from the external review (`FINDINGS.CODEX.md`, retired) 
 
 | Package | Contracts | Outcome (summary) | Implement / ship |
 |---------|-----------|-------------------|------------------|
-| **M0a** | C1, C4 *context*, O6 *provisional limits* | Op algebra, deterministic CBOR, preimages, ID encodings | codecs experimental until composite M0 |
+| **M0a** ✓ | C1 ✓, C4 *context* ✓, O6 *provisional limits* ✓ | Op algebra, deterministic CBOR, preimages, ID encodings — resolved 2026-07-16 ([KERNEL.md](KERNEL.md)) | draft-1 profile; byte freeze at composite M0 |
 | **M0b** | C2, O2, O3 | Schema IR, epochs, migration DSL, minimal query grammar | M1 uses IR + query; O2 generation M2; cross-peer migration M4 |
 | **M0c** | C3 | Canonical Merkle tree + sync state-machine transcripts | wire protocol M3 |
 | **M0d** | C4 *admission*, C5 | Author-key model + membership capability format | enforcement M3 |
@@ -38,9 +38,7 @@ Second language for M0 golden vectors: **TypeScript pure encoder/decoder** under
 
 ## Critical — composite M0 exit (C1–C5, C7–C8)
 
-### C1 — Canonical operation format
-`Operation` (SPEC §2.5) lacks: variants for node/edge creation, labels, edge endpoints, migrations, capability grants, and key rotation; the datastore ID, schema epoch, entity kind, and author public key; a canonical byte encoding; and hash/signature preimage rules (including whether `id` and `signature` are excluded from their own preimages). The relay requires `BLAKE3(operation_content) == id` but `operation_content` is undefined — CBOR serializability alone does not select unique bytes.
-**Resolution:** versioned operation algebra + normative wire schema: every variant, fixed identifier encodings/lengths, deterministic CBOR rules, duplicate-key rejection, domain-separated preimages, signed context, golden byte-level vectors; generate Rust/TypeScript types from the canonical schema. → **M0a** (schema-epoch field binding completed with **M0b** / C2)
+*C1 resolved 2026-07-16 (Decision Log below; contract in [KERNEL.md](KERNEL.md); audit record in `plan/LEDGER.md`).*
 
 ### C2 — Schema evolution breaks deterministic replay
 CRDT type is resolved from the *current* mutable schema, but migrations can change types and arrive at peers in different orders; JavaScript resolver closures cannot replicate deterministically across languages; the initial schema has no replicated identity; historical replay after a type change is undefined. Violates the SEC guarantee (SPEC §2.7).
@@ -51,8 +49,9 @@ Core says peers walk the remote tree root-down; the relay protocol exchanges onl
 **Resolution:** canonical authenticated tree + published root vectors; path/range subtree request/response (or paginated bucket manifests); `sync_id`, checkpoint/epoch, pagination/retry rules, concurrent-write semantics; a complete two-way transcript including mismatch recovery. → **M0c** (wire protocol ships M3)
 
 ### C4 — Datastore boundary is neither authorized nor signed
-Datastores are declared replication/RBAC boundaries, but the relay has no datastore admission credential — any authenticated key can subscribe to guessed datastores. The datastore ID sits outside the signed operation, so a valid op can be replayed into another datastore without breaking its signature; global OpId dedup can also suppress legitimate reuse across independent datastores.
-**Resolution (direction decided 2026-07-13):** relay-verifiable **datastore-membership capabilities**; canonical `DatastoreId`, protocol version, and schema epoch inside the signed/hashed operation context; dedup scoped per datastore (already normative in RELAY-SPEC 0.2 §6.2). → **M0a** (signed context fields) + **M0d** (membership capability format); enforcement ships M3.  *Direction only until checklist complete.*
+**Context half resolved 2026-07-16:** `DatastoreId`, `operation_format_version`, and schema epoch are inside the signed/hashed operation context (KERNEL §4.1, vectors OP-001..003) — cross-datastore replay breaks the signature. Dedup scoped per datastore was already normative (RELAY-SPEC 0.2 §6.2).
+**Remaining (admission half):** the relay has no datastore admission credential — any authenticated key can subscribe to guessed datastores.
+**Resolution:** relay-verifiable **datastore-membership capabilities** plus mandatory peer-side author-membership verification (ratified DQ-2/DQ-3 direction). → **M0d** (capability format + verification); enforcement ships M3.
 
 ### C5 — Forwarded author signatures cannot be verified
 Operations carry an author `PeerId` (a key *hash*) and signature but no resolvable public key. Relay validation verifies against the transport sender's key when author == sender; for forwarded history (bridging, relay-to-relay sync) RELAY-SPEC 0.2 currently instructs relays **not to reject** unresolved authors — i.e. forward unverified — which contradicts the validate-every-operation MUST. One deterministic unresolved-author outcome (reject, quarantine, or authenticated key resolution) is required. Key rotation compounds the missing lookup contract.
@@ -124,6 +123,7 @@ X25519/XChaCha20-Poly1305 are named but there is no ciphertext envelope, nonce c
 
 | Date | Decision |
 |------|----------|
+| 2026-07-16 | **C1 resolved — M0a package exit** (checklist complete): normative contract in [KERNEL.md](KERNEL.md) (operation algebra §4, identifiers §2, deterministic CBOR §3, domain-separated preimages §4.4, HLC state machine §5, CRDT semantic kernel §6, encrypted-value envelope §7, BlobRef + limits §8); machine-readable registry `conformance/registry.json`; **24 golden/negative vectors CI-blocking in two independent runners** (Rust harnesses + JS models). C4 **context half** resolved with it (`ds`/`v`/`ep` in the signed preimage); C4 admission half remains open → M0d. **Draft-1 profile: no byte freeze before composite M0** — byte-affecting changes re-run this checklist. Audit record: `plan/LEDGER.md`. |
 | 2026-07-16 | **DQ-1..DQ-8 directions ratified** per `plan/DQ-PROPOSALS.md`: two-level identity (principal root + device certs, PeerId = BLAKE3(device pk)); self-certifying genesis `DatastoreId`; mandatory peer-side causal grant-time authorization (revocation defeats causally-later ops only); C8 closed in M0 via executable WAL reference model; property-level encryption with M0a-frozen envelope/AAD; payload caps + reserved `BlobRef` variant; HLC durability rides the atomic op commit (resume from oplog max); equal timestamps = cross-peer total order `(physical, logical, peer, op_id)` / same-device equivocation quarantine. *Directions only — each resolves via the SPEC §10 checklist in its owning package.* |
 | 2026-07-16 | **O5 GunDB migration: won't do.** Clean break; no state-snapshot converter or migration tooling. "Successor to GunDB" refers to the developer experience, not data portability. |
 | 2026-07-16 | **Delivery plan adopted:** `plan/PLAN.md` is the path-to-MVP delivery/tracking plan (P0 readiness package, revised M0 packages, M3a/b/c split, decision queue DQ-1..DQ-12). SPEC §10 remains the normative roadmap. |

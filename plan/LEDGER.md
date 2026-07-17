@@ -28,10 +28,10 @@ DQ-1..DQ-12 are defined in [PLAN.md §6](PLAN.md). Track resolution here; closur
 | DQ-2 datastore genesis/root authority | direction ratified 2026-07-16; resolves via M0d checklist | M0d |
 | DQ-3 per-op membership verification + historical auth | direction ratified 2026-07-16; resolves via M0d checklist | M0d |
 | DQ-4 C8 executable model w/o SQLite | direction ratified 2026-07-16; resolves via M0e.1 checklist | M0e.1 |
-| DQ-5 encryption envelope scope + frozen bytes | direction ratified 2026-07-16; drafted in KERNEL §7 | M0a/M0b |
-| DQ-6 extension/blob strategy | direction ratified 2026-07-16; drafted in KERNEL §8 | M0a |
-| DQ-7 durable HLC state rule | direction ratified 2026-07-16; drafted in KERNEL §5 | M0a, M1 |
-| DQ-8 equal-timestamp equivocation/tie-break | direction ratified 2026-07-16; drafted in KERNEL §4.5 | M0a |
+| DQ-5 encryption envelope scope + frozen bytes | **resolved 2026-07-16** (C1 closure; KERNEL §7 + ENV vectors); schema annotation half → M0b | M0b remainder |
+| DQ-6 extension/blob strategy | **resolved 2026-07-16** (C1 closure; KERNEL §8 + CRDT-BLOB-001) | — |
+| DQ-7 durable HLC state rule | **resolved 2026-07-16** (contract; KERNEL §5 + HLC-002/005); backend layer re-verified at M1 | M1 layer 2 |
+| DQ-8 equal-timestamp equivocation/tie-break | **resolved 2026-07-16** (C1 closure; KERNEL §4.5 + CRDT-LWW-002) | — |
 | DQ-9 L2 catch-up mandatory for v0.1 | plan default: **yes** | M3a |
 | DQ-10 `unique` removed from v0.1 profile | plan default: **removed** | M0b |
 | DQ-11 resolution approver + records location | plan default: **this ledger** | — |
@@ -42,7 +42,7 @@ DQ-1..DQ-12 are defined in [PLAN.md §6](PLAN.md). Track resolution here; closur
 | ID | Work | Status | Depends | Effort | Entry gate | Exit evidence required | Top risk |
 |----|------|--------|---------|--------|------------|------------------------|----------|
 | VR | Version registry (5 namespaces) | done(`conformance/registry.json` + KERNEL §1) | P0-5 | S | P0 done | registry file + fixtures | naming churn |
-| M0a | Semantic & operation kernel | in-progress — **all planned vector families landed**: 21 vectors CI-blocking both runners (HLC×4, CRDT×8, op-encoding×3, decode-neg×3, sig×1, envelope×2 w/ full AAD-negative matrix); xfail empty. Next: exit checklist (KERNEL review pass, Decision Log, C1 closure, resolved record here) | VR, DQ-5..8 | L | registry merged | model suites green Rust+TS; golden vectors | kernel scope creep |
+| M0a | Semantic & operation kernel | **done(2026-07-16)** — C1 + C4-context resolved via SPEC §10 checklist; 24-vector corpus CI-blocking in both runners; draft-1 profile (byte freeze at composite M0). Evidence in resolved records below | VR, DQ-5..8 | L | registry merged | model suites green Rust+TS; golden vectors ✓ | corpus is a growing baseline, not exhaustive |
 | M0b | Schema IR / epochs / query profile | open | M0a, DQ-10 | M | M0a vectors | epoch replay vectors incl. type change | migration DSL design |
 | M0c | Merkle / sync state machine | open | M0a | M | M0a vectors | root vectors + mismatch transcript | canonical-tree edge cases |
 | M0d | Datastore / identity / authorization | open | M0a, DQ-1..3 | L | M0a vectors | negative auth vectors; control-plane spec | identity-model rework |
@@ -75,3 +75,5 @@ Durable closure records (HX-10): issue ID, outcome, evidence, approver. Decision
 | Issue | Resolved | Outcome | Evidence | Approver |
 |-------|----------|---------|----------|----------|
 | O5 | 2026-07-16 | won't do — clean break, no migration tooling | Decision Log entry; README expectation set (`1db205e`) | fingerskier |
+| C1 (+C4 context, O6 provisional) | 2026-07-16 | M0a package exit: operation algebra/encoding/preimages normative in doc/KERNEL.md; draft-1 profile, byte freeze deferred to composite M0 | Contract commits `da48531`..exit commit; `conformance/registry.json`; 24 vectors in `conformance/vectors/required/` green in Rust harnesses + JS runner (CI blocking); DQ-5..8 directions ratified 2026-07-16 | fingerskier ("go ahead with the exit pass") |
+| DQ-5..DQ-8 | 2026-07-16 | Contract layer resolved inside C1 closure (KERNEL §7, §8, §5, §4.5 respectively); DQ-7 backend durability layer re-verified at M1 | Same vector corpus (ENV-001/002, CRDT-BLOB-001, HLC-002/005, CRDT-LWW-002) | fingerskier |

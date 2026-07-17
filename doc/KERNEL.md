@@ -1,7 +1,7 @@
 # ZeroDB Kernel Specification — Operations, Encoding & Semantics (M0a)
 
 **Version:** 0.1.0-draft
-**Status:** normative **draft** — this is the M0a contract under construction. Nothing here is frozen until the composite M0 gate ([SPEC §10](SPEC.md)); the M0a exit requires every rule below to be backed by golden vectors green in both conformance runners ([conformance/](../conformance/README.md)).
+**Status:** normative (**draft-1 profile**). The M0a exit checklist closed 2026-07-16 ([ISSUES Decision Log](ISSUES.md)): every rule below is backed by golden vectors green in **both** conformance runners and CI-blocking ([conformance/](../conformance/README.md)); the corpus grows as later packages land. Byte-level **freeze** of the draft-1 profile still happens only at the composite M0 gate ([SPEC §10](SPEC.md)) — until then, a byte-affecting change re-runs the resolution checklist rather than bumping `operation_format_version`.
 **Authority:** this document owns the operation algebra, canonical encoding, preimages, identifier encodings, HLC state machine, and the CRDT semantic kernel (ISSUES C1, C4-context, plus the DQ-5/DQ-6/DQ-7/DQ-8 ratified directions). [SPEC.md](SPEC.md) owns architecture and roadmap; [RELAY-SPEC.md](RELAY-SPEC.md) owns relay behavior. The machine-readable constants live in [`conformance/registry.json`](../conformance/registry.json) — on any disagreement, the registry is wrong and MUST be fixed to match this document, never silently vice versa.
 
 Keywords MUST/SHOULD/MAY per RFC 2119. Invariant references (I-*) per [INVARIANTS.md](INVARIANTS.md).
@@ -178,7 +178,7 @@ Vector types this document owns (registered in both runners' dispatch tables as 
 | `crdt-apply` | operation sets applied under stated orders/permutations → expected state; duplicate/replay; equivocation outcomes | I-1, I-2, I-3, I-7 |
 | `envelope` | §7 encrypt/decrypt vectors incl. AAD negatives | I-10 |
 
-Lifecycle per the [promotion policy](../conformance/README.md): vectors land red in `vectors/xfail/`, promote to `vectors/required/` at the M0a gate green in **both** runners. `op-encoding`/`op-preimage`/`envelope` golden bytes are emitted by the first codec implementation and cross-checked by the second; `hlc-transition` and `crdt-apply` vectors are hand-authored from this document (first set ships with this draft).
+Lifecycle per the [promotion policy](../conformance/README.md): vectors land red in `vectors/xfail/` and promote to `vectors/required/` (CI-blocking) as soon as they are green in **both** runners; the M0a gate requires the entire suite promoted. `op-encoding`/`op-preimage`/`envelope` golden bytes are emitted by the first codec implementation and cross-checked by the second; `hlc-transition` and `crdt-apply` vectors are hand-authored from this document (first set ships with this draft).
 
 ---
 

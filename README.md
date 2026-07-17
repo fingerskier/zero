@@ -2,9 +2,8 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** specification draft, pre-implementation.
-Current work is **Milestone 0** (packages **M0a–M0f**) — stabilizing the operation format, schema epochs, Merkle sync, trust-model, delivery, and frontier contracts before any code freezes a wire or persistent format.
-Existing `zerodb-core` / `zerodb-storage` crates are **experimental** until M0a golden vectors exist.
+**Status:** Milestone 0 in progress — **M0a (operation kernel) resolved 2026-07-16**: the [Kernel Specification](doc/KERNEL.md) is backed by a two-language conformance corpus (Rust + independent JS runners, CI-blocking). Remaining M0 packages: M0b–M0f. No wire or persistent format freezes before composite M0.
+`zerodb-core` / `zerodb-storage` crates remain **experimental** until composite M0.
 
 ## Documents
 

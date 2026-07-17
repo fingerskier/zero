@@ -961,15 +961,15 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 > **Contract draft in progress:** [KERNEL.md](KERNEL.md) owns the M0a normative text (operation algebra, deterministic CBOR profile, preimages, HLC state machine, CRDT semantic kernel, encrypted-value envelope, `BlobRef`); machine-readable constants in [`conformance/registry.json`](../conformance/registry.json). First `hlc-transition`/`crdt-apply` vectors are in the xfail lane.
 
-- [ ] Versioned operation algebra: all variants (entity creation, property ops, tombstones, migrations, capability grants, key rotation)
-- [ ] Fixed identifier encodings/lengths (`OpId`, `PeerId`, `NodeId`, `EdgeId`, `DatastoreId`, `GroupId`, keys, signatures)
-- [ ] Deterministic CBOR rules, duplicate-key rejection, domain-separated hash/signature preimages (exclude `id`/`signature` from their own preimages as specified)
-- [ ] `DatastoreId` (and protocol version) inside the signed/hashed operation context ([ISSUES C1, C4](ISSUES.md) context half)
-- [ ] Provisional operation/batch size limits ([ISSUES O6](ISSUES.md))
-- [ ] Seed [INVARIANTS.md](INVARIANTS.md) with encoding, content-addressing, and SEC statements
-- [ ] Golden byte-level + negative fixtures; generate typed bindings from the canonical schema where practical
+- [x] Versioned operation algebra: all variants (entity creation, property ops, tombstones; migration/capability/key-record control tags reserved with preimage participation fixed — bodies land with their owning packages) — [KERNEL §4](KERNEL.md)
+- [x] Fixed identifier encodings/lengths (`OpId`, `PeerId`, `NodeId`, `EdgeId`, `DatastoreId`, `GroupId`, keys, signatures) — KERNEL §2 + registry
+- [x] Deterministic CBOR rules, duplicate-key rejection, domain-separated hash/signature preimages (`id`/`sig` excluded from their own preimages) — KERNEL §3–§4.4
+- [x] `DatastoreId`, `operation_format_version`, and schema epoch inside the signed/hashed operation context ([ISSUES C4](ISSUES.md) context half) — KERNEL §4.1
+- [x] Provisional operation/batch size limits ([ISSUES O6](ISSUES.md)) — registry `limits`
+- [x] Seed [INVARIANTS.md](INVARIANTS.md) with encoding, content-addressing, and SEC statements — I-1..I-17
+- [x] Golden byte-level + negative fixtures in `conformance/vectors/required` (typed-binding generation deferred as impractical pre-M2; harnesses build from vector descriptions)
 
-**Exit gate:** C1 normative + fixtures green in Rust and TS conformance.  C4 context fields specified (admission credential format may complete in M0d).
+**Exit gate:** C1 normative + fixtures green in Rust and TS conformance.  C4 context fields specified (admission credential format completes in M0d).  **Resolved 2026-07-16** (Decision Log; 24-vector corpus CI-blocking in both runners; corpus grows with later packages; draft-1 profile — byte freeze remains gated on composite M0).
 
 #### M0b — Schema IR, epochs & query subset
 

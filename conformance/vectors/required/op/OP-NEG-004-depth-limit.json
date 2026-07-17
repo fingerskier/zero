@@ -1,0 +1,8 @@
+{
+  "id": "OP-NEG-004",
+  "type": "op-decode-negative",
+  "invariants": ["I-6"],
+  "description": "Nesting beyond the registry depth limit (16) must be rejected (KERNEL §3 rule 7): seventeen nested arrays around a uint.",
+  "raw_hex": "8181818181818181818181818181818181" ,
+  "expect_error": "Depth"
+}
