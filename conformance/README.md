@@ -24,5 +24,5 @@ One JSON file per vector: `{ "id": "...", "type": "<contract>", "invariants": ["
 ## Promotion policy
 
 1. New contract fixtures land in `vectors/xfail/` and must be **demonstrated failing** there (red) when activated.
-2. At the owning package's exit gate they move to `vectors/required/` and CI blocks on them (green) in both runners.
+2. A vector moves to `vectors/required/` as soon as it is green in **both** runners — CI then blocks on it, locking the progress in. The owning package's exit gate requires the package's **entire** suite promoted.
 3. Moving a vector back out of `required/` requires a Decision Log entry.

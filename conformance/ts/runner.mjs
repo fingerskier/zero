@@ -10,6 +10,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { runHlcVector } from './models/hlc.mjs';
+import { runCrdtVector } from './models/crdt.mjs';
+
 const laneArg = process.argv.indexOf('--lane');
 const lane = laneArg === -1 ? 'required' : process.argv[laneArg + 1];
 if (!['required', 'xfail'].includes(lane)) {
@@ -18,9 +21,11 @@ if (!['required', 'xfail'].includes(lane)) {
 }
 
 // Vector-type dispatch table. M0 packages register their handlers here
-// (e.g. 'op-encoding' for M0a golden bytes, 'hlc-transition' for the
-// semantic kernel, 'merkle-transcript' for M0c). Empty until contracts land.
-const handlers = {};
+// (e.g. 'op-encoding' for M0a golden bytes, 'merkle-transcript' for M0c).
+const handlers = {
+  'hlc-transition': runHlcVector,
+  'crdt-apply': runCrdtVector,
+};
 
 const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'vectors', lane);
 
