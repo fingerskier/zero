@@ -1,7 +1,7 @@
-pub mod crdt;
 pub mod hlc;
+pub mod kernel;
 pub mod types;
 
-pub use crdt::lww::LWW;
 pub use hlc::{HLC, HLCTimestamp};
+pub use kernel::{Flag, GCounter, KernelOp, Lww, OrSet, Payload, PnCounter, Replica, Value};
 pub use types::*;
