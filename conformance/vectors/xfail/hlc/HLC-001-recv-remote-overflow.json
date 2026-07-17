@@ -1,0 +1,16 @@
+{
+  "id": "HLC-001",
+  "type": "hlc-transition",
+  "invariants": ["I-5"],
+  "description": "recv where the remote is the max physical time with a saturated logical counter must advance physical time (KERNEL §5; regression of scaffold bug A-02). Peers are hex strings expanded to the implementation's PeerId width (first byte, zero-padded).",
+  "peer": "01",
+  "wall_ms": 1000000,
+  "max_drift_ms": 60000,
+  "steps": [
+    {
+      "action": "recv",
+      "remote": { "physical_ms": 1030000, "logical": 65535, "peer": "ff" },
+      "expect": { "physical_ms": 1030001, "logical": 0 }
+    }
+  ]
+}

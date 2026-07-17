@@ -1,0 +1,75 @@
+{
+  "registry_version": 1,
+  "comment": "Machine-readable version/encoding registry (HX-11, H9 seed). Normative prose: doc/KERNEL.md §1-§2. Both conformance runners load this file; a runner whose constants disagree with it fails.",
+
+  "version_namespaces": {
+    "operation_format_version": {
+      "authority": "doc/KERNEL.md",
+      "current": 1,
+      "binding": "persistent; signed and hashed into every operation preimage; a change is a new format generation",
+      "status": "draft-1 (frozen only at composite M0)"
+    },
+    "schema_epoch": {
+      "authority": "doc/SPEC.md §3 (contract M0b)",
+      "current": null,
+      "binding": "per-datastore causally ordered sequence, not a global constant; signed into every data operation",
+      "status": "pending M0b"
+    },
+    "snapshot_format_version": {
+      "authority": "doc/SPEC.md §7 (contract M0f)",
+      "current": null,
+      "binding": "persistent snapshot/checkpoint artifacts only",
+      "status": "pending M0f"
+    },
+    "storage_format_version": {
+      "authority": "zerodb-storage (M1)",
+      "current": null,
+      "binding": "local on-disk layout only; MUST NOT appear on the wire or in any preimage",
+      "status": "pending M1"
+    },
+    "relay_protocol_version": {
+      "authority": "doc/RELAY-SPEC.md",
+      "current": 1,
+      "binding": "connection negotiation only (HELLO/WELCOME); MUST NOT enter any operation preimage or persistent artifact",
+      "status": "draft (RELAY-SPEC 0.2)"
+    }
+  },
+
+  "identifier_encodings": {
+    "OpId":        { "bytes": 32, "derivation": "BLAKE3(id-preimage), doc/KERNEL.md §4.4" },
+    "PeerId":      { "bytes": 32, "derivation": "BLAKE3(Ed25519 device public key)" },
+    "PrincipalId": { "bytes": 32, "derivation": "BLAKE3(Ed25519 principal root public key)" },
+    "DatastoreId": { "bytes": 32, "derivation": "BLAKE3(genesis-preimage), doc/KERNEL.md §4.6" },
+    "NodeId":      { "bytes": 16, "derivation": "UUIDv7 (RFC 9562)" },
+    "EdgeId":      { "bytes": 16, "derivation": "UUIDv7 (RFC 9562)" },
+    "GroupId":     { "bytes": 16, "derivation": "UUIDv7 (RFC 9562)" },
+    "KeyId":       { "bytes": 16, "derivation": "BLAKE3(group symmetric key), truncated to 16 bytes" },
+    "Ed25519PublicKey": { "bytes": 32 },
+    "Ed25519Signature": { "bytes": 64 },
+    "Blake3Hash":  { "bytes": 32 },
+    "HLCTimestamp": { "encoding": "physical_ms u64 + logical u16 + PeerId 32B; field names per doc/KERNEL.md §5" }
+  },
+
+  "domain_separation": {
+    "op_id":        "zerodb-op-id-v1",
+    "op_signature": "zerodb-op-sig-v1",
+    "genesis":      "zerodb-genesis-v1",
+    "device_cert":  "zerodb-device-cert-v1",
+    "value_aad":    "zerodb-value-aad-v1",
+    "relay_auth":   "zerodb-relay-auth-v1"
+  },
+
+  "limits": {
+    "status": "provisional (ISSUES O6; ratified with the O6 fixture set)",
+    "max_operation_bytes": 65536,
+    "max_batch_bytes": 262144,
+    "max_batch_ops": 512,
+    "max_cbor_depth": 16,
+    "max_deps_per_op": 64
+  },
+
+  "blob_codecs": {
+    "0": "raw",
+    "comment": "BlobRef codec registry (DQ-6). v0.1 implementations parse BlobRef and reject with BLOB_UNSUPPORTED."
+  }
+}

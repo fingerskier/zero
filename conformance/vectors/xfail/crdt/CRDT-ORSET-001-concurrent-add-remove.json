@@ -1,0 +1,14 @@
+{
+  "id": "CRDT-ORSET-001",
+  "type": "crdt-apply",
+  "crdt": "orset",
+  "invariants": ["I-1", "I-2"],
+  "description": "Concurrent add wins: remove tombstones only the dots it observed, so the unobserved concurrent add survives under every application order (KERNEL §6).",
+  "ops": [
+    { "op_id": "d1", "author": "aa", "ts": { "physical_ms": 20, "logical": 0 }, "payload": { "add": "urgent" } },
+    { "op_id": "d2", "author": "ff", "ts": { "physical_ms": 21, "logical": 0 }, "payload": { "add": "urgent" } },
+    { "op_id": "r1", "author": "aa", "ts": { "physical_ms": 22, "logical": 0 }, "payload": { "remove": "urgent", "observed": ["d1"] } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0], [1, 2, 0], [0, 2, 1]],
+  "expect": { "elements": ["urgent"] }
+}

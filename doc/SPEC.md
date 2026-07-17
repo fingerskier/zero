@@ -959,6 +959,8 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 **Outcome:** two encoders (Rust + TypeScript conformance) produce identical `OpId` hashes and signature preimages for the same logical operations.
 
+> **Contract draft in progress:** [KERNEL.md](KERNEL.md) owns the M0a normative text (operation algebra, deterministic CBOR profile, preimages, HLC state machine, CRDT semantic kernel, encrypted-value envelope, `BlobRef`); machine-readable constants in [`conformance/registry.json`](../conformance/registry.json). First `hlc-transition`/`crdt-apply` vectors are in the xfail lane.
+
 - [ ] Versioned operation algebra: all variants (entity creation, property ops, tombstones, migrations, capability grants, key rotation)
 - [ ] Fixed identifier encodings/lengths (`OpId`, `PeerId`, `NodeId`, `EdgeId`, `DatastoreId`, `GroupId`, keys, signatures)
 - [ ] Deterministic CBOR rules, duplicate-key rejection, domain-separated hash/signature preimages (exclude `id`/`signature` from their own preimages as specified)

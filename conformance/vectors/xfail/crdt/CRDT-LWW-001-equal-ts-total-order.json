@@ -1,0 +1,13 @@
+{
+  "id": "CRDT-LWW-001",
+  "type": "crdt-apply",
+  "crdt": "lww",
+  "invariants": ["I-1", "I-7"],
+  "description": "Equal (physical, logical) from different peers resolves by the KERNEL §4.5 total order (author tiebreak); both application orders converge (fixes A-03).",
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 100, "logical": 0 }, "payload": { "set": "x" } },
+    { "op_id": "b2", "author": "ff", "ts": { "physical_ms": 100, "logical": 0 }, "payload": { "set": "y" } }
+  ],
+  "orders": [[0, 1], [1, 0]],
+  "expect": { "value": "y" }
+}

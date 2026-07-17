@@ -1,0 +1,17 @@
+{
+  "id": "HLC-003",
+  "type": "hlc-transition",
+  "invariants": ["I-5"],
+  "description": "recv where wall clock, local state, and remote all tie on physical time: counter advances past the max of both logical counters (KERNEL §5).",
+  "peer": "0a",
+  "wall_ms": 5000000,
+  "max_drift_ms": 60000,
+  "resume_from": { "physical_ms": 5000000, "logical": 3 },
+  "steps": [
+    {
+      "action": "recv",
+      "remote": { "physical_ms": 5000000, "logical": 10, "peer": "ff" },
+      "expect": { "physical_ms": 5000000, "logical": 11 }
+    }
+  ]
+}

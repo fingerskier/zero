@@ -1,0 +1,14 @@
+{
+  "id": "HLC-002",
+  "type": "hlc-transition",
+  "invariants": ["I-4"],
+  "description": "restart transition (KERNEL §5 / DQ-7): resume from the persisted oplog maximum while the wall clock has rolled back below it; issued timestamps must continue strictly above the persisted state.",
+  "peer": "04",
+  "wall_ms": 1000000,
+  "max_drift_ms": 60000,
+  "resume_from": { "physical_ms": 9000000, "logical": 7 },
+  "steps": [
+    { "action": "local", "expect": { "physical_ms": 9000000, "logical": 8 } },
+    { "action": "local", "expect": { "physical_ms": 9000000, "logical": 9 } }
+  ]
+}

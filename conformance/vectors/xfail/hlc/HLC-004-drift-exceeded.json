@@ -1,0 +1,16 @@
+{
+  "id": "HLC-004",
+  "type": "hlc-transition",
+  "invariants": ["I-5"],
+  "description": "recv of a remote timestamp beyond max_drift_ms ahead of the wall clock is rejected with DRIFT_EXCEEDED (KERNEL §5; acceptance policy beyond rejection is H1/M3b).",
+  "peer": "0a",
+  "wall_ms": 1000000,
+  "max_drift_ms": 60000,
+  "steps": [
+    {
+      "action": "recv",
+      "remote": { "physical_ms": 1060001, "logical": 0, "peer": "ff" },
+      "expect_error": "DRIFT_EXCEEDED"
+    }
+  ]
+}

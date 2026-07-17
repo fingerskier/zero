@@ -24,14 +24,14 @@ DQ-1..DQ-12 are defined in [PLAN.md §6](PLAN.md). Track resolution here; closur
 
 | ID | Status | Blocks |
 |----|--------|--------|
-| DQ-1 identity model | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0d |
-| DQ-2 datastore genesis/root authority | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0d |
-| DQ-3 per-op membership verification + historical auth | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0d |
-| DQ-4 C8 executable model w/o SQLite | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0e.1 |
-| DQ-5 encryption envelope scope + frozen bytes | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0a/M0b |
-| DQ-6 extension/blob strategy | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0a |
-| DQ-7 durable HLC state rule | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0a, M1 |
-| DQ-8 equal-timestamp equivocation/tie-break | proposal drafted ([DQ-PROPOSALS](DQ-PROPOSALS.md)) | M0a |
+| DQ-1 identity model | direction ratified 2026-07-16 ([DQ-PROPOSALS](DQ-PROPOSALS.md)); resolves via M0d checklist | M0d |
+| DQ-2 datastore genesis/root authority | direction ratified 2026-07-16; resolves via M0d checklist | M0d |
+| DQ-3 per-op membership verification + historical auth | direction ratified 2026-07-16; resolves via M0d checklist | M0d |
+| DQ-4 C8 executable model w/o SQLite | direction ratified 2026-07-16; resolves via M0e.1 checklist | M0e.1 |
+| DQ-5 encryption envelope scope + frozen bytes | direction ratified 2026-07-16; drafted in KERNEL §7 | M0a/M0b |
+| DQ-6 extension/blob strategy | direction ratified 2026-07-16; drafted in KERNEL §8 | M0a |
+| DQ-7 durable HLC state rule | direction ratified 2026-07-16; drafted in KERNEL §5 | M0a, M1 |
+| DQ-8 equal-timestamp equivocation/tie-break | direction ratified 2026-07-16; drafted in KERNEL §4.5 | M0a |
 | DQ-9 L2 catch-up mandatory for v0.1 | plan default: **yes** | M3a |
 | DQ-10 `unique` removed from v0.1 profile | plan default: **removed** | M0b |
 | DQ-11 resolution approver + records location | plan default: **this ledger** | — |
@@ -41,8 +41,8 @@ DQ-1..DQ-12 are defined in [PLAN.md §6](PLAN.md). Track resolution here; closur
 
 | ID | Work | Status | Depends | Effort | Entry gate | Exit evidence required | Top risk |
 |----|------|--------|---------|--------|------------|------------------------|----------|
-| VR | Version registry (5 namespaces) | open | P0-5 | S | P0 done | registry file + fixtures | naming churn |
-| M0a | Semantic & operation kernel | open | VR, DQ-5..8 | L | registry merged | model suites green Rust+TS; golden vectors | kernel scope creep |
+| VR | Version registry (5 namespaces) | done(`conformance/registry.json` + KERNEL §1) | P0-5 | S | P0 done | registry file + fixtures | naming churn |
+| M0a | Semantic & operation kernel | in-progress (KERNEL.md draft; first hlc/crdt vectors in xfail; Rust HLC harness green) | VR, DQ-5..8 | L | registry merged | model suites green Rust+TS; golden vectors | kernel scope creep |
 | M0b | Schema IR / epochs / query profile | open | M0a, DQ-10 | M | M0a vectors | epoch replay vectors incl. type change | migration DSL design |
 | M0c | Merkle / sync state machine | open | M0a | M | M0a vectors | root vectors + mismatch transcript | canonical-tree edge cases |
 | M0d | Datastore / identity / authorization | open | M0a, DQ-1..3 | L | M0a vectors | negative auth vectors; control-plane spec | identity-model rework |
