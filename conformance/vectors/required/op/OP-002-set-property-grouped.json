@@ -1,0 +1,33 @@
+{
+  "id": "OP-002",
+  "type": "op-encoding",
+  "invariants": ["I-6"],
+  "description": "SetProperty (LWW set) with two deps, a group id, and a non-zero epoch — exercises array/nested-map/group encoding and epoch participation in the preimage.",
+  "op": {
+    "v": 1,
+    "ds": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ep": 2,
+    "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ts": { "p": 1700000000000, "l": 65535 },
+    "deps": [
+      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    ],
+    "grp": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "kind": 3,
+    "body": {
+      "t": "map",
+      "v": {
+        "entity": { "t": "bytes", "hex": "ffffffffffffffffffffffffffffffff" },
+        "et": { "t": "uint", "v": 0 },
+        "path": { "t": "text", "v": "title" },
+        "payload": {
+          "t": "map",
+          "v": { "set": { "t": "text", "v": "hello world" } }
+        }
+      }
+    }
+  },
+  "canonical_hex": "a96176016264735820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa62657002627473a2616c19ffff61701b0000018bcfe568006367727050eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee64626f6479a4626574006470617468657469746c6566656e7469747950ffffffffffffffffffffffffffffffff677061796c6f6164a1637365746b68656c6c6f20776f726c646464657073825820cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc5820dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd646b696e640366617574686f725820bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "op_id_hex": "530a11742daeffbb5a354b635d2dc3b0b2bbbe998bfb58ffc9b6ef2625615462"
+}

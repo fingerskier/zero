@@ -1,0 +1,8 @@
+{
+  "id": "OP-NEG-001",
+  "type": "op-decode-negative",
+  "invariants": ["I-6"],
+  "description": "Duplicate map keys must be rejected (KERNEL §3 rule 2): {\"a\": 1, \"a\": 2}.",
+  "raw_hex": "a2616101616102",
+  "expect_error": "DuplicateKey"
+}

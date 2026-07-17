@@ -1,0 +1,8 @@
+{
+  "id": "OP-NEG-003",
+  "type": "op-decode-negative",
+  "invariants": ["I-6"],
+  "description": "Map keys not sorted bytewise by encoded form must be rejected (KERNEL §3 rule 2): {\"b\": 1, \"a\": 2}.",
+  "raw_hex": "a2616201616102",
+  "expect_error": "KeyOrder"
+}

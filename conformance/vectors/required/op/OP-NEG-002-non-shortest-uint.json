@@ -1,0 +1,8 @@
+{
+  "id": "OP-NEG-002",
+  "type": "op-decode-negative",
+  "invariants": ["I-6"],
+  "description": "Non-shortest integer form must be rejected (KERNEL §3 rule 3): 23 encoded with a one-byte argument.",
+  "raw_hex": "1817",
+  "expect_error": "NonCanonical"
+}
