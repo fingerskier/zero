@@ -1,0 +1,13 @@
+{
+  "id": "CRDT-FLAG-002",
+  "type": "crdt-apply",
+  "crdt": "flag",
+  "invariants": ["I-1", "I-2"],
+  "description": "A disable that observed every enable dot turns the flag off, in either arrival order (tombstone defeats its dot even when it arrives first).",
+  "ops": [
+    { "op_id": "f1", "author": "aa", "ts": { "physical_ms": 20, "logical": 0 }, "payload": { "enable": true } },
+    { "op_id": "d1", "author": "bb", "ts": { "physical_ms": 21, "logical": 0 }, "payload": { "disable": true, "observed": ["f1"] } }
+  ],
+  "orders": [[0, 1], [1, 0]],
+  "expect": { "enabled": false }
+}

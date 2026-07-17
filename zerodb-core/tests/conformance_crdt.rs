@@ -33,6 +33,23 @@ fn value(v: &Json) -> Value {
         Json::Bool(b) => Value::Bool(*b),
         Json::Number(n) => Value::Int(n.as_i64().expect("int value")),
         Json::String(s) => Value::Text(s.clone()),
+        Json::Object(o) if o.contains_key("blobref") => {
+            let b = &v["blobref"];
+            let hash: [u8; 32] = {
+                let s = b["hash"].as_str().unwrap();
+                (0..s.len())
+                    .step_by(2)
+                    .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                    .collect::<Vec<u8>>()
+                    .try_into()
+                    .unwrap()
+            };
+            Value::BlobRef {
+                hash,
+                size: b["size"].as_u64().unwrap(),
+                codec: b["codec"].as_u64().unwrap() as u16,
+            }
+        }
         other => panic!("unsupported vector value {other}"),
     }
 }
@@ -111,52 +128,82 @@ fn run_vector(v: &Json, path: &Path) {
             .iter()
             .map(|i| i.as_u64().unwrap() as usize)
             .collect();
-        check_order(crdt, &ops, &sequence, &v["expect"], vector_id, oi);
+        check_order(crdt, &ops, &sequence, v, vector_id, oi);
     }
 }
 
-fn apply_all<S: CrdtState>(ops: &[KernelOp], sequence: &[usize]) -> Replica<S> {
+fn materialize<S: CrdtState>(
+    ops: &[KernelOp],
+    sequence: &[usize],
+    v: &Json,
+    ctx: &str,
+) -> Option<S> {
     let mut replica = Replica::<S>::default();
     for &index in sequence {
-        replica.apply(&ops[index]).expect("apply failed");
+        replica.ingest(&ops[index]);
     }
-    replica
+
+    let expect_equivocation = v["expect_equivocation"].as_bool().unwrap_or(false);
+    assert_eq!(
+        replica.has_equivocation(),
+        expect_equivocation,
+        "{ctx}: equivocation signal"
+    );
+
+    match (replica.state(), v["expect_error"].as_str()) {
+        (Ok(state), None) => Some(state),
+        (Ok(_), Some(want)) => panic!("{ctx}: expected error {want}, got success"),
+        (Err(e), Some(want)) => {
+            let name = match e {
+                zerodb_core::kernel::KernelError::BlobUnsupported => "BLOB_UNSUPPORTED",
+                other => panic!("{ctx}: unexpected error {other}"),
+            };
+            assert_eq!(name, want, "{ctx}: error kind");
+            None
+        }
+        (Err(e), None) => panic!("{ctx}: unexpected error {e}"),
+    }
 }
 
 fn check_order(
     crdt: &str,
     ops: &[KernelOp],
     sequence: &[usize],
-    expect: &Json,
+    v: &Json,
     vector_id: &str,
     oi: usize,
 ) {
     let ctx = format!("{vector_id} order {oi} {sequence:?}");
+    let expect = &v["expect"];
     match crdt {
         "lww" => {
-            let replica = apply_all::<Lww>(ops, sequence);
-            let got = replica.state.value().cloned();
+            let Some(state) = materialize::<Lww>(ops, sequence, v, &ctx) else {
+                return;
+            };
+            let got = state.value().cloned();
             assert_eq!(got, Some(value(&expect["value"])), "{ctx}");
         }
         "gcounter" => {
-            let replica = apply_all::<GCounter>(ops, sequence);
-            assert_eq!(
-                replica.state.value(),
-                expect["value"].as_u64().unwrap(),
-                "{ctx}"
-            );
+            let Some(state) = materialize::<GCounter>(ops, sequence, v, &ctx) else {
+                return;
+            };
+            assert_eq!(state.value(), expect["value"].as_u64().unwrap(), "{ctx}");
         }
         "pncounter" => {
-            let replica = apply_all::<PnCounter>(ops, sequence);
+            let Some(state) = materialize::<PnCounter>(ops, sequence, v, &ctx) else {
+                return;
+            };
             assert_eq!(
-                replica.state.value(),
+                state.value(),
                 expect["value"].as_i64().unwrap() as i128,
                 "{ctx}"
             );
         }
         "orset" => {
-            let replica = apply_all::<OrSet>(ops, sequence);
-            let mut got: Vec<Value> = replica.state.elements().into_iter().cloned().collect();
+            let Some(state) = materialize::<OrSet>(ops, sequence, v, &ctx) else {
+                return;
+            };
+            let mut got: Vec<Value> = state.elements().into_iter().cloned().collect();
             got.sort();
             let mut want: Vec<Value> = expect["elements"]
                 .as_array()
@@ -168,9 +215,11 @@ fn check_order(
             assert_eq!(got, want, "{ctx}");
         }
         "flag" => {
-            let replica = apply_all::<Flag>(ops, sequence);
+            let Some(state) = materialize::<Flag>(ops, sequence, v, &ctx) else {
+                return;
+            };
             assert_eq!(
-                replica.state.enabled(),
+                state.enabled(),
                 expect["enabled"].as_bool().unwrap(),
                 "{ctx}"
             );

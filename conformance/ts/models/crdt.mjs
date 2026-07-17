@@ -23,6 +23,10 @@ const CRDTS = {
   lww: {
     init: () => ({ value: null, key: null }),
     apply(state, op) {
+      // KERNEL §8: BlobRef parses but must not materialize at format v1.
+      if (op.payload.set !== null && typeof op.payload.set === 'object' && op.payload.set.blobref) {
+        throw new Error('BLOB_UNSUPPORTED');
+      }
       const key = totalOrderKey(op);
       if (state.key === null || keyGreater(key, state.key)) {
         state.value = op.payload.set;
@@ -110,15 +114,55 @@ export function runCrdtVector(vector) {
   if (!crdt) throw new Error(`unknown crdt "${vector.crdt}"`);
 
   vector.orders.forEach((order, oi) => {
-    const state = crdt.init();
-    const seen = new Set(); // pipeline step 4: dedup by op_id
+    // Pipeline step 4: dedup by op_id — state is a function of the SET.
+    const ingested = new Map();
     for (const index of order) {
       const op = vector.ops[index];
       if (op === undefined) throw new Error(`order ${oi}: bad op index ${index}`);
-      if (seen.has(op.op_id)) continue;
-      seen.add(op.op_id);
-      crdt.apply(state, op);
+      if (!ingested.has(op.op_id)) ingested.set(op.op_id, op);
     }
+
+    // Pipeline step 5 (KERNEL §4.5): exclude every op in an equivocation
+    // group (same author + equal timestamp, distinct op ids).
+    const groups = new Map();
+    for (const op of ingested.values()) {
+      const key = `${op.author}|${op.ts.physical_ms}|${op.ts.logical}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(op.op_id);
+    }
+    const excluded = new Set();
+    let equivocation = false;
+    for (const ids of groups.values()) {
+      if (ids.length > 1) {
+        equivocation = true;
+        for (const id of ids) excluded.add(id);
+      }
+    }
+    const expectEquivocation = vector.expect_equivocation ?? false;
+    if (equivocation !== expectEquivocation) {
+      throw new Error(`order ${oi}: equivocation signal ${equivocation}, expected ${expectEquivocation}`);
+    }
+
+    // Step 7: apply survivors in a deterministic set order (by op_id).
+    const state = crdt.init();
+    let error = null;
+    try {
+      for (const opId of [...ingested.keys()].sort()) {
+        if (excluded.has(opId)) continue;
+        crdt.apply(state, ingested.get(opId));
+      }
+    } catch (e) {
+      error = e.message;
+    }
+
+    if (vector.expect_error) {
+      if (error !== vector.expect_error) {
+        throw new Error(`order ${oi}: expected error ${vector.expect_error}, got ${error ?? 'success'}`);
+      }
+      return;
+    }
+    if (error !== null) throw new Error(`order ${oi}: unexpected error ${error}`);
+
     const got = crdt.read(state);
     const expect = { ...vector.expect };
     if (expect.elements) expect.elements = [...expect.elements].sort();

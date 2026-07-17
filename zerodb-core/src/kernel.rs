@@ -25,6 +25,14 @@ pub enum Value {
     Int(i64),
     Text(String),
     Bytes(Vec<u8>),
+    /// Content-addressed large-value reference (KERNEL §8). Parsed as a
+    /// first-class value, but materialization is rejected with
+    /// `BLOB_UNSUPPORTED` at `operation_format_version 1`.
+    BlobRef {
+        hash: [u8; 32],
+        size: u64,
+        codec: u16,
+    },
 }
 
 /// Total-order key per KERNEL §4.5: (physical_ms, logical, author, op_id).
@@ -75,6 +83,8 @@ pub enum KernelError {
     WrongPayload,
     #[error("counter amount must be positive")]
     NonPositiveAmount,
+    #[error("BlobRef materialization is unsupported at operation_format_version 1")]
+    BlobUnsupported,
 }
 
 /// Per-type apply rules (KERNEL §6 table). All rules are order-independent
@@ -83,23 +93,70 @@ pub trait CrdtState: Default {
     fn apply(&mut self, op: &KernelOp) -> Result<(), KernelError>;
 }
 
-/// Dedup wrapper: pipeline step 4 in front of any CRDT state.
-#[derive(Debug, Default)]
+/// Pipeline steps 4 (dedup) and 5 (equivocation exclusion) in front of any
+/// CRDT state. The materialized state is a pure function of the ingested
+/// operation SET: dedup by op id, exclude every op in an equivocation
+/// group (same author + equal timestamp, distinct ids — KERNEL §4.5),
+/// then apply the survivors. Order independence is by construction.
+#[derive(Debug)]
 pub struct Replica<S: CrdtState> {
-    seen: BTreeSet<Id>,
-    pub state: S,
+    ops: BTreeMap<Id, KernelOp>,
+    _state: std::marker::PhantomData<S>,
+}
+
+impl<S: CrdtState> Default for Replica<S> {
+    fn default() -> Self {
+        Self {
+            ops: BTreeMap::new(),
+            _state: std::marker::PhantomData,
+        }
+    }
 }
 
 impl<S: CrdtState> Replica<S> {
-    /// Apply an operation exactly once. Returns `false` for a duplicate
-    /// (same op id already applied — a no-op per I-3).
-    pub fn apply(&mut self, op: &KernelOp) -> Result<bool, KernelError> {
-        if self.seen.contains(&op.op_id) {
-            return Ok(false);
+    /// Ingest an operation. Returns `false` for a byte-identical duplicate
+    /// (same op id — a no-op per I-3).
+    pub fn ingest(&mut self, op: &KernelOp) -> bool {
+        if self.ops.contains_key(&op.op_id) {
+            return false;
         }
-        self.state.apply(op)?;
-        self.seen.insert(op.op_id.clone());
-        Ok(true)
+        self.ops.insert(op.op_id.clone(), op.clone());
+        true
+    }
+
+    /// Op ids excluded by the equivocation rule (KERNEL §4.5).
+    fn equivocated(&self) -> BTreeSet<Id> {
+        let mut groups: BTreeMap<(Id, u64, u16), Vec<Id>> = BTreeMap::new();
+        for op in self.ops.values() {
+            groups
+                .entry((op.author.clone(), op.physical_ms, op.logical))
+                .or_default()
+                .push(op.op_id.clone());
+        }
+        groups
+            .into_values()
+            .filter(|ids| ids.len() > 1)
+            .flatten()
+            .collect()
+    }
+
+    /// True if any equivocation group exists among ingested ops — raises
+    /// the advisory device-quarantine signal.
+    pub fn has_equivocation(&self) -> bool {
+        !self.equivocated().is_empty()
+    }
+
+    /// Materialize state from the ingested set (steps 5 + 7).
+    pub fn state(&self) -> Result<S, KernelError> {
+        let excluded = self.equivocated();
+        let mut state = S::default();
+        for op in self.ops.values() {
+            if excluded.contains(&op.op_id) {
+                continue;
+            }
+            state.apply(op)?;
+        }
+        Ok(state)
     }
 }
 
@@ -121,6 +178,9 @@ impl CrdtState for Lww {
         let Payload::LwwSet(value) = &op.payload else {
             return Err(KernelError::WrongPayload);
         };
+        if matches!(value, Value::BlobRef { .. }) {
+            return Err(KernelError::BlobUnsupported);
+        }
         let key = op.order_key();
         if self.winner.as_ref().is_none_or(|w| key > *w) {
             self.value = Some(value.clone());

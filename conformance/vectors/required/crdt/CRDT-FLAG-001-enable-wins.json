@@ -1,0 +1,14 @@
+{
+  "id": "CRDT-FLAG-001",
+  "type": "crdt-apply",
+  "crdt": "flag",
+  "invariants": ["I-1", "I-2"],
+  "description": "Enable-wins flag: a disable tombstones only the enable dots it observed; a concurrent unobserved enable keeps the flag on under every order.",
+  "ops": [
+    { "op_id": "f1", "author": "aa", "ts": { "physical_ms": 20, "logical": 0 }, "payload": { "enable": true } },
+    { "op_id": "d1", "author": "bb", "ts": { "physical_ms": 21, "logical": 0 }, "payload": { "disable": true, "observed": ["f1"] } },
+    { "op_id": "f2", "author": "cc", "ts": { "physical_ms": 22, "logical": 0 }, "payload": { "enable": true } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0], [1, 0, 2]],
+  "expect": { "enabled": true }
+}

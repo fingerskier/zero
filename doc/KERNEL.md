@@ -112,7 +112,7 @@ Signing the `OpId` (rather than the raw preimage) makes signature verification i
 
 - **Total order** over operations: `(ts.physical_ms, ts.logical, author, id)` — bytewise comparison for the last two. Every deterministic choice in the kernel (LWW, arbitrary-but-deterministic iteration) MUST use this order and nothing else.
 - **Duplicate** = byte-identical operation (same `OpId` in the same datastore): idempotent no-op on re-application (I-3).
-- **Equivocation** = two operations with the same `author` and equal `(physical_ms, logical)` but different `OpId`: both operations and the device enter the bounded quarantine (M0d/M0e mechanism); neither materializes until re-certification policy resolves them. Model outcome tag: `EQUIVOCATION`.
+- **Equivocation** = two or more operations with the same `author` and equal `(physical_ms, logical)` but distinct `OpId`s (an *equivocation group*). Exclusion is a pure function of the operation set, so every peer converges (I-1): **every operation in an equivocation group is excluded from materialized state**, regardless of arrival order or when the group was detected. Detection additionally raises an advisory device-quarantine signal to the application; lifting it (re-certification) is M0d policy and never changes the exclusion rule above. Model outcome tag: `EQUIVOCATION`.
 
 ### 4.6 Genesis (DQ-2)
 

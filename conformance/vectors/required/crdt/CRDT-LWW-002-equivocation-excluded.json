@@ -1,0 +1,15 @@
+{
+  "id": "CRDT-LWW-002",
+  "type": "crdt-apply",
+  "crdt": "lww",
+  "invariants": ["I-1", "I-7"],
+  "expect_equivocation": true,
+  "description": "Same author issues two distinct ops with an equal timestamp (equivocation group, KERNEL §4.5): both are excluded from state under every arrival order, the advisory signal is raised, and the honest later write wins.",
+  "ops": [
+    { "op_id": "e1", "author": "aa", "ts": { "physical_ms": 100, "logical": 0 }, "payload": { "set": "x" } },
+    { "op_id": "e2", "author": "aa", "ts": { "physical_ms": 100, "logical": 0 }, "payload": { "set": "y" } },
+    { "op_id": "z1", "author": "bb", "ts": { "physical_ms": 101, "logical": 0 }, "payload": { "set": "z" } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0], [1, 0, 2], [0, 2, 1]],
+  "expect": { "value": "z" }
+}

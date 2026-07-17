@@ -1,0 +1,26 @@
+{
+  "id": "CRDT-BLOB-001",
+  "type": "crdt-apply",
+  "crdt": "lww",
+  "invariants": ["I-1"],
+  "expect_error": "BLOB_UNSUPPORTED",
+  "description": "BlobRef values parse but must not materialize at operation_format_version 1 (KERNEL §8, DQ-6): applying one yields the named BLOB_UNSUPPORTED outcome.",
+  "ops": [
+    {
+      "op_id": "b1",
+      "author": "aa",
+      "ts": { "physical_ms": 50, "logical": 0 },
+      "payload": {
+        "set": {
+          "blobref": {
+            "hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "size": 100000,
+            "codec": 0
+          }
+        }
+      }
+    }
+  ],
+  "orders": [[0]],
+  "expect": null
+}
