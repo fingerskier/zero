@@ -42,7 +42,7 @@ DQ-1..DQ-12 are defined in [PLAN.md §6](PLAN.md). Track resolution here; closur
 | ID | Work | Status | Depends | Effort | Entry gate | Exit evidence required | Top risk |
 |----|------|--------|---------|--------|------------|------------------------|----------|
 | VR | Version registry (5 namespaces) | done(`conformance/registry.json` + KERNEL §1) | P0-5 | S | P0 done | registry file + fixtures | naming churn |
-| M0a | Semantic & operation kernel | in-progress (19 vectors CI-blocking both runners: HLC×4, CRDT×8 incl. equivocation exclusion + PN/Flag + BlobRef reject, op-encoding×3, decode-neg×3, Ed25519 sig×1; remaining: envelope §7 vectors — the last vector family before the exit checklist) | VR, DQ-5..8 | L | registry merged | model suites green Rust+TS; golden vectors | kernel scope creep |
+| M0a | Semantic & operation kernel | in-progress — **all planned vector families landed**: 21 vectors CI-blocking both runners (HLC×4, CRDT×8, op-encoding×3, decode-neg×3, sig×1, envelope×2 w/ full AAD-negative matrix); xfail empty. Next: exit checklist (KERNEL review pass, Decision Log, C1 closure, resolved record here) | VR, DQ-5..8 | L | registry merged | model suites green Rust+TS; golden vectors | kernel scope creep |
 | M0b | Schema IR / epochs / query profile | open | M0a, DQ-10 | M | M0a vectors | epoch replay vectors incl. type change | migration DSL design |
 | M0c | Merkle / sync state machine | open | M0a | M | M0a vectors | root vectors + mismatch transcript | canonical-tree edge cases |
 | M0d | Datastore / identity / authorization | open | M0a, DQ-1..3 | L | M0a vectors | negative auth vectors; control-plane spec | identity-model rework |

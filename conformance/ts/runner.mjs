@@ -17,6 +17,7 @@ import {
   runOpDecodeNegativeVector,
   runOpSignatureVector,
 } from './models/op.mjs';
+import { runEnvelopeVector } from './models/envelope.mjs';
 
 const laneArg = process.argv.indexOf('--lane');
 const lane = laneArg === -1 ? 'required' : process.argv[laneArg + 1];
@@ -33,6 +34,7 @@ const handlers = {
   'op-encoding': runOpEncodingVector,
   'op-decode-negative': runOpDecodeNegativeVector,
   'op-signature': runOpSignatureVector,
+  envelope: runEnvelopeVector,
 };
 
 const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'vectors', lane);

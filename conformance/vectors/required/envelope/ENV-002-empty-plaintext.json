@@ -1,0 +1,16 @@
+{
+  "description": "Empty plaintext still produces an authenticated envelope (tag only) bound to its AAD context; epoch 0 and a different property path from ENV-001.",
+  "ds": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "envelope_hex": "01d086a9c1c83525c96208050eb1baf6ad17161514131211100f0e0d0c0b0a09080706050403020100cbc8bf1ed0a8ab334da20c06cf6236ac",
+  "ep": 0,
+  "id": "ENV-002",
+  "invariants": [
+    "I-10"
+  ],
+  "key_hex": "9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b",
+  "nonce_hex": "17161514131211100f0e0d0c0b0a09080706050403020100",
+  "op_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "path": "title",
+  "plaintext_hex": "",
+  "type": "envelope"
+}

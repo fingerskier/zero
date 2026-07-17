@@ -1,0 +1,16 @@
+{
+  "description": "Encrypted-value envelope golden (KERNEL §7): fixed key/nonce for determinism. Handlers must seal to identical bytes, open to the plaintext, and reject every flipped AAD component (ds, op_id, ep, path), truncation, unknown version, and a wrong key id.",
+  "ds": "1111111111111111111111111111111111111111111111111111111111111111",
+  "envelope_hex": "01bcff11daf7dbb8c789b7bcc4e4529804000102030405060708090a0b0c0d0e0f1011121314151617ed88f086a4cae7a18646c027755620c76feb6401511cfb70f73b0f3f923e",
+  "ep": 2,
+  "id": "ENV-001",
+  "invariants": [
+    "I-10"
+  ],
+  "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "nonce_hex": "000102030405060708090a0b0c0d0e0f1011121314151617",
+  "op_id": "7777777777777777777777777777777777777777777777777777777777777777",
+  "path": "note.body",
+  "plaintext_hex": "61747461636b206174206461776e",
+  "type": "envelope"
+}
