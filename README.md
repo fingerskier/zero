@@ -10,7 +10,8 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | Doc | What it is |
 |-----|------------|
 | [Technical Specification](doc/SPEC.md) | Core architecture, data model, CRDT type system, sync, storage, security — and the milestone roadmap (§10) |
-| [Kernel Specification](doc/KERNEL.md) | M0a contract draft: operation algebra, canonical encoding, preimages, HLC state machine, CRDT semantic kernel |
+| [Kernel Specification](doc/KERNEL.md) | M0a contract (resolved): operation algebra, canonical encoding, preimages, HLC state machine, CRDT semantic kernel |
+| [Schema Specification](doc/SCHEMA.md) | M0b contract draft: schema IR, epochs, migration DSL, v0.1 query subset |
 | [Relay Protocol Specification](doc/RELAY-SPEC.md) | Draft wire protocol for relay servers (not yet implementation-ready — see ISSUES) |
 | [Issues & Decisions](doc/ISSUES.md) | Tracked specification issues (C/H/O IDs), M0 package map, and the decision log |
 | [Exemplar](doc/EXEMPLAR.md) | Distributed ToDo app used as the end-to-end acceptance target |

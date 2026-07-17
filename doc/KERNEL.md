@@ -87,7 +87,7 @@ Every operation is a CBOR map with exactly these keys (order per §3):
 | 2 | `CreateEdge` | `EdgeId`, label, `source: NodeId`, `target: NodeId` | data |
 | 3 | `SetProperty` | entity ref (`NodeId`/`EdgeId` + tag), property path (text), CRDT payload (§6) | data |
 | 4 | `Tombstone` | entity ref | data |
-| 5 | `SchemaEpoch` | epoch record (M0b defines body; variant reserved now) | control |
+| 5 | `SchemaEpoch` | epoch record — body defined in [SCHEMA.md §3](SCHEMA.md) | control |
 | 6 | `CapabilityGrant` | subject `PrincipalId`, scopes, expiry, delegable flag (M0d body detail) | control |
 | 7 | `CapabilityRevoke` | reference to grant `OpId`, reason code | control |
 | 8 | `KeyRecord` | device certificate / rotation / group-key distribution record (M0d body detail) | control |

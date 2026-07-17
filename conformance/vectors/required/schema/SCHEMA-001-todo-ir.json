@@ -1,0 +1,155 @@
+{
+  "canonical_hex": "a4617601646e616d6567746f646f2d7631656564676573a168434f4e5441494e53a3636473748164546f646f6373726381644c6973746570726f7073a0656e6f646573a164546f646fa16570726f7073a464646f6e65a4646372647404647479706501686e756c6c61626c65f469656e63727970746564f46474616773a4646372647403647479706504686e756c6c61626c65f469656e63727970746564f4657469746c65a4646372647400647479706504686e756c6c61626c65f469656e63727970746564f466736563726574a4646372647400647479706504686e756c6c61626c65f569656e63727970746564f5",
+  "description": "Canonical IR bytes and SchemaId (BLAKE3, schema_ir domain) for a small Todo schema (SCHEMA.md §2): one node with lww/flag/orset properties and one encrypted lww property; one edge with endpoint constraints.",
+  "id": "SCHEMA-001",
+  "invariants": [
+    "I-6",
+    "I-17"
+  ],
+  "ir": {
+    "t": "map",
+    "v": {
+      "edges": {
+        "t": "map",
+        "v": {
+          "CONTAINS": {
+            "t": "map",
+            "v": {
+              "dst": {
+                "t": "array",
+                "v": [
+                  {
+                    "t": "text",
+                    "v": "Todo"
+                  }
+                ]
+              },
+              "props": {
+                "t": "map",
+                "v": {}
+              },
+              "src": {
+                "t": "array",
+                "v": [
+                  {
+                    "t": "text",
+                    "v": "List"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "name": {
+        "t": "text",
+        "v": "todo-v1"
+      },
+      "nodes": {
+        "t": "map",
+        "v": {
+          "Todo": {
+            "t": "map",
+            "v": {
+              "props": {
+                "t": "map",
+                "v": {
+                  "done": {
+                    "t": "map",
+                    "v": {
+                      "crdt": {
+                        "t": "uint",
+                        "v": 4
+                      },
+                      "encrypted": {
+                        "t": "bool",
+                        "v": false
+                      },
+                      "nullable": {
+                        "t": "bool",
+                        "v": false
+                      },
+                      "type": {
+                        "t": "uint",
+                        "v": 1
+                      }
+                    }
+                  },
+                  "secret": {
+                    "t": "map",
+                    "v": {
+                      "crdt": {
+                        "t": "uint",
+                        "v": 0
+                      },
+                      "encrypted": {
+                        "t": "bool",
+                        "v": true
+                      },
+                      "nullable": {
+                        "t": "bool",
+                        "v": true
+                      },
+                      "type": {
+                        "t": "uint",
+                        "v": 4
+                      }
+                    }
+                  },
+                  "tags": {
+                    "t": "map",
+                    "v": {
+                      "crdt": {
+                        "t": "uint",
+                        "v": 3
+                      },
+                      "encrypted": {
+                        "t": "bool",
+                        "v": false
+                      },
+                      "nullable": {
+                        "t": "bool",
+                        "v": false
+                      },
+                      "type": {
+                        "t": "uint",
+                        "v": 4
+                      }
+                    }
+                  },
+                  "title": {
+                    "t": "map",
+                    "v": {
+                      "crdt": {
+                        "t": "uint",
+                        "v": 0
+                      },
+                      "encrypted": {
+                        "t": "bool",
+                        "v": false
+                      },
+                      "nullable": {
+                        "t": "bool",
+                        "v": false
+                      },
+                      "type": {
+                        "t": "uint",
+                        "v": 4
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "v": {
+        "t": "uint",
+        "v": 1
+      }
+    }
+  },
+  "schema_id_hex": "3ee7a880badb8823f6ef9ae52c61d5a61c1088695ecdb38406fbed1169c463a5",
+  "type": "schema-ir"
+}

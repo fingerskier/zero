@@ -10,10 +10,10 @@
       "status": "draft-1 (frozen only at composite M0)"
     },
     "schema_epoch": {
-      "authority": "doc/SPEC.md §3 (contract M0b)",
+      "authority": "doc/SCHEMA.md §3",
       "current": null,
-      "binding": "per-datastore causally ordered sequence, not a global constant; signed into every data operation",
-      "status": "pending M0b"
+      "binding": "per-datastore causally ordered sequence, not a global constant; signed into every data operation; IR carries its own schema_ir_format_version (currently 1)",
+      "status": "M0b in progress"
     },
     "snapshot_format_version": {
       "authority": "doc/SPEC.md §7 (contract M0f)",
@@ -51,6 +51,7 @@
   },
 
   "domain_separation": {
+    "schema_ir":    "zerodb-schema-ir-v1",
     "op_id":        "zerodb-op-id-v1",
     "op_signature": "zerodb-op-sig-v1",
     "genesis":      "zerodb-genesis-v1",
@@ -66,6 +67,15 @@
     "max_batch_ops": 512,
     "max_cbor_depth": 16,
     "max_deps_per_op": 64
+  },
+
+  "crdt_tags": {
+    "0": "lww", "1": "gcounter", "2": "pncounter", "3": "orset", "4": "flag",
+    "5": "mvregister (reserved, M2)", "6": "lwwmap (reserved, M2)", "7": "rga (reserved, M2)"
+  },
+
+  "value_type_tags": {
+    "0": "any-scalar", "1": "bool", "2": "int", "3": "float64", "4": "text", "5": "bytes"
   },
 
   "blob_codecs": {
