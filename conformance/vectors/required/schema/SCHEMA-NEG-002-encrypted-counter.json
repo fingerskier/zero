@@ -1,0 +1,14 @@
+{
+  "id": "SCHEMA-NEG-002",
+  "type": "schema-ir-invalid",
+  "invariants": ["I-10", "I-17"],
+  "expect_error": "IR_ENCRYPTED_INVALID",
+  "description": "encrypted: true on a counter must be rejected (SCHEMA.md §2, DQ-5: encrypted values are lww-only in v0.1 — opaque ciphertext cannot merge as a counter).",
+  "ir": { "t": "map", "v": {
+    "v": { "t": "uint", "v": 1 },
+    "nodes": { "t": "map", "v": { "N": { "t": "map", "v": { "props": { "t": "map", "v": {
+      "views": { "t": "map", "v": { "crdt": { "t": "uint", "v": 1 }, "type": { "t": "uint", "v": 2 }, "nullable": { "t": "bool", "v": false }, "encrypted": { "t": "bool", "v": true } } }
+    } } } } } },
+    "edges": { "t": "map", "v": {} }
+  } }
+}

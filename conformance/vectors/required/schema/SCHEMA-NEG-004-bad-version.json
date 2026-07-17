@@ -1,0 +1,12 @@
+{
+  "id": "SCHEMA-NEG-004",
+  "type": "schema-ir-invalid",
+  "invariants": ["I-17"],
+  "expect_error": "IR_VERSION_UNSUPPORTED",
+  "description": "schema_ir_format_version 2 must be rejected by a version-1 implementation (SCHEMA.md §2).",
+  "ir": { "t": "map", "v": {
+    "v": { "t": "uint", "v": 2 },
+    "nodes": { "t": "map", "v": {} },
+    "edges": { "t": "map", "v": {} }
+  } }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "SCHEMA-NEG-003",
+  "type": "schema-ir-invalid",
+  "invariants": ["I-17"],
+  "expect_error": "IR_CRDT_UNSUPPORTED",
+  "description": "Reserved crdt tag 7 (rga, M2) must be rejected in the v0.1 profile (SCHEMA.md §2).",
+  "ir": { "t": "map", "v": {
+    "v": { "t": "uint", "v": 1 },
+    "nodes": { "t": "map", "v": { "N": { "t": "map", "v": { "props": { "t": "map", "v": {
+      "items": { "t": "map", "v": { "crdt": { "t": "uint", "v": 7 }, "type": { "t": "uint", "v": 4 }, "nullable": { "t": "bool", "v": false }, "encrypted": { "t": "bool", "v": false } } }
+    } } } } } },
+    "edges": { "t": "map", "v": {} }
+  } }
+}

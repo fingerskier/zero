@@ -1,0 +1,14 @@
+{
+  "id": "SCHEMA-NEG-001",
+  "type": "schema-ir-invalid",
+  "invariants": ["I-17"],
+  "expect_error": "IR_UNKNOWN_KEY",
+  "description": "A `unique` key smuggled into a PropDef must be rejected as an unknown key (SCHEMA.md §2, DQ-10: unique is structurally unrepresentable in v0.1).",
+  "ir": { "t": "map", "v": {
+    "v": { "t": "uint", "v": 1 },
+    "nodes": { "t": "map", "v": { "N": { "t": "map", "v": { "props": { "t": "map", "v": {
+      "email": { "t": "map", "v": { "crdt": { "t": "uint", "v": 0 }, "type": { "t": "uint", "v": 4 }, "nullable": { "t": "bool", "v": false }, "encrypted": { "t": "bool", "v": false }, "unique": { "t": "bool", "v": true } } }
+    } } } } } },
+    "edges": { "t": "map", "v": {} }
+  } }
+}

@@ -18,7 +18,7 @@ import {
   runOpSignatureVector,
 } from './models/op.mjs';
 import { runEnvelopeVector } from './models/envelope.mjs';
-import { runSchemaIrVector } from './models/schema.mjs';
+import { runSchemaIrVector, runSchemaIrInvalidVector } from './models/schema.mjs';
 
 const laneArg = process.argv.indexOf('--lane');
 const lane = laneArg === -1 ? 'required' : process.argv[laneArg + 1];
@@ -37,6 +37,7 @@ const handlers = {
   'op-signature': runOpSignatureVector,
   envelope: runEnvelopeVector,
   'schema-ir': runSchemaIrVector,
+  'schema-ir-invalid': runSchemaIrInvalidVector,
 };
 
 const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'vectors', lane);

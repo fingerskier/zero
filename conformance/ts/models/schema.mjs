@@ -5,10 +5,15 @@
 
 import { encode, decode, bytesToHex } from './cbor.mjs';
 import { blake3 } from './blake3.mjs';
+import { validateIr } from './schemavalidate.mjs';
 
 const DOMAIN_SCHEMA_IR = new TextEncoder().encode('zerodb-schema-ir-v1');
 
 export function runSchemaIrVector(vector) {
+  const invalid = validateIr(vector.ir);
+  if (invalid !== null) {
+    throw new Error(`positive IR failed validation: ${invalid}`);
+  }
   const bytes = encode(vector.ir);
   const hex = bytesToHex(bytes);
   if (hex !== vector.canonical_hex) {
@@ -25,5 +30,15 @@ export function runSchemaIrVector(vector) {
   const idHex = bytesToHex(blake3(preimage));
   if (idHex !== vector.schema_id_hex) {
     throw new Error(`schema id mismatch: expected ${vector.schema_id_hex}, got ${idHex}`);
+  }
+}
+
+export function runSchemaIrInvalidVector(vector) {
+  const got = validateIr(vector.ir);
+  if (got === null) {
+    throw new Error(`expected ${vector.expect_error}, but the IR validated`);
+  }
+  if (got !== vector.expect_error) {
+    throw new Error(`expected ${vector.expect_error}, got ${got}`);
   }
 }

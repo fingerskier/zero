@@ -1,0 +1,14 @@
+{
+  "id": "SCHEMA-NEG-005",
+  "type": "schema-ir-invalid",
+  "invariants": ["I-17"],
+  "expect_error": "IR_TYPE_MISMATCH",
+  "description": "A gcounter with a text value type must be rejected (SCHEMA.md §2: counters require type int, flags require bool).",
+  "ir": { "t": "map", "v": {
+    "v": { "t": "uint", "v": 1 },
+    "nodes": { "t": "map", "v": { "N": { "t": "map", "v": { "props": { "t": "map", "v": {
+      "count": { "t": "map", "v": { "crdt": { "t": "uint", "v": 1 }, "type": { "t": "uint", "v": 4 }, "nullable": { "t": "bool", "v": false }, "encrypted": { "t": "bool", "v": false } } }
+    } } } } } },
+    "edges": { "t": "map", "v": {} }
+  } }
+}

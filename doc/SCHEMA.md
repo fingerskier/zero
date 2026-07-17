@@ -38,8 +38,19 @@ PropDef   = {
 - **`SchemaId = BLAKE3(domain("schema_ir") ‖ canonical IR bytes)`** (32 B). An IR is immutable; any change is a new `SchemaId` introduced by a new epoch.
 - **`unique` is not representable** (DQ-10): the TS compiler MUST reject `unique:` annotations for v0.1; there is no IR field to smuggle it through.
 - `encrypted: true` on a non-LWW/MVRegister property is a compile **and** decode error (DQ-5 constraint, KERNEL §7).
-- Unknown map keys anywhere in the IR: **reject** (same forward-compatibility stance as KERNEL §3; evolution goes through `schema_ir_format_version`).
+- Unknown map keys anywhere in the IR: **reject** (same forward-compatibility stance as KERNEL §3; evolution goes through `schema_ir_format_version`). This is also what makes `unique` structurally unsmuggleable.
 - Schemaless mode is the absence of an epoch (see §3): every property defaults to `lww / any-scalar / nullable / plaintext`.
+
+**Structural validation** runs on every decoded IR before any use; outcomes are named and conformance-tested:
+
+| Outcome | Raised when |
+|---------|-------------|
+| `IR_UNKNOWN_KEY` | any map carries a key outside its definition (incl. a smuggled `unique`) |
+| `IR_VERSION_UNSUPPORTED` | `v` ≠ 1 |
+| `IR_CRDT_UNSUPPORTED` | crdt tag is reserved (5–7, until M2) or unregistered |
+| `IR_ENCRYPTED_INVALID` | `encrypted: true` with crdt ∉ {lww} (∪ {mvregister} once M2 activates it) |
+| `IR_TYPE_MISMATCH` | counter crdt without `type: int`, or flag crdt without `type: bool` |
+| `IR_INVALID` | any other shape violation (missing required key, wrong CBOR kind, non-map top level) |
 
 ## 3. Schema epochs (C2)
 

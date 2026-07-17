@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
 use zerodb_core::cbor::{Cbor, decode, encode};
+use zerodb_core::schema::{SchemaError, parse_ir};
 
 const DOMAIN_SCHEMA_IR: &[u8] = b"zerodb-schema-ir-v1";
 
@@ -85,14 +86,42 @@ fn schema_ir_vectors() {
     assert!(!files.is_empty(), "no schema-ir vectors found");
     for path in files {
         let v: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        check_vector(&v, &path);
+        match v["type"].as_str().unwrap() {
+            "schema-ir" => check_vector(&v, &path),
+            "schema-ir-invalid" => check_invalid(&v, &path),
+            other => panic!("{path:?}: unknown vector type {other}"),
+        }
+    }
+}
+
+fn error_name(e: &SchemaError) -> &'static str {
+    match e {
+        SchemaError::UnknownKey => "IR_UNKNOWN_KEY",
+        SchemaError::VersionUnsupported => "IR_VERSION_UNSUPPORTED",
+        SchemaError::CrdtUnsupported => "IR_CRDT_UNSUPPORTED",
+        SchemaError::EncryptedInvalid => "IR_ENCRYPTED_INVALID",
+        SchemaError::TypeMismatch => "IR_TYPE_MISMATCH",
+        SchemaError::Invalid => "IR_INVALID",
+    }
+}
+
+fn check_invalid(v: &Json, path: &Path) {
+    let id = v["id"].as_str().unwrap();
+    match parse_ir(&tagged_to_cbor(&v["ir"])) {
+        Ok(_) => panic!("{id} ({path:?}): expected validation failure, IR parsed"),
+        Err(e) => assert_eq!(
+            error_name(&e),
+            v["expect_error"].as_str().unwrap(),
+            "{id}: outcome"
+        ),
     }
 }
 
 fn check_vector(v: &Json, path: &Path) {
-    assert_eq!(v["type"], "schema-ir", "wrong vector type in {path:?}");
     let id = v["id"].as_str().unwrap();
-    let bytes = encode(&tagged_to_cbor(&v["ir"])).unwrap();
+    let ir = tagged_to_cbor(&v["ir"]);
+    parse_ir(&ir).unwrap_or_else(|e| panic!("{id}: positive IR failed validation: {e}"));
+    let bytes = encode(&ir).unwrap();
     assert_eq!(
         bytes_to_hex(&bytes),
         v["canonical_hex"].as_str().unwrap(),
