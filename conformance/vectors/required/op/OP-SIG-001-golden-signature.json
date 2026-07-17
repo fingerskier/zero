@@ -1,0 +1,41 @@
+{
+  "description": "Ed25519 golden signature over the KERNEL §4.4 sig-preimage (domain ‖ OpId) from a fixed test seed; both runners must verify it and reject tampered signature/op-id (deterministic per RFC 8032).",
+  "id": "OP-SIG-001",
+  "invariants": [
+    "I-6",
+    "I-8"
+  ],
+  "op": {
+    "author": "2222222222222222222222222222222222222222222222222222222222222222",
+    "body": {
+      "t": "map",
+      "v": {
+        "label": {
+          "t": "text",
+          "v": "User"
+        },
+        "node": {
+          "hex": "44444444444444444444444444444444",
+          "t": "bytes"
+        }
+      }
+    },
+    "deps": [
+      "3333333333333333333333333333333333333333333333333333333333333333"
+    ],
+    "ds": "1111111111111111111111111111111111111111111111111111111111111111",
+    "ep": 0,
+    "grp": null,
+    "kind": 1,
+    "ts": {
+      "l": 3,
+      "p": 1000000
+    },
+    "v": 1
+  },
+  "op_id_hex": "d953bbd9eec1f48445a4648b5cf62e2c7b9b93ac0e0c911e70628adc5c74de1b",
+  "pub_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+  "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+  "sig_hex": "962148201448be72453eb0f7f68804ca4fc308216563be5b432e2ce225b9ec35aa3879788a321f6a42904a0d0a099c24c30c86aac123b19b3e588556fdf09609",
+  "type": "op-signature"
+}

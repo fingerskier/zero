@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value as Json;
 use zerodb_core::cbor::{Cbor, CborError, decode};
 use zerodb_core::op::{OpEnvelope, OpTs};
+use zerodb_core::sign::{sign_op, verify_op};
 
 fn hex_to_bytes(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -124,6 +125,7 @@ fn op_vectors() {
         match v["type"].as_str().unwrap() {
             "op-encoding" => check_encoding(&v, &path),
             "op-decode-negative" => check_negative(&v, &path),
+            "op-signature" => check_signature(&v, &path),
             other => panic!("{path:?}: unknown vector type {other}"),
         }
     }
@@ -161,22 +163,76 @@ fn check_negative(v: &Json, path: &Path) {
     }
 }
 
+fn check_signature(v: &Json, path: &Path) {
+    let id = v["id"].as_str().unwrap();
+    let envelope = envelope_from_json(&v["op"]);
+    let op_id = envelope.op_id().unwrap();
+    assert_eq!(
+        bytes_to_hex(&op_id),
+        v["op_id_hex"].as_str().unwrap(),
+        "{id} ({path:?}): op id"
+    );
+
+    let seed = fixed::<32>(v["seed_hex"].as_str().unwrap());
+    let (pubkey, sig) = sign_op(&seed, &op_id);
+    assert_eq!(
+        bytes_to_hex(&pubkey),
+        v["pub_hex"].as_str().unwrap(),
+        "{id}: public key"
+    );
+    assert_eq!(
+        bytes_to_hex(&sig),
+        v["sig_hex"].as_str().unwrap(),
+        "{id}: signature"
+    );
+    assert!(
+        verify_op(&pubkey, &op_id, &sig),
+        "{id}: golden signature must verify"
+    );
+
+    let mut bad_sig = sig;
+    bad_sig[0] ^= 1;
+    assert!(
+        !verify_op(&pubkey, &op_id, &bad_sig),
+        "{id}: tampered signature verified"
+    );
+    let mut bad_id = op_id;
+    bad_id[0] ^= 1;
+    assert!(
+        !verify_op(&pubkey, &bad_id, &sig),
+        "{id}: signature verified over tampered op id"
+    );
+}
+
 /// Authoring helper: prints canonical/op-id hex for every op-encoding vector.
 #[test]
 #[ignore]
 fn generate_op_vector_hex() {
     for path in vector_files("op") {
-        let v: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        if v["type"] != "op-encoding" {
+        let mut v: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let kind = v["type"].as_str().unwrap().to_owned();
+        if kind != "op-encoding" && kind != "op-signature" {
+            continue;
+        }
+        if v["canonical_hex"] != "TBD" && v["op_id_hex"] != "TBD" && v["sig_hex"] != "TBD" {
             continue;
         }
         let envelope = envelope_from_json(&v["op"]);
         let bytes = envelope.id_preimage_body().unwrap();
-        println!("{}", path.display());
-        println!("  canonical_hex: {}", bytes_to_hex(&bytes));
-        println!(
-            "  op_id_hex:     {}",
-            bytes_to_hex(&envelope.op_id().unwrap())
-        );
+        let op_id = envelope.op_id().unwrap();
+        if kind == "op-encoding" {
+            v["canonical_hex"] = Json::String(bytes_to_hex(&bytes));
+        }
+        v["op_id_hex"] = Json::String(bytes_to_hex(&op_id));
+        if kind == "op-signature" {
+            let seed = fixed::<32>(v["seed_hex"].as_str().unwrap());
+            let (pubkey, sig) = sign_op(&seed, &op_id);
+            v["pub_hex"] = Json::String(bytes_to_hex(&pubkey));
+            v["sig_hex"] = Json::String(bytes_to_hex(&sig));
+        }
+        let mut pretty = serde_json::to_string_pretty(&v).unwrap();
+        pretty.push('\n');
+        fs::write(&path, pretty).unwrap();
+        println!("filled {}", path.display());
     }
 }

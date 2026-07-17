@@ -12,7 +12,11 @@ import { fileURLToPath } from 'node:url';
 
 import { runHlcVector } from './models/hlc.mjs';
 import { runCrdtVector } from './models/crdt.mjs';
-import { runOpEncodingVector, runOpDecodeNegativeVector } from './models/op.mjs';
+import {
+  runOpEncodingVector,
+  runOpDecodeNegativeVector,
+  runOpSignatureVector,
+} from './models/op.mjs';
 
 const laneArg = process.argv.indexOf('--lane');
 const lane = laneArg === -1 ? 'required' : process.argv[laneArg + 1];
@@ -28,6 +32,7 @@ const handlers = {
   'crdt-apply': runCrdtVector,
   'op-encoding': runOpEncodingVector,
   'op-decode-negative': runOpDecodeNegativeVector,
+  'op-signature': runOpSignatureVector,
 };
 
 const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'vectors', lane);

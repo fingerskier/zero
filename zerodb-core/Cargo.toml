@@ -10,6 +10,7 @@ serde.workspace = true
 blake3.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
+ed25519-dalek.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
