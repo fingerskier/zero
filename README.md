@@ -2,7 +2,7 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** Milestone 0 in progress — **M0a (operation kernel) resolved 2026-07-16**: the [Kernel Specification](doc/KERNEL.md) is backed by a two-language conformance corpus (Rust + independent JS runners, CI-blocking). Remaining M0 packages: M0b–M0f. No wire or persistent format freezes before composite M0.
+**Status:** Milestone 0 in progress — **M0a (operation kernel) resolved 2026-07-16**; **M0b (schema IR, epochs, migrations, query subset) near exit** — all five conformance vector families promoted, remaining: the TS→IR compiler tool + C2 checklist. The [Kernel](doc/KERNEL.md) and [Schema](doc/SCHEMA.md) specifications are backed by a two-language conformance corpus (Rust + independent JS runners, CI-blocking). Remaining M0 packages: M0c–M0f. No wire or persistent format freezes before composite M0.
 `zerodb-core` / `zerodb-storage` crates remain **experimental** until composite M0.
 
 ## Documents
@@ -15,9 +15,10 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [Relay Protocol Specification](doc/RELAY-SPEC.md) | Draft wire protocol for relay servers (not yet implementation-ready — see ISSUES) |
 | [Issues & Decisions](doc/ISSUES.md) | Tracked specification issues (C/H/O IDs), M0 package map, and the decision log |
 | [Exemplar](doc/EXEMPLAR.md) | Distributed ToDo app used as the end-to-end acceptance target |
-| [Execution Plan](plan/PLAN.md) | Path-to-MVP delivery plan: P0 readiness package, revised M0 packages, decision queue |
-| [Findings (Codex)](plan/FINDINGS.CODEX.md) | Specification & plan review driving the current P0/M0 corrections (2026-07-16) |
-| [Findings (Grok)](plan/FINDINGS.GROK.md) | Historical plan review that motivated the M0 package-split (2026-07-15) |
+| [Execution Plan](plan/PLAN.md) | Path-to-MVP delivery status: blocker rollup, M0 package status, decision queue (live tracking in [LEDGER.md](plan/LEDGER.md)) |
+| [Delivery Ledger](plan/LEDGER.md) | Canonical work tracker — per-item status, dependencies, exit evidence, resolved-issue audit trail |
+| [Findings (Codex)](plan/FINDINGS.CODEX.md) | Historical review that drove the P0/M0 corrections, now executed (2026-07-16) |
+| [Findings (Grok)](plan/FINDINGS.GROK.md) | Historical review that motivated the M0 package-split (2026-07-15) |
 
 ## v0.1 scope
 
@@ -38,7 +39,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
   Exit: C1–C5, C7–C8 resolved with conformance fixtures; **no format freezes before composite M0**
 - **M1** — local durable core: Rust + SQLite + CLI (`v0.1.0-local`)
 - **M2** — Node/NAPI TypeScript SDK vertical, byte-identical to the core (`v0.1.0-sdk`)
-- **M3** — secure multi-peer sync: signatures, admission, E2E encryption, reference relay + harness (`v0.1.0`)
+- **M3** — secure multi-peer sync in three gates: **M3a** durable convergence (L2 relay + offline catch-up), **M3b** security (signatures, admission, E2E encryption), **M3c** interop TS wire peer + release (`v0.1.0`)
 - **M4** — browser storage, WebRTC P2P, cross-peer schema migration, snapshot bootstrap
 - **M5** — production readiness & GA: compaction/GC, backup/restore, fuzzing, Lean 4 proofs, external audit
 - **M6** — ecosystem: mobile/Flutter bindings over a shared C ABI, plugins, hosted relay, tooling

@@ -1,3 +1,5 @@
+> **Historical document (dispositioned).**  This review drove the P0 readiness package and the M0-package corrections, all now executed — its CX-/HX-/A-/D- findings map to completed or tracked work.  Live status is in [LEDGER.md](LEDGER.md); blocker rollup in [PLAN.md §2](PLAN.md).  Do not treat findings below as open work items.
+
 # ZeroDB Specification & Plan Review — FINDINGS.CODEX
 
 **Date:** 2026-07-16

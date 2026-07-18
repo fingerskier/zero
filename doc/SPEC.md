@@ -285,7 +285,7 @@ The schema is a contract: "when concurrent edits happen to this field, here's ho
 
 ### 3.2 Schema Definition
 
-Schemas are defined in TypeScript (for the SDK) and a compact DSL (for the CLI and migration tooling):
+Schemas are **authored in TypeScript** and compiled deterministically to the canonical **schema IR** ([SCHEMA.md](SCHEMA.md) §1–§2) — the only representation the core evaluates, replicates, or hashes (ISSUES O2, decided 2026-07-16; the earlier `.zerodb` DSL input format is dropped). The CLI consumes IR files emitted by the standalone TS→IR compiler (ships ≤ M1).
 
 **TypeScript SDK:**
 
@@ -317,57 +317,30 @@ const Authored = schema.edge('AUTHORED', {
 });
 ```
 
-**CLI DSL (`.zerodb` schema files):**
-
-```
-node User {
-  name        LWW<string>
-  email       LWW<string>
-  bio         LWW<string?>
-  tags        ORSet<string>
-  loginCount  GCounter
-  settings    LWWMap<string, string>
-}
-
-node Post {
-  title       MVRegister<string>
-  body        LWW<string>
-  viewCount   GCounter
-  score       PNCounter
-  tags        ORSet<string>
-  published   LWW<bool>
-}
-
-edge AUTHORED (User -> Post) {
-  role        LWW<"author" | "editor" | "contributor">
-}
-```
+**Canonical IR (identity layer):** the compiled form is a canonical-CBOR map with `SchemaId = BLAKE3(domain("schema_ir") ‖ IR bytes)`; same logical schema ⇒ same bytes regardless of TS formatting. Structure, validation outcomes, and the `unique`/`encrypted` constraints are normative in [SCHEMA.md §2](SCHEMA.md).
 
 ### 3.3 Schema Evolution
 
-Schemas evolve through **migrations** — declarative operations that transform the graph:
+Schemas evolve through **schema epochs** carrying **migrations as data, not code** ([SCHEMA.md §3–§4](SCHEMA.md)): a new epoch introduces a new immutable IR plus a list of migration steps (`add_prop`, `remove_prop`, `change_crdt`, `add_entity`, `remove_entity`) whose type-change transforms come from a **closed, versioned registry of total deterministic functions** — never JavaScript closures, which cannot replicate deterministically across implementations.
 
 ```typescript
-// Migration 001: Add 'avatar' to User
+// Authoring surface (compiled to SchemaEpoch operation + migration steps)
 migration('001_add_avatar', {
-  addProperty: { node: 'User', name: 'avatar', type: LWW(z.string().url().optional()) }
+  addProperty: { node: 'User', name: 'avatar', type: LWW(z.string().url().optional()), default: null }
 });
 
-// Migration 002: Change 'title' from MVRegister to LWW
-migration('002_simplify_title', {
-  changeType: { node: 'Post', name: 'title', from: 'MVRegister', to: 'LWW', 
-                resolver: (values) => values[0] }  // pick first on downgrade
+// CRDT type change: transform is a registry tag, not a closure
+migration('002_title_to_lww', {
+  changeType: { node: 'Post', name: 'title', from: 'MVRegister', to: 'LWW', transform: 'keep_text' }
 });
 ```
 
 **Rules:**
 
-- Adding a property is always safe — existing nodes get the CRDT's zero value.
-- Removing a property is soft — the field becomes invisible in the schema but persists in the oplog for sync compatibility.
-- Changing a CRDT type requires a resolver function to convert existing state.
-- Migrations are themselves operations in the oplog, so they propagate to all peers.
-
-**Open (M0b):** JavaScript resolver closures (as in the example above) cannot replicate deterministically across Rust, JS, Swift, Kotlin, and third-party implementations — migrations need a serializable, deterministic resolver DSL, and every data operation needs a schema-epoch binding so historical replay across type changes is well-defined ([ISSUES C2](ISSUES.md)).  Cross-peer mixed-version migration shipping is M4.
+- Adding a property is always safe — existing entities materialize the declared `default`.
+- Removing a property is visibility-only — operations and history are untouched; late ops apply to shadow state.
+- Changing a CRDT type names a registry transform (total and deterministic; `reset_to` is the catch-all — silent partial transforms do not exist).
+- Epochs are themselves operations in the oplog (`SchemaEpoch`, KERNEL kind 5), causally ordered and bound into every data operation's signed context, so historical replay across type changes is deterministic ([ISSUES C2](ISSUES.md); executable model in SCHEMA §4.1).  Cross-peer mixed-version migration shipping is M4.
 
 ### 3.4 Schemaless Mode
 
@@ -382,7 +355,7 @@ To prioritize onboarding speed, ZeroDB supports a **schemaless mode** where no s
 
 **Strict mode:**  For production deployments, `ZeroDB.open({ schema, strict: true })` rejects writes to any field not declared in the schema, throwing a `SchemaViolationError` instead of falling back to LWW.  This is the recommended setting once a schema is defined.
 
-**Migration from schemaless:**  When a developer adds a schema after prototyping without one, existing `LWW` data is inherently compatible — no migration is needed.  If a field's CRDT type should change (e.g., from the default LWW to `PNCounter`), a standard migration with a resolver function is required (see §3.3).
+**Migration from schemaless:**  When a developer adds a schema after prototyping without one, existing `LWW` data is inherently compatible — no migration is needed.  If a field's CRDT type should change (e.g., from the default LWW to `PNCounter`), a standard epoch migration with a registry transform is required (see §3.3).
 
 ---
 
@@ -458,8 +431,8 @@ The `zerodb` CLI is the primary developer interface for administration, debuggin
 # Initialize a new ZeroDB project
 zerodb init my-app
 
-# Apply schema from .zerodb files
-zerodb schema apply
+# Apply a compiled schema IR (emitted by the TS→IR compiler)
+zerodb schema apply schema.ir
 
 # Open an interactive REPL
 zerodb repl
@@ -495,25 +468,18 @@ zerodb health
 
 ### 5.2 Query Language
 
-ZeroDB uses a Cypher-inspired query syntax for the CLI REPL and programmatic queries:
+ZeroDB uses a Cypher-inspired query syntax for the CLI REPL and programmatic queries. The **v0.1 subset is normative in [SCHEMA.md §5](SCHEMA.md)** (ISSUES O3, decided 2026-07-16): `MATCH` / `WHERE` / `RETURN` / `ORDER BY` / `LIMIT`, one hop max, parameterization via `$name` placeholders only, deterministic null/cross-type/conflict semantics.
 
 ```cypher
--- Find all posts by a user
-MATCH (u:User {name: "Alice"})-[:AUTHORED]->(p:Post)
-RETURN p.title, p.viewCount
-ORDER BY p.viewCount DESC
-
--- Find mutual followers
-MATCH (a:User {name: "Alice"})-[:FOLLOWS]->(b:User)-[:FOLLOWS]->(a)
-RETURN b.name
-
--- Traverse with edge properties
-MATCH (u:User)-[a:AUTHORED {role: "editor"}]->(p:Post)
-WHERE p.published = true
+-- v0.1 subset: filter, order, project
+MATCH (u:User)-[a:AUTHORED]->(p:Post)
+WHERE u.name = $name AND p.published = true
 RETURN u.name, p.title, a.role
+ORDER BY p.viewCount DESC
+LIMIT 20
 ```
 
-The query engine compiles Cypher to optimized graph traversals over the materialized state.
+Inline property predicates (`{name: "Alice"}`), multi-hop patterns, aggregation, and mutation-in-query are **post-v0.1**; the v0.1 parser rejects them rather than partially executing.
 Queries are read-only; mutations go through the SDK or CLI mutation commands.
 
 ### 5.3 TypeScript SDK
@@ -900,9 +866,9 @@ Development proceeds in **milestones**, each ending in a runnable outcome and be
 
 | Label | Milestone exit | Meaning |
 |-------|----------------|---------|
-| `v0.1.0-local` | M1 | Offline single-peer core + CLI |
+| `v0.1.0-local` | M1 | Offline single-peer core + CLI (**MVP**) |
 | `v0.1.0-sdk` | M2 | Node/NAPI vertical, byte-identical fixtures |
-| `v0.1.0` | M3 | First multi-peer secure product slice |
+| `v0.1.0` | M3c | First multi-peer secure product slice **with offline catch-up** |
 
 ### Pre-M0 implementation policy
 
@@ -975,10 +941,12 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 **Outcome:** every data operation binds to an immutable schema epoch; migrations are a deterministic DSL (no JS closures); M1 has a frozen minimal query grammar.
 
-- [ ] One canonical schema IR with immutable IDs/versions; TypeScript SDK vs `.zerodb` DSL: one canonical, one generated ([ISSUES O2](ISSUES.md) **decide**; implement generation in M2)
-- [ ] Causally ordered schema epoch on every data operation; CRDT variant in the op or bound to an immutable schema version ([ISSUES C2](ISSUES.md))
-- [ ] Serializable migration DSL; mixed-version buffering/rejection and rollback rules (cross-peer shipping M4)
-- [ ] Minimal query subset frozen for M1 CLI: grammar + null/conflict semantics for MATCH/WHERE/RETURN/ORDER BY/LIMIT ([ISSUES O3](ISSUES.md)); aggregation/paths deferred
+> **Contract draft:** [SCHEMA.md](SCHEMA.md) owns the M0b normative text (schema IR §2, epochs §3, migration DSL + segmented-replay model §4, v0.1 query subset §5). All five vector families (`schema-ir`, `epoch-replay`, `migration-transform`, query parse/eval) are promoted and CI-blocking in both runners. Remaining for exit: the C2 approved-resolution checklist. The TS→IR compiler ships as a standalone tool ≤ M1 (O2) and is not an M0b gate.
+
+- [x] One canonical schema IR with immutable IDs/versions — TS authoring-canonical, IR identity-canonical, `.zerodb` DSL dropped ([ISSUES O2](ISSUES.md) decided 2026-07-16; SCHEMA §1–§2)
+- [x] Causally ordered schema epoch on every data operation; CRDT type bound to the op's own epoch's immutable IR ([ISSUES C2](ISSUES.md); SCHEMA §3)
+- [ ] Serializable migration DSL; mixed-version buffering/rejection and rollback rules (SCHEMA §4 + §3 mixed-version rule; cross-peer shipping M4)
+- [x] Minimal query subset frozen for M1 CLI: grammar + null/conflict semantics for MATCH/WHERE/RETURN/ORDER BY/LIMIT ([ISSUES O3](ISSUES.md) decided; SCHEMA §5); aggregation/paths deferred
 
 **Exit gate:** C2 normative; O2/O3 decided; epoch-bound replay vectors (including a type-change migration) red→green.
 
@@ -1054,46 +1022,76 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 **Exit gate:** binding parity vectors, subscription/mutation/conflict lifecycle tests, artifact-size and baseline performance budgets (**E11 provisional**).
 
-### M3 — Secure multi-peer sync
+### M3 — Secure multi-peer sync (gates M3a → M3b → M3c)
 
-**Outcome:** three peers converge through partition/reorder/retry over one WebSocket profile and a minimal relay level.
+**Outcome:** three peers converge through partition/reorder/retry over one WebSocket profile and a **durable (L2) reference relay**, then harden, then release `v0.1.0`.
+
+Delivered as three independently auditable gates (amended 2026-07-18 from the delivery plan; resolves review findings CX-04/HX-08). **If the L2 relay cannot ship, M3 is renamed an online-sync preview and is not the first offline-first release** (plan DQ-9: durable catch-up is mandatory for `v0.1.0`).
+
+#### M3a — Durable convergence (internal)
+
+- [ ] **L2 reference relay**: durable persistence, receipt vs durable ack, full-oplog catch-up, GC off (ISSUES H11)
+- [ ] Complete Merkle/delta wire protocol + delivery/ack/resume semantics (ISSUES C3, H4)
+- [ ] Loss/reorder/partition/rejoin, three-peer offline catch-up, crash/restart — pre-provisioned signed test identities only
+
+**Exit gate:** three-peer convergence with offline catch-up through the durable relay; exemplar **E2 live, E3**.
+
+#### M3b — Security (internal)
 
 - [ ] Mandatory signing policy, author-key resolution, datastore-membership admission (ISSUES C4, C5)
-- [ ] Complete Merkle/delta wire protocol + delivery/ack/resume semantics (ISSUES C3, H4, H11)
-- [ ] Handshake hardening: fixed encoding through auth, transcript signature binding version/limits/transport (ISSUES H5; session resumption was removed in relay 0.2)
-- [ ] E2E encrypted-property envelope; recipient/group key distribution, rotation, revocation (ISSUES H10)
-- [ ] Future-clock acceptance/quarantine rule (ISSUES H1)
-- [ ] Peer handshake shared by direct P2P and relay participation (ISSUES H6)
+- [ ] Handshake hardening: fixed encoding through auth, transcript signature binding version/limits/transport (ISSUES H5; session resumption was removed in relay 0.2); signed peer handshake shared by direct P2P and relay participation (ISSUES H6)
+- [ ] E2E encrypted-property envelope (M0-frozen bytes); recipient/group key distribution, rotation, revocation (ISSUES H10)
+- [ ] Future-clock acceptance/quarantine rule (ISSUES H1); resource limits enforced pre-auth
+
+**Exit gate:** malicious relay/peer negatives (forged ops, wrong datastore, clock abuse, auth bypass, resource limits); exemplar **E5–E8**.
+
+#### M3c — Interop & release (`v0.1.0`)
+
+- [ ] Independent TypeScript **wire peer** (evolved from the conformance model runner, still not NAPI-backed)
 - [ ] Reference relay + conformance harness with golden/negative vectors in two languages (ISSUES H9)
+- [ ] Version/upgrade matrix, packaging, support profile
 
-**Exit gate:** two-language interoperability; partition/rejoin; duplicate/loss/reorder; malicious-peer negatives (forged ops, wrong datastore, clock abuse, auth bypass, resource limits); exemplar scenarios **E2 live, E3, E5–E8**.
+**Exit gate:** two-language interoperability; partition/rejoin; duplicate/loss/reorder; release `v0.1.0`.
 
-### M4 — Browser, P2P & evolution
+### M4 — Browser, P2P & evolution (tracks M4a / M4b)
 
-**Outcome:** browser storage, WebRTC direct sync, cross-peer schema migration, snapshot bootstrap, and adjacent-version sync — without data loss.
+**Outcome:** browser storage, WebRTC direct sync, cross-peer schema migration, snapshot bootstrap, and adjacent-version sync — without data loss. Two independent tracks:
+
+**M4a — platform:**
 
 - [ ] IndexedDB + OPFS adapters; WASM build within size budget (ISSUES O4); React hooks
 - [ ] WebRTC direct sync using the shared peer protocol
+
+**M4b — evolution:**
+
 - [ ] Schema epochs across mixed-version peers (ISSUES C2, cross-peer half)
 - [ ] Snapshot sync with authenticated snapshot format (ISSUES C7, snapshot half)
-- [ ] Large-payload decision implemented (ISSUES O1)
+- [ ] Adjacent-version rollback/upgrade matrix
+- [ ] Large-payload (`BlobRef`) transfer/storage implemented under the M0 reservation (ISSUES O1)
 
 **Exit gate:** upgrade/downgrade/rollback matrix, mixed-schema peers (**E10**), snapshot + tail recovery, direct/relay parity, browser restart/offline tests.
 
-### M5 — Production readiness & GA
+### M5 — Production readiness & GA (program M5a / M5b / M5c)
 
-**Outcome:** a deployable, observable, recoverable system with evidence for its published guarantees.
+**Outcome:** a deployable, observable, recoverable system with evidence for its published guarantees. Delivered as a focused three-part program:
 
-- [ ] Compaction & GC with causal frontiers and peer lifecycle (ISSUES C7)
-- [ ] Unique-index conflict semantics (ISSUES H2)
-- [ ] Richtext CRDT (Peritext-based)
+**M5a — operability:**
+
 - [ ] Backup/restore with restore drills; packaging/configuration; metrics/logs/traces; SLOs
-- [ ] Fuzzing (decoders, ops, queries, migrations, sync state machines), load/soak, failure injection
-- [ ] Lean 4 proof artifacts (LWW, Counters, ORSet, MVRegister, RGA, HLC, sync completeness, migration safety) + Rust conformance to the Lean reference
-- [ ] External security audit; findings closed
-- [ ] Performance benchmarks vs. GunDB, Automerge, Loro, Yjs
 
-**Exit gate:** restore drill, forgotten/offline-peer GC cases, rolling upgrade, published conformance suite, proof/Rust conformance, performance budgets, security sign-off.
+**M5b — lifecycle safety:**
+
+- [ ] Compaction & GC with causal frontiers and peer lifecycle (ISSUES C7 implementation — GC stays disabled until its partition/rejoin, forgotten-peer, late-op, and restore tests pass)
+- [ ] Rolling upgrades across adjacent versions
+
+**M5c — release assurance:**
+
+- [ ] Fuzzing (decoders, ops, queries, migrations, sync state machines), load/soak, failure injection
+- [ ] External security audit with **severity-based sign-off** (not "all findings closed")
+
+**Parallel tracks (not GA gates):** unique-index conflict semantics or a durable won't-do decision (ISSUES H2); Richtext CRDT (Peritext-based, after O1 + M4b); Lean 4 proof artifacts (LWW, Counters, ORSet, MVRegister, RGA, HLC, sync completeness, migration safety) + Rust conformance to the Lean reference; performance benchmarks vs. GunDB, Automerge, Loro, Yjs.
+
+**Exit gate:** restore drill, forgotten/offline-peer GC cases, rolling upgrade, published conformance suite, performance budgets, security sign-off.
 
 ### M6 — Ecosystem
 
@@ -1134,12 +1132,12 @@ All specification issues and open decisions are tracked by ID in **[ISSUES.md](I
 
 | ID | Question | Decide by |
 |----|----------|-----------|
-| O1 | Large operation payloads — chunking, external blobs, or hard caps (blocks Richtext) | M4 |
-| O2 | Schema source of truth — TypeScript vs. `.zerodb` DSL; one canonical, one generated | **M0b** (implement generation M2) |
-| O3 | Query language subset — minimal (MATCH/WHERE/RETURN/ORDER BY/LIMIT) vs. aggregation/paths; grammar + semantics | **M0b** (minimal grammar required for M1) |
+| O1 | Large operation payload **transfer/storage protocol** (encoding reserved in M0a: caps + `BlobRef`, KERNEL §8; blocks Richtext) | M4 |
 | O4 | WASM size budget; optional modules for RGA/Richtext | M4 |
-| O6 | Operation/batch size limits and protocol-level rate limiting | **M0a** provisional limits; rate limiting M3 |
+| O6 | Protocol-level rate limiting (provisional size limits set in **M0a**, registry `limits`) | M3 |
 | O7 | Causal `deps` scale — compact causal frontier + checkpoint translation | **M0f** contract; scale tests M5 |
+
+O2 (TS authoring-canonical → IR identity-canonical) and O3 (minimal v0.1 query subset) were decided 2026-07-16 — see the Decision Log and [SCHEMA.md](SCHEMA.md).
 
 ---
 

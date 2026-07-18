@@ -14,7 +14,7 @@ Status values: `open`, `in-progress`, `blocked(<on>)`, `done(<evidence>)`.
 | P0-2 | INVARIANTS.md I-1..I-17 | fingerskier | done(`24b23c5`) | — | S |
 | P0-3 | EXEMPLAR scenarios E1–E11 | fingerskier | done(`24b23c5`) | — | S |
 | P0-4 | This ledger | fingerskier | done(this file) | — | S |
-| P0-5 | `conformance/` + CI green baseline | fingerskier | open | P0-1 | S |
+| P0-5 | `conformance/` + CI green baseline | fingerskier | done(`6500952` + required/xfail lanes) | P0-1 | S |
 | P0-6 | SPEC two-layer gate language | fingerskier | done(`24b23c5`) | — | S |
 | P0-7 | D-01..D-16 hygiene pass | fingerskier | done(`1db205e`) | — | S |
 
