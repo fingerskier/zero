@@ -1,0 +1,36 @@
+{
+  "description": "state_apply twice is idempotent (I-3); full recover keeps single applied entry.",
+  "id": "WAL-011",
+  "type": "wal-crash",
+  "invariants": ["I-3", "I-14"],
+  "crash_after_step": 4,
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0606060606060606060606060606060606060606060606060606060606060606",
+        "body": "once",
+        "group": null,
+        "author_ts": { "p": 60, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0606060606060606060606060606060606060606060606060606060606060606"
+    },
+    {
+      "op": "state_apply",
+      "op_id": "0606060606060606060606060606060606060606060606060606060606060606"
+    },
+    { "op": "hlc_persist", "ts": { "p": 60, "l": 0 } }
+  ],
+  "expect_after_recover": {
+    "wal_len": 1,
+    "applied": [
+      "0606060606060606060606060606060606060606060606060606060606060606"
+    ],
+    "hlc": { "p": 60, "l": 0 },
+    "sealed": []
+  }
+}

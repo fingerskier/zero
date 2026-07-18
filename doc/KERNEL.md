@@ -15,7 +15,7 @@ Five independent version namespaces exist. They MUST never be conflated:
 | Namespace | Authority | Binding |
 |-----------|-----------|---------|
 | `operation_format_version` | this document | Signed and hashed into **every operation preimage**. Persistent forever. Incrementing it is a new format generation with its own vectors. |
-| `schema_epoch` | SPEC §3 (M0b) | Per-datastore causally ordered sequence bound into every **data** operation. Not a global constant. |
+| `schema_epoch` | SCHEMA.md §3 (M0b ✓) | Per-datastore causally ordered sequence bound into every **data** operation. Not a global constant. |
 | `snapshot_format_version` | SPEC §7 (M0f) | Snapshot/checkpoint artifacts only. |
 | `storage_format_version` | zerodb-storage (M1) | Local on-disk layout only. MUST NOT appear on the wire or in any preimage. |
 | `relay_protocol_version` | RELAY-SPEC | Connection negotiation (HELLO/WELCOME) only. MUST NOT enter any operation preimage or persistent artifact. |
@@ -82,15 +82,15 @@ Every operation is a CBOR map with exactly these keys (order per §3):
 
 | `kind` | Variant | Body (summary) | Class |
 |--------|---------|----------------|-------|
-| 0 | `Genesis` | founder `PrincipalId`, salt (16B random), initial epoch ref, format versions | control |
+| 0 | `Genesis` | founder `PrincipalId`, salt (16B random), initial epoch ref, format versions — body in [AUTH.md §2](AUTH.md) | control |
 | 1 | `CreateNode` | `NodeId`, label (text ≤ 256B) | data |
 | 2 | `CreateEdge` | `EdgeId`, label, `source: NodeId`, `target: NodeId` | data |
 | 3 | `SetProperty` | entity ref (`NodeId`/`EdgeId` + tag), property path (text), CRDT payload (§6) | data |
 | 4 | `Tombstone` | entity ref | data |
 | 5 | `SchemaEpoch` | epoch record — body defined in [SCHEMA.md §3](SCHEMA.md) | control |
-| 6 | `CapabilityGrant` | subject `PrincipalId`, scopes, expiry, delegable flag (M0d body detail) | control |
-| 7 | `CapabilityRevoke` | reference to grant `OpId`, reason code | control |
-| 8 | `KeyRecord` | device certificate / rotation / group-key distribution record (M0d body detail) | control |
+| 6 | `CapabilityGrant` | subject `PrincipalId`, scopes, expiry, delegable flag — body in [AUTH.md §3](AUTH.md) | control |
+| 7 | `CapabilityRevoke` | reference to grant `OpId`, reason code — body in [AUTH.md §3](AUTH.md) | control |
+| 8 | `KeyRecord` | device certificate / rotation / group-key distribution — body in [AUTH.md §1](AUTH.md) | control |
 | 9 | `Checkpoint` | reserved for M0f | control |
 
 Reserved variants (5, 6, 7, 8, 9) have their **tags and preimage participation** fixed here so later packages cannot invalidate M0a; their body schemas land with their owning package. Decoders at `operation_format_version 1` MUST parse the envelope of every variant and MAY reject not-yet-specified bodies with `VARIANT_UNSUPPORTED`.

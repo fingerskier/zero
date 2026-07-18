@@ -1,0 +1,13 @@
+{
+  "description": "First deliver ACCEPT; second same OpId DUPLICATE.",
+  "id": "DELIV-001",
+  "type": "delivery-schedule",
+  "schedule": [
+    { "op": "deliver", "op_id": "0101010101010101010101010101010101010101010101010101010101010101" },
+    { "op": "deliver", "op_id": "0101010101010101010101010101010101010101010101010101010101010101" }
+  ],
+  "expect": {
+    "seen": ["0101010101010101010101010101010101010101010101010101010101010101"],
+    "last_outcomes": ["DUPLICATE"]
+  }
+}

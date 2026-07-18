@@ -1,0 +1,46 @@
+{
+  "description": "After group_seal, wal_truncate of sealed members succeeds; wal_len drops to 0.",
+  "id": "WAL-008",
+  "type": "wal-crash",
+  "invariants": ["I-13", "I-14"],
+  "crash_after_step": 5,
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "body": "g1",
+        "group": "cccccccccccccccccccccccccccccccc",
+        "author_ts": { "p": 10, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    },
+    {
+      "op": "group_seal",
+      "manifest": {
+        "group_id": "cccccccccccccccccccccccccccccccc",
+        "members": [
+          "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+        ],
+        "abort": false
+      }
+    },
+    { "op": "wal_truncate", "up_to_index": 1 },
+    {
+      "op": "hlc_persist",
+      "ts": { "p": 10, "l": 0 }
+    }
+  ],
+  "expect_after_recover": {
+    "wal_len": 0,
+    "applied": [
+      "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    ],
+    "hlc": null,
+    "sealed": ["cccccccccccccccccccccccccccccccc"]
+  }
+}

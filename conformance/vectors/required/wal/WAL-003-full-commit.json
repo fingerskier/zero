@@ -1,0 +1,32 @@
+{
+  "description": "Full schedule completes then crash after HLC: all durable state retained.",
+  "id": "WAL-003",
+  "type": "wal-crash",
+  "invariants": ["I-3", "I-14", "DQ-7"],
+  "crash_after_step": 3,
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+        "body": "op-b",
+        "group": null,
+        "author_ts": { "p": 2000, "l": 1 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202"
+    },
+    { "op": "hlc_persist", "ts": { "p": 2000, "l": 1 } }
+  ],
+  "expect_after_recover": {
+    "wal_len": 1,
+    "applied": [
+      "0202020202020202020202020202020202020202020202020202020202020202"
+    ],
+    "hlc": { "p": 2000, "l": 1 },
+    "sealed": []
+  }
+}

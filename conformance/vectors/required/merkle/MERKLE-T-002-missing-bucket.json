@@ -1,0 +1,26 @@
+{
+  "description": "B is a superset: A missing an op in another time bucket; walk + Delta then Converged.",
+  "id": "MERKLE-T-002",
+  "type": "merkle-transcript",
+  "invariants": ["I-11"],
+  "peer_a": [
+    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  ],
+  "peer_b": [
+    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 120000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  ],
+  "final_root_hex": "afd10eb0a908731f50fed2384783c35ffd6e3877555e0cfb5aa0890c5c8391ed",
+  "transcript": [
+    { "type": "RootOffer", "from": "A", "root": "c059a7bb6294be70fceca60b6a16a6d8ee4e3949bf6aef1cbd70ecc11d0fc11a" },
+    { "type": "RootOffer", "from": "B", "root": "afd10eb0a908731f50fed2384783c35ffd6e3877555e0cfb5aa0890c5c8391ed" },
+    { "type": "NodeRequest", "from": "A", "level": 1, "index": 0 },
+    { "type": "NodeResponse", "from": "B", "level": 1, "index": 0, "hash": "afd10eb0a908731f50fed2384783c35ffd6e3877555e0cfb5aa0890c5c8391ed", "left": "c059a7bb6294be70fceca60b6a16a6d8ee4e3949bf6aef1cbd70ecc11d0fc11a", "right": "2921c989bde7d0a2434e342d5695e62e77a3b41877a631bdd715527cbc33c002" },
+    { "type": "LeafRequest", "from": "A", "leaf_index": 1, "bucket_index": 2 },
+    { "type": "LeafResponse", "from": "B", "leaf_index": 1, "bucket_index": 2, "op_ids": ["0202020202020202020202020202020202020202020202020202020202020202"] },
+    { "type": "Delta", "from": "B", "op_ids": ["0202020202020202020202020202020202020202020202020202020202020202"] },
+    { "type": "RootOffer", "from": "A", "root": "afd10eb0a908731f50fed2384783c35ffd6e3877555e0cfb5aa0890c5c8391ed" },
+    { "type": "RootOffer", "from": "B", "root": "afd10eb0a908731f50fed2384783c35ffd6e3877555e0cfb5aa0890c5c8391ed" },
+    { "type": "Converged", "root": "afd10eb0a908731f50fed2384783c35ffd6e3877555e0cfb5aa0890c5c8391ed" }
+  ]
+}

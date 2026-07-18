@@ -18,11 +18,11 @@ Consolidated 2026-07-13 from the external review (`FINDINGS.CODEX.md`, retired) 
 | Package | Contracts | Outcome (summary) | Implement / ship |
 |---------|-----------|-------------------|------------------|
 | **M0a** ✓ | C1 ✓, C4 *context* ✓, O6 *provisional limits* ✓ | Op algebra, deterministic CBOR, preimages, ID encodings — resolved 2026-07-16 ([KERNEL.md](KERNEL.md)) | draft-1 profile; byte freeze at composite M0 |
-| **M0b** | C2, O2, O3 | Schema IR, epochs, migration DSL, minimal query grammar | M1 uses IR + query; O2 generation M2; cross-peer migration M4 |
-| **M0c** | C3 | Canonical Merkle tree + sync state-machine transcripts | wire protocol M3 |
-| **M0d** | C4 *admission*, C5 | Author-key model + membership capability format | enforcement M3 |
-| **M0e** | C8, H4, H7, H9 *registry*, H11 *contract* | Groups, delivery/anti-replay, version policy | local crash M1; sync/ack M3 |
-| **M0f** | C7 *contracts*, O7 *contract* | Frontiers, snapshot identity, deps compaction rules | snapshots M4; GC M5 (**GC disabled until then**) |
+| **M0b** ✓ | C2 ✓, O2 ✓, O3 ✓ | Schema IR, epochs, migration DSL, minimal query — resolved 2026-07-18 ([SCHEMA.md](SCHEMA.md)) | draft-1 profile; TS→IR compiler ≤ M1; cross-peer migration M4 |
+| **M0c** ✓ | C3 ✓ | Canonical Merkle tree + sync transcripts — resolved 2026-07-18 ([MERKLE.md](MERKLE.md)) | draft-1 profile; wire framing M3 |
+| **M0d** ✓ | C4 *admission* ✓, C5 ✓ | Identity, genesis, membership, authz — resolved 2026-07-18 ([AUTH.md](AUTH.md)) | draft-1 profile; on-wire enforcement M3b |
+| **M0e** ✓ | C8 ✓, H4 ✓, H7 ✓, H9 *registry* ✓, H11 *contract* ✓ | Groups/WAL, delivery, versions — resolved 2026-07-18 ([WAL.md](WAL.md), [DELIVERY.md](DELIVERY.md), [VERSIONS.md](VERSIONS.md)) | draft-1; SQLite layer 2 M1; wire M3 |
+| **M0f** ✓ | C7 ✓, O7 ✓ | Frontiers, snapshot identity — resolved 2026-07-18 ([FRONTIER.md](FRONTIER.md)); **GC still disabled** | snapshots M4; GC M5 |
 
 ```
 M0a ──► M0b ──► M0c
@@ -39,35 +39,18 @@ Second language for M0 golden vectors: **TypeScript pure encoder/decoder** under
 ## Critical — composite M0 exit (C1–C5, C7–C8)
 
 *C1 resolved 2026-07-16 (Decision Log below; contract in [KERNEL.md](KERNEL.md); audit record in `plan/LEDGER.md`).*
-
-### C2 — Schema evolution breaks deterministic replay
-CRDT type is resolved from the *current* mutable schema, but migrations can change types and arrive at peers in different orders; JavaScript resolver closures cannot replicate deterministically across languages; the initial schema has no replicated identity; historical replay after a type change is undefined. Violates the SEC guarantee (SPEC §2.7).
-**Resolution:** one canonical schema representation with immutable IDs/versions; a causally ordered schema epoch bound to every data operation; CRDT variant carried in the operation or bound to an immutable schema version; deterministic migration DSL (no closures); mixed-version buffering/rejection and rollback rules. → **M0b** (cross-peer migration ships M4)
-
-### C3 — Merkle sync is not executable from the specified messages
-Core says peers walk the remote tree root-down; the relay protocol exchanges only roots and then expects the requester to name `missing_hashes` it has no way to discover — no subtree/child/manifest request exists. The tree itself is non-canonical: bucket boundaries, leaf ordering, empty-node hashes, shape, internal-node encoding, late operations, and compaction representation are unspecified. Equal oplogs may hash unequal roots; unequal roots cannot be traversed.
-**Resolution:** canonical authenticated tree + published root vectors; path/range subtree request/response (or paginated bucket manifests); `sync_id`, checkpoint/epoch, pagination/retry rules, concurrent-write semantics; a complete two-way transcript including mismatch recovery. → **M0c** (wire protocol ships M3)
-
-### C4 — Datastore boundary is neither authorized nor signed
-**Context half resolved 2026-07-16:** `DatastoreId`, `operation_format_version`, and schema epoch are inside the signed/hashed operation context (KERNEL §4.1, vectors OP-001..003) — cross-datastore replay breaks the signature. Dedup scoped per datastore was already normative (RELAY-SPEC 0.2 §6.2).
-**Remaining (admission half):** the relay has no datastore admission credential — any authenticated key can subscribe to guessed datastores.
-**Resolution:** relay-verifiable **datastore-membership capabilities** plus mandatory peer-side author-membership verification (ratified DQ-2/DQ-3 direction). → **M0d** (capability format + verification); enforcement ships M3.
-
-### C5 — Forwarded author signatures cannot be verified
-Operations carry an author `PeerId` (a key *hash*) and signature but no resolvable public key. Relay validation verifies against the transport sender's key when author == sender; for forwarded history (bridging, relay-to-relay sync) RELAY-SPEC 0.2 currently instructs relays **not to reject** unresolved authors — i.e. forward unverified — which contradicts the validate-every-operation MUST. One deterministic unresolved-author outcome (reject, quarantine, or authenticated key resolution) is required. Key rotation compounds the missing lookup contract.
-**Resolution:** distinguish transport sender from author; carry or resolve an authenticated author key/certificate verified against `operation.peer`; specify rotation/revocation and historical-key lookup; define out-of-order arrival of key records vs. signed ops. → **M0d** (resolution protocol / enforcement ships M3)
+*C2 resolved 2026-07-18 (Decision Log below; contract in [SCHEMA.md](SCHEMA.md); audit record in `plan/LEDGER.md`). Cross-peer migration shipping remains M4.*
+*C4 fully resolved 2026-07-18 (context half 2026-07-16 in KERNEL; admission half in [AUTH.md](AUTH.md); audit record in `plan/LEDGER.md`). On-wire admission enforcement ships M3b.*
+*C5 resolved 2026-07-18 (Decision Log below; contract in [AUTH.md](AUTH.md); audit record in `plan/LEDGER.md`). On-wire author-key resolution enforcement ships M3b.*
+*C3 resolved 2026-07-18 (Decision Log below; contract in [MERKLE.md](MERKLE.md); audit record in `plan/LEDGER.md`). Wire framing of walk messages ships M3.*
+*C7 resolved 2026-07-18 (Decision Log below; contract in [FRONTIER.md](FRONTIER.md); **GC remains disabled** until M5).*
+*C8 resolved 2026-07-18 (Decision Log below; contract in [WAL.md](WAL.md); SQLite layer 2 at M1).*
+***Composite M0 exit 2026-07-18:** C1–C5, C7–C8 approved; C6 deferred. Draft-1 only — no format freeze without explicit Decision Log freeze.*
 
 ### C6 — Entity-level ACLs conflict with SEC and read confidentiality
 Write-ACL evaluation at receipt time depends on arrival order (grant/revoke/create races); quarantine-vs-materialize divergence between origin and receivers is permanent absent a deterministic reevaluation protocol; bootstrap authority for the first grant is undefined; read ACLs cannot protect plaintext already replicated to a hostile peer.
 **Resolution (direction decided 2026-07-13):** v0.1 ships **datastore-level access control only** (membership + mandatory signatures); entity-level distributed ACLs are deferred until a causal authorization model exists — root authority, grant/revoke ordering, policy/schema versions, deterministic accept/reject/quarantine, reevaluation, and SEC scoped to a precisely defined accepted-operation set. Confidential reads via replication boundaries + cryptography, not local filters. → **not part of composite M0**; design in M5/M6 window.  *Direction only until checklist complete.*
 
-### C7 — Snapshot, compaction, and causal stability are unsafe as written
-An HLC scalar acknowledged by "all known peers" is not a causal frontier; no durable per-peer acknowledgement, peer-membership lifecycle, retirement/lease, or reconnect rule exists ("known peers" undefined → collect too early or never). Level 2 relays are schema-blind yet expected to serve state snapshots; no snapshot request/chunk/format/signature/tail-boundary exists; compacted and uncompacted peers cannot compare Merkle roots without a shared checkpoint representation.
-**Resolution:** causal frontiers independent of wall-clock; durable peer acks + retirement; authenticated checkpoint/snapshot identity and tail boundaries; anti-replay commitments; root comparison across checkpoints; decide whether L2 materializes or only stores peer-produced authenticated snapshots. GC stays **disabled** until partition/rejoin, forgotten-peer, late-op, and restore tests pass. → **contracts M0f**; snapshot shipping M4; GC implementation M5
-
-### C8 — Group and crash atomicity cannot be implemented from the contracts
-A grouped op carries only `GroupId` — no member count, manifest, or commit marker, so no peer or relay can know a group is complete (relay 0.2 removed group buffering for exactly this reason; group atomicity is peer-side). Storage traits expose `append_ops` and `put_materialized` with no transaction/recovery boundary spanning both.
-**Resolution:** signed group manifest (or cardinality/index/member hashes) + abort/expiry semantics; atomic storage transaction or WAL/replay protocol with explicit crash points and idempotent recovery tests. → **contracts M0e**; local half M1; sync half M3
 
 ---
 
@@ -83,7 +66,7 @@ Two offline peers can create the same "unique" value; mapping `unique: true` to 
 Unclear which peer generates cascading edge tombstones, how it's authorized to delete others' edges, whether late dangling edges get tombstoned or only hidden, whether node resurrection revives them, and which CRDT governs `__tombstone`. Cascades generated from each peer's current view produce divergent op sets (SEC risk). Define a deterministic delete state machine — **prefer derived visibility** over generated cascades unless a single deterministic emitter is specified. → **M1 exit gate** (treat as release-blocking for M1 despite High label)
 
 ### H4 — Delivery, dedup, and replay semantics incomplete
-Dedup state is bounded/resettable (L1) or compactable (L2), so old signed counter/set ops can replay after it disappears. No explicit delivery contract; per-op outcomes within a batch undefined; multi-batch deltas lack sequence/resume cursors. Define at-least-once semantics, durable anti-replay commitment surviving compaction, request-ID lifetime, per-op outcomes, resumable cursors, retry/backoff. → **contracts M0e**; enforcement M3
+*Resolved 2026-07-18 (contract):* [DELIVERY.md](DELIVERY.md) + DELIV-001..004. Enforcement M3.
 
 ### H5 — Handshake, resumption, and serialization underspecified
 Narrowed by RELAY-SPEC 0.2 (CBOR-only, no session resumption, no in-protocol mutual auth, TLS required outside dev, domain-separated nonce signature). Remaining: the `AUTH` signature covers only the nonce, not the negotiated handshake transcript (version, limits, transport binding) — bind it to a full transcript. → M3
@@ -92,7 +75,7 @@ Narrowed by RELAY-SPEC 0.2 (CBOR-only, no session resumption, no in-protocol mut
 Core promises WebRTC/`connectPeer`; relay spec excludes direct sync; no peer handshake, role negotiation, datastore admission, reconnect, or conformance profile exists. Define a shared peer-sync protocol reused by relay participation (M3), or keep P2P out of the SDK surface until M4.
 
 ### H7 — Version and upgrade policy missing
-No owner or compatibility policy relating wire, operation, schema, snapshot, and on-disk format versions; protocol version appears in four places without selection/negotiation rules; document versions (`0.x-draft`) don't map to wire `protocol_version: 1`. Define per-format authority, a supported version window, and rolling upgrade/downgrade tests. → **policy M0e**; rolling tests M4
+*Resolved 2026-07-18 (policy contract):* [VERSIONS.md](VERSIONS.md) + registry. Rolling upgrade tests M4.
 
 ### H8 — Security claims stronger than mechanisms
 Narrowed by RELAY-SPEC 0.2 (proof-of-work removed; independent-second-source censorship requirement now normative in RELAY-SPEC §12.3). Remaining: whole-operation encryption (vs. property-level) is an open choice for metadata privacy. → M3
@@ -111,7 +94,6 @@ X25519/XChaCha20-Poly1305 are named but there is no ciphertext envelope, nonce c
 ## Open questions
 
 - **O1 — Large operation payloads.** Size limits vs. chunking vs. external blob storage; must be decided before Richtext (100 MB documents). → decide by M4
-- **O3 — Query language subset.** Minimal grammar **decided 2026-07-16** (Decision Log): MATCH/WHERE/RETURN/ORDER BY/LIMIT only for v0.1; normative grammar and null/conflict semantics land in SCHEMA.md (M0b); aggregation/paths deferred post-v0.1. Remaining M0b work: the normative grammar text + evaluation vectors.
 - **O4 — WASM size budget.** Target vs. Automerge ~250 KB / Loro ~200 KB gz; optional modules for RGA/Richtext. → M4
 - **O6 — Operation/batch size limits & protocol-level rate limiting.** Interacts with H4/H9. → **provisional limits M0a**; rate limiting M3
 - **O7 — Causal `deps` scale.** Last-seen-op-per-peer grows with peer count and can reference compacted ops; needs a compact causal frontier + checkpoint translation. Interacts with C7. → **contract M0f**; scale tests M5
@@ -122,6 +104,12 @@ X25519/XChaCha20-Poly1305 are named but there is no ciphertext envelope, nonce c
 
 | Date | Decision |
 |------|----------|
+| 2026-07-18 | **Composite M0 exit** (C1–C5, C7–C8 approved resolutions; C6 deferred). Packages M0a–M0f closed at contract-model layer. Normative docs: KERNEL, SCHEMA, MERKLE, AUTH, WAL, DELIVERY, VERSIONS, FRONTIER. Conformance corpus **103** required vectors green in Rust + independent JS runners (CI-blocking). Cross-package smoke COMP-001. **Draft-1 profiles only — no wire/persistent format freeze** until an explicit freeze Decision Log names a versioned profile. SQLite layer-2 crash injection remains M1. On-wire enforcement M3. Audit: `plan/LEDGER.md`. |
+| 2026-07-18 | **C8 + H4 + H7 + H11 contract resolved — M0e package exit:** [WAL.md](WAL.md) (C8, WAL-001..012), [DELIVERY.md](DELIVERY.md) (H4/H11, DELIV-001..004), [VERSIONS.md](VERSIONS.md) (H7 + H9 registry half; decode limits via registry + OP-NEG). DQ-4 contract layer closed. Layer-2 backend M1; wire M3. |
+| 2026-07-18 | **C7 + O7 contract resolved — M0f package exit:** [FRONTIER.md](FRONTIER.md) — causal frontiers, peer acks/retirement, SnapshotId, late-op rule; FRONT-001..003. **GC remains disabled** until M5. Snapshot shipping M4. |
+| 2026-07-18 | **C3 resolved — M0c package exit** (checklist complete): normative contract in [MERKLE.md](MERKLE.md) (1-minute buckets §3, leaf/node/empty domain-separated hashes, power-of-two pad, abstract mismatch-recovery walk §4 with Node/Leaf/Delta messages); **8 golden vectors CI-blocking** in two independent runners — `merkle-root` MERKLE-001..004 (empty/single/same-bucket+perm/two-buckets) + `merkle-transcript` MERKLE-T-001..004 (equal, missing-bucket pull, same-bucket delta, empty-equal). Wire CBOR framing of walk messages remains M3. **Draft-1 profile: no byte freeze before composite M0.** Audit record: `plan/LEDGER.md`. |
+| 2026-07-18 | **C4 admission + C5 resolved — M0d package exit** (checklist complete): normative contract in [AUTH.md](AUTH.md) (two-level identity + device certs §1, genesis/root authority §2, membership capabilities + admission token §3, per-op causal authz predicate §4, relay vs peer roles §5, shared quarantine §6); C4 **context half** already closed 2026-07-16 (KERNEL §4.1); **18 golden/negative auth vectors CI-blocking** in two independent runners across four families — `device-cert` (AUTH-CERT-001..005), `genesis-id` (AUTH-GEN-001..003), `authz-predicate` (AUTH-AUTHZ-001..006), `admission-token` (AUTH-ADM-001..004); full required corpus **75** vectors. DQ-1/DQ-2/DQ-3 contract layer resolved. **Draft-1 profile: no byte freeze before composite M0**; on-wire enforcement of admission + author resolution remains M3b. Audit record: `plan/LEDGER.md`. Closes CX-02. |
+| 2026-07-18 | **C2 resolved — M0b package exit** (checklist complete): normative contract in [SCHEMA.md](SCHEMA.md) (two-layer O2 model §1, schema IR §2 + structural validation outcomes, schema epochs §3, migration DSL + transform registry + segmented-replay model §4/§4.1, v0.1 query grammar + null/conflict/ORDER BY semantics §5); **57 golden/negative vectors CI-blocking in two independent runners** (Rust harnesses + JS models) across five families — `schema-ir` (+NEG), `epoch-replay` (EPOCH-001..014), `migration-transform` (MIG-001..005), `query-parse`, `query-eval`. O2/O3 already decided 2026-07-16; residual O3 prose+vectors completed. TS→IR compiler remains a standalone npm tool ≤ M1 (not an M0b gate). Cross-peer mixed-version migration shipping remains M4. **Draft-1 profile: no byte freeze before composite M0** — byte-affecting changes re-run this checklist. Audit record: `plan/LEDGER.md`. |
 | 2026-07-16 | **O2 decided — TypeScript authoring-canonical, IR identity-canonical:** TypeScript SDK definitions are the canonical *authoring* source; the deterministically compiled **schema IR** (canonical CBOR per KERNEL §3, stable IDs, epochs) is the sole replicated/hashed artifact and the only schema representation the core evaluates; the `.zerodb` DSL is **dropped** (generated read-only docs output at most); the M1 CLI consumes IR files; the TS→IR compiler ships as a standalone npm tool no later than M1. |
 | 2026-07-16 | **O3 decided — v0.1 query subset is minimal:** MATCH / WHERE / RETURN / ORDER BY / LIMIT with deterministic null/conflict semantics (normative text in SCHEMA.md, M0b); aggregation, paths, and mutation-in-query deferred post-v0.1. |
 | 2026-07-16 | **C1 resolved — M0a package exit** (checklist complete): normative contract in [KERNEL.md](KERNEL.md) (operation algebra §4, identifiers §2, deterministic CBOR §3, domain-separated preimages §4.4, HLC state machine §5, CRDT semantic kernel §6, encrypted-value envelope §7, BlobRef + limits §8); machine-readable registry `conformance/registry.json`; **24 golden/negative vectors CI-blocking in two independent runners** (Rust harnesses + JS models). C4 **context half** resolved with it (`ds`/`v`/`ep` in the signed preimage); C4 admission half remains open → M0d. **Draft-1 profile: no byte freeze before composite M0** — byte-affecting changes re-run this checklist. Audit record: `plan/LEDGER.md`. |

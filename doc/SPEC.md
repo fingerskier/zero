@@ -941,61 +941,71 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 **Outcome:** every data operation binds to an immutable schema epoch; migrations are a deterministic DSL (no JS closures); M1 has a frozen minimal query grammar.
 
-> **Contract draft:** [SCHEMA.md](SCHEMA.md) owns the M0b normative text (schema IR §2, epochs §3, migration DSL + segmented-replay model §4, v0.1 query subset §5). All five vector families (`schema-ir`, `epoch-replay`, `migration-transform`, query parse/eval) are promoted and CI-blocking in both runners. Remaining for exit: the C2 approved-resolution checklist. The TS→IR compiler ships as a standalone tool ≤ M1 (O2) and is not an M0b gate.
+> **Contract:** [SCHEMA.md](SCHEMA.md) owns the M0b normative text (schema IR §2, epochs §3, migration DSL + segmented-replay model §4, v0.1 query subset §5). All five vector families (`schema-ir`, `epoch-replay`, `migration-transform`, query parse/eval) are promoted and CI-blocking in both runners. The TS→IR compiler ships as a standalone tool ≤ M1 (O2) and is not an M0b gate.
 
 - [x] One canonical schema IR with immutable IDs/versions — TS authoring-canonical, IR identity-canonical, `.zerodb` DSL dropped ([ISSUES O2](ISSUES.md) decided 2026-07-16; SCHEMA §1–§2)
 - [x] Causally ordered schema epoch on every data operation; CRDT type bound to the op's own epoch's immutable IR ([ISSUES C2](ISSUES.md); SCHEMA §3)
-- [ ] Serializable migration DSL; mixed-version buffering/rejection and rollback rules (SCHEMA §4 + §3 mixed-version rule; cross-peer shipping M4)
+- [x] Serializable migration DSL; mixed-version buffering/rejection and rollback rules (SCHEMA §4 + §3 mixed-version rule; cross-peer shipping M4)
 - [x] Minimal query subset frozen for M1 CLI: grammar + null/conflict semantics for MATCH/WHERE/RETURN/ORDER BY/LIMIT ([ISSUES O3](ISSUES.md) decided; SCHEMA §5); aggregation/paths deferred
 
-**Exit gate:** C2 normative; O2/O3 decided; epoch-bound replay vectors (including a type-change migration) red→green.
+**Exit gate:** C2 normative; O2/O3 decided; epoch-bound replay vectors (including a type-change migration) red→green.  **Resolved 2026-07-18** (Decision Log; 57-vector corpus CI-blocking in both runners; draft-1 profile — byte freeze remains gated on composite M0; TS→IR ≤ M1; cross-peer migration shipping M4).
 
 #### M0c — Merkle tree & sync state machine
 
 **Outcome:** equal oplogs hash to equal roots; unequal roots are traversable to a concrete delta via a published state machine (transcript fixtures), independent of the eventual WebSocket framing.
 
-- [ ] Canonical authenticated tree: bucket boundaries, leaf ordering, empty-node hashes, shape, internal encoding ([ISSUES C3](ISSUES.md))
-- [ ] Path/range subtree request/response (or paginated bucket manifests)
-- [ ] `sync_id`, checkpoint/epoch hooks, pagination/retry, concurrent-write semantics
-- [ ] Complete two-way mismatch-recovery transcript (fixture form; wire ships M3)
+> **Contract:** [MERKLE.md](MERKLE.md) — 1-minute buckets, leaf/node/empty domain separation, power-of-two pad, abstract mismatch-recovery walk. Root + transcript vectors promoted.
 
-**Exit gate:** C3 normative; published root vectors; at least one full mismatch-recovery transcript green in both conformance encoders.
+- [x] Canonical authenticated tree: bucket boundaries, leaf ordering, empty-node hashes, shape, internal encoding ([ISSUES C3](ISSUES.md); MERKLE §3; MERKLE-001..004)
+- [x] Path/range subtree walk (NodeRequest/Response, LeafRequest/Response) — abstract model MERKLE §4; wire framing M3
+- [x] Concurrent-write rule: freeze snapshot at walk start, final root re-compare (MERKLE §4)
+- [x] Complete mismatch-recovery transcript (MERKLE-T-001..004; wire ships M3)
+
+**Exit gate:** C3 normative; published root vectors; at least one full mismatch-recovery transcript green in both conformance encoders.  **Resolved 2026-07-18** (Decision Log; 8 Merkle vectors CI-blocking in both runners within 95-vector corpus; draft-1 profile).
 
 #### M0d — Author keys & datastore membership
 
 **Outcome:** author signatures are verifiable under forwarding; datastore admission has a capability format relays can check without schema.
 
-- [ ] Distinguish transport sender from author; carry or resolve authenticated author key/certificate vs `operation.peer` ([ISSUES C5](ISSUES.md))
-- [ ] Key rotation/revocation and historical-key lookup; out-of-order key records vs signed ops
-- [ ] Relay-verifiable **datastore-membership capabilities** (format + verification algorithm) ([ISSUES C4](ISSUES.md) admission half)
-- [ ] Negative vectors: forged author, wrong datastore, missing membership, revoked key
+> **Contract:** [AUTH.md](AUTH.md) owns the M0d normative text (two-level identity + device certs §1, genesis/root authority §2, membership capabilities + admission token §3, per-op authz predicate §4, relay vs peer roles §5). Directions DQ-1/2/3 resolved via the M0d checklist. All four vector families promoted (AUTH-CERT / AUTH-GEN / AUTH-AUTHZ / AUTH-ADM).
 
-**Exit gate:** C4 admission + C5 normative; negative auth vectors green.  On-wire enforcement remains M3.
+- [x] Device certificate format + root-sig verify + PrincipalId/PeerId bind ([ISSUES C5](ISSUES.md); AUTH §1; AUTH-CERT vectors)
+- [x] Genesis body + self-certifying `DatastoreId` (AUTH §2; AUTH-GEN vectors)
+- [x] Per-op authz predicate: causal grant-time, concurrent revoke, founder synthetic (AUTH §4; AUTH-AUTHZ vectors)
+- [x] Relay-verifiable **datastore-membership capabilities** / admission token (AUTH §3.3; AUTH-ADM vectors)
+- [x] Author key resolution contract: transport sender ≠ author; inline or prior cert; named `AUTHOR_UNRESOLVED`/`AUTHOR_UNKNOWN` (AUTH §1.3–§1.4); on-wire enforcement M3b
+- [x] Negative vectors: forged/wrong-ds/missing membership/revoked (AUTH-AUTHZ + AUTH-ADM + AUTH-CERT)
+
+**Exit gate:** C4 admission + C5 normative; negative auth vectors green.  On-wire enforcement remains M3.  **Resolved 2026-07-18** (Decision Log; 18 auth vectors CI-blocking in both runners within 75-vector corpus; draft-1 profile; closes CX-02).
 
 #### M0e — Groups, delivery, ack & version policy
 
 **Outcome:** group completeness and crash/recovery boundaries are specified; delivery is at-least-once with durable anti-replay intent; version authority is named.
 
-- [ ] Signed group manifest (or cardinality/index/member hashes) + abort/expiry ([ISSUES C8](ISSUES.md))
-- [ ] Atomic storage transaction or WAL/replay protocol with explicit crash points (local half implemented M1)
-- [ ] Delivery/dedup/replay: at-least-once semantics, anti-replay surviving compaction intent, per-op batch outcomes, resume cursors, retry/backoff ([ISSUES H4](ISSUES.md))
-- [ ] Receipt vs durable ack contract for L2 relays ([ISSUES H11](ISSUES.md) — contract only; impl M3+)
-- [ ] Per-format version authority and supported window ([ISSUES H7](ISSUES.md)); map document `0.x-draft` to wire `protocol_version`
-- [ ] Identifier/hash encoding registry shared with RELAY-SPEC ([ISSUES H9](ISSUES.md) contract half)
+> **Contracts:** [WAL.md](WAL.md) (M0e.1), [DELIVERY.md](DELIVERY.md) (M0e.2), [VERSIONS.md](VERSIONS.md) (M0e.3).
 
-**Exit gate:** C8 + H4/H7 contracts normative; group/crash/dedup suites green against the executable reference model (WAL/crash-point state machine, layer 1 above).  The SQLite crash-injection versions of the same suites are layer 2 and gate M1.
+- [x] Signed group manifest (model form) + incomplete/abort outcomes ([ISSUES C8](ISSUES.md); WAL.md; WAL-004..008)
+- [x] Atomic storage / WAL/replay with named crash points — layer 1 (WAL-001..012); SQLite layer 2 at M1
+- [x] Delivery/dedup/replay: at-least-once, anti-replay, batch outcomes, resume ([ISSUES H4](ISSUES.md); DELIVERY.md; DELIV-001..004)
+- [x] Receipt vs durable ack contract ([ISSUES H11](ISSUES.md); DELIVERY §5 — impl M3+)
+- [x] Per-format version authority + decode limits ([ISSUES H7](ISSUES.md); VERSIONS.md + registry)
+- [x] Identifier/hash encoding registry seed ([ISSUES H9](ISSUES.md); registry.json)
+
+**Exit gate:** C8 + H4/H7 contracts normative; suites green at layer 1.  **Resolved 2026-07-18.** SQLite layer 2 gates M1.
 
 #### M0f — Causal frontiers & snapshot contracts
 
 **Outcome:** GC and snapshot bootstrap have implementable contracts **without enabling GC**.  No compaction ships until M5 tests pass.
 
-- [ ] Causal frontiers independent of wall-clock; durable peer acks + retirement/lease/reconnect rules ([ISSUES C7](ISSUES.md))
-- [ ] Authenticated checkpoint/snapshot identity, tail boundaries, anti-replay commitments
-- [ ] Root comparison across checkpoints; L2 materializes vs stores peer-produced snapshots (decision recorded)
-- [ ] Compact causal frontier + checkpoint translation for `deps` scale ([ISSUES O7](ISSUES.md) contract)
-- [ ] Explicit: **GC remains disabled** until partition/rejoin, forgotten-peer, late-op, and restore tests pass (M5)
+> **Contract:** [FRONTIER.md](FRONTIER.md).
 
-**Exit gate:** C7/O7 contracts normative; snapshot identity fixtures; no GC implementation required.
+- [x] Causal frontiers independent of wall-clock; peer acks + retirement/lease rules ([ISSUES C7](ISSUES.md); FRONTIER §1–§3; FRONT-001)
+- [x] Authenticated snapshot identity, tail boundaries ([ISSUES C7](ISSUES.md); FRONTIER §5; FRONT-002)
+- [x] L2 stores peer-produced authenticated snapshots (not schema-blind materialization) — recorded FRONTIER §5
+- [x] Compact frontier for `deps` scale ([ISSUES O7](ISSUES.md); FRONTIER §1)
+- [x] **GC remains disabled** until M5; late-op rule FRONT-003
+
+**Exit gate:** C7/O7 contracts normative; snapshot identity fixtures; no GC implementation required.  **Resolved 2026-07-18.**
 
 ### M1 — Local durable core (Rust + SQLite + CLI)
 

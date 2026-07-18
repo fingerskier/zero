@@ -1,0 +1,24 @@
+{
+  "description": "wal_truncate of synced but unapplied record → TRUNCATE_UNSAFE.",
+  "id": "WAL-012",
+  "type": "group-seal",
+  "invariants": ["I-14"],
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0707070707070707070707070707070707070707070707070707070707070707",
+        "body": "pending",
+        "group": null,
+        "author_ts": { "p": 70, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "wal_truncate",
+      "up_to_index": 1,
+      "expect_error": "TRUNCATE_UNSAFE"
+    }
+  ],
+  "expect_sealed": []
+}

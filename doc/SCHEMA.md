@@ -1,8 +1,8 @@
 # ZeroDB Schema Specification — IR, Epochs, Migrations & Query Subset (M0b)
 
 **Version:** 0.1.0-draft
-**Status:** normative **draft** — the M0b contract under construction (ISSUES C2; decisions O2/O3 recorded 2026-07-16). Package exit requires every rule here backed by vectors green in both conformance runners; nothing freezes before composite M0.
-**Authority:** this document owns the schema IR, schema epochs, the migration DSL, and the v0.1 query subset. Encoding primitives and the operation envelope come from [KERNEL.md](KERNEL.md) (the `ep` field and the `SchemaEpoch` variant body defined here fill KERNEL's reserved slots). [SPEC §3](SPEC.md) remains the informative overview; on conflict this document wins for schema semantics.
+**Status:** normative (**draft-1 profile**). The M0b exit checklist closed 2026-07-18 ([ISSUES Decision Log](ISSUES.md)): every rule below is backed by golden vectors green in **both** conformance runners and CI-blocking ([conformance/](../conformance/README.md)); the corpus grows as later packages land. Byte-level **freeze** of the draft-1 profile still happens only at the composite M0 gate ([SPEC §10](SPEC.md)) — until then, a byte-affecting change re-runs the resolution checklist rather than bumping `schema_ir_format_version`. Cross-peer mixed-version migration *shipping* remains M4.
+**Authority:** this document owns the schema IR, schema epochs, the migration DSL, and the v0.1 query subset (ISSUES C2, O2, O3). Encoding primitives and the operation envelope come from [KERNEL.md](KERNEL.md) (the `ep` field and the `SchemaEpoch` variant body defined here fill KERNEL's reserved slots). [SPEC §3](SPEC.md) remains the informative overview; on conflict this document wins for schema semantics.
 
 ---
 
@@ -144,4 +144,4 @@ Deterministic semantics:
 | `migration-transform` | each registry transform: input state → output state, incl. degenerate inputs | I-17 |
 | `query-eval` | grammar accept/reject cases; evaluation over a fixture graph incl. null, cross-type, MVRegister, ORDER BY determinism | — (read-side determinism) |
 
-Same lifecycle as every family: red in `xfail/`, promoted on both-runners-green; M0b's exit requires the full suite promoted plus the C2 checklist.
+Same lifecycle as every family: red in `xfail/`, promoted on both-runners-green. M0b exit closed 2026-07-18 with all five families promoted (57 required vectors; Decision Log + `plan/LEDGER.md` audit record).

@@ -1,0 +1,21 @@
+{
+  "description": "Salt flip yields a different DatastoreId (self-certifying id).",
+  "id": "AUTH-GEN-003",
+  "type": "genesis-id",
+  "invariants": ["I-9"],
+  "expect": "ok",
+  "datastore_id_hex": "13f2c2d767f3e5b4cc5e36d8e542faf446ef8156532b35426c750d61dcabbc19",
+  "op_id_hex": "550f65a22fd176c511ad90c709dfc1f39e3f7214634d464f3d3347640c951bf7",
+  "preimage_body_hex": "a96176016264735820000000000000000000000000000000000000000000000000000000000000000062657000627473a2616c0061701b0000018bcfe5680063677270f664626f6479a46473616c7450fe02030405060708090a0b0c0d0e0f1065666d745f760167666f756e6465725820f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f067696e69745f657000646465707380646b696e640066617574686f725820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+  "different_from_hex": "05b8bdd43486448bdb00f6ce65a9135ac9162f67d92ed9b0285046f93fa2daf3",
+  "op": {
+    "v": 1, "ds": "0000000000000000000000000000000000000000000000000000000000000000", "ep": 0, "author": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+    "ts": { "p": 1700000000000, "l": 0 }, "deps": [], "grp": null, "kind": 0,
+    "body": { "t": "map", "v": {
+      "founder": { "t": "bytes", "hex": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0" },
+      "salt": { "t": "bytes", "hex": "fe02030405060708090a0b0c0d0e0f10" },
+      "init_ep": { "t": "uint", "v": 0 },
+      "fmt_v": { "t": "uint", "v": 1 }
+    } }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "Cross-package smoke: single-op merkle root + delivery ACCEPT + non-late against its own frontier.",
+  "id": "COMP-001",
+  "type": "composite-smoke",
+  "op": {
+    "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+    "physical_ms": 1000,
+    "logical": 0,
+    "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "expect_merkle_root_hex": "c059a7bb6294be70fceca60b6a16a6d8ee4e3949bf6aef1cbd70ecc11d0fc11a",
+  "expect_delivery": "ACCEPT",
+  "expect_late": false
+}

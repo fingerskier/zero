@@ -1,0 +1,32 @@
+{
+  "description": "Crash after state_apply before hlc_persist: recover re-applies and resumes HLC from durable wal (DQ-7).",
+  "id": "WAL-009",
+  "type": "wal-crash",
+  "invariants": ["I-3", "I-14", "DQ-7"],
+  "crash_after_step": 2,
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0303030303030303030303030303030303030303030303030303030303030303",
+        "body": "op-c",
+        "group": null,
+        "author_ts": { "p": 3000, "l": 2 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0303030303030303030303030303030303030303030303030303030303030303"
+    },
+    { "op": "hlc_persist", "ts": { "p": 3000, "l": 2 } }
+  ],
+  "expect_after_recover": {
+    "wal_len": 1,
+    "applied": [
+      "0303030303030303030303030303030303030303030303030303030303030303"
+    ],
+    "hlc": { "p": 3000, "l": 2 },
+    "sealed": []
+  }
+}

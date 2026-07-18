@@ -1,14 +1,19 @@
+pub mod auth;
 pub mod cbor;
+pub mod delivery;
 pub mod envelope;
 pub mod epoch;
+pub mod frontier;
 pub mod hlc;
 pub mod kernel;
+pub mod merkle;
 pub mod op;
 pub mod query;
 pub mod queryeval;
 pub mod schema;
 pub mod sign;
 pub mod types;
+pub mod wal;
 
 pub use hlc::{HLC, HLCTimestamp};
 pub use kernel::{Flag, GCounter, KernelOp, Lww, OrSet, Payload, PnCounter, Replica, Value};

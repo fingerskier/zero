@@ -1,0 +1,29 @@
+{
+  "description": "Crash after wal_append before sync: buffer discarded; nothing durable.",
+  "id": "WAL-001",
+  "type": "wal-crash",
+  "invariants": ["I-14"],
+  "crash_after_step": 0,
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+        "body": "op-a",
+        "group": null,
+        "author_ts": { "p": 1000, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101"
+    }
+  ],
+  "expect_after_recover": {
+    "wal_len": 0,
+    "applied": [],
+    "hlc": null,
+    "sealed": []
+  }
+}

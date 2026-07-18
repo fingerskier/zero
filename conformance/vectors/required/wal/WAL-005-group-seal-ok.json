@@ -1,0 +1,47 @@
+{
+  "description": "Both group members applied → group_seal succeeds.",
+  "id": "WAL-005",
+  "type": "group-seal",
+  "invariants": ["I-13"],
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "body": "g1",
+        "group": "99999999999999999999999999999999",
+        "author_ts": { "p": 10, "l": 0 }
+      }
+    },
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+        "body": "g2",
+        "group": "99999999999999999999999999999999",
+        "author_ts": { "p": 11, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    },
+    {
+      "op": "state_apply",
+      "op_id": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+    },
+    {
+      "op": "group_seal",
+      "manifest": {
+        "group_id": "99999999999999999999999999999999",
+        "members": [
+          "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+          "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+        ],
+        "abort": false
+      }
+    }
+  ],
+  "expect_sealed": ["99999999999999999999999999999999"]
+}

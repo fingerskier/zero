@@ -1,0 +1,18 @@
+{
+  "description": "Both empty: Converged on empty-leaf root.",
+  "id": "MERKLE-T-004",
+  "type": "merkle-transcript",
+  "invariants": ["I-11"],
+  "peer_a": [
+    
+  ],
+  "peer_b": [
+    
+  ],
+  "final_root_hex": "7fdc1b75ec3916d3ba5d37d59cca44f7699e1582d923569759c1826688c2047b",
+  "transcript": [
+    { "type": "RootOffer", "from": "A", "root": "7fdc1b75ec3916d3ba5d37d59cca44f7699e1582d923569759c1826688c2047b" },
+    { "type": "RootOffer", "from": "B", "root": "7fdc1b75ec3916d3ba5d37d59cca44f7699e1582d923569759c1826688c2047b" },
+    { "type": "Converged", "root": "7fdc1b75ec3916d3ba5d37d59cca44f7699e1582d923569759c1826688c2047b" }
+  ]
+}

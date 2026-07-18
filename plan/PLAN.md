@@ -1,7 +1,7 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
-**Date:** 2026-07-16 (status refreshed 2026-07-18)
-**Status:** active delivery plan (pre-MVP)
+**Date:** 2026-07-16 (status refreshed 2026-07-18 — **composite M0 exit**)
+**Status:** active delivery plan (pre-MVP); composite M0 contract-model gate closed
 **Authority:** delivery/tracking plan only. [SPEC §10](../doc/SPEC.md) is the normative roadmap, [ISSUES.md](../doc/ISSUES.md) the normative issue ledger, [LEDGER.md](LEDGER.md) the live work tracker. Where this plan conflicts with SPEC, SPEC wins.
 
 This plan was drafted from two independent reviews — [FINDINGS.GROK.md](FINDINGS.GROK.md) (2026-07-15) and [FINDINGS.CODEX.md](FINDINGS.CODEX.md) (2026-07-16), both now **historical**. Their finding→work-item mapping has been executed; live status is in [LEDGER.md](LEDGER.md).
@@ -19,12 +19,12 @@ Both reviews agreed and it still holds: the M0→M6 sequencing is sound; the pro
 
 ## 2. Blocker status
 
-The eight blockers that gated starting the MVP path — seven are cleared, one remains:
+The eight blockers that gated starting the MVP path — **all cleared** (CX-02 closed with M0d 2026-07-18):
 
 | # | Blocker | Status |
 |---|---------|--------|
 | 1 | CX-01 semantic kernel unowned | **done** — M0a / [KERNEL.md](../doc/KERNEL.md) |
-| 2 | CX-02 datastore membership relay-checked only | **open** — M0d (direction ratified, [DQ-PROPOSALS](DQ-PROPOSALS.md) DQ-1/2/3) |
+| 2 | CX-02 datastore membership relay-checked only | **done** — M0d / [AUTH.md](../doc/AUTH.md) (C4 admission + C5; on-wire M3b) |
 | 3 | CX-03 gate circularity | **done** — P0-6, SPEC §10 two-layer rule |
 | 4 | CX-04 no offline catch-up in v0.1 | **resolved (design)** — M3a L2 relay required before `v0.1.0` (SPEC §10; DQ-9) |
 | 5 | CX-05 freeze before format decisions | **done** — envelope/blob decided in M0a (DQ-5/DQ-6) |
@@ -43,12 +43,12 @@ Package structure and normative content live in [SPEC §10](../doc/SPEC.md); per
 | Package | Owns | Status |
 |---------|------|--------|
 | M0a | operation kernel, encoding, HLC, CRDT semantics | **done** — [KERNEL.md](../doc/KERNEL.md), 24-vector corpus |
-| M0b | schema IR, epochs, migration DSL, query subset | **in-progress** — [SCHEMA.md](../doc/SCHEMA.md); all 5 vector families promoted; remaining: TS→IR compiler (≤M1) + C2 checklist |
-| M0c | Merkle tree + sync state machine | open |
-| M0d | datastore / identity / authorization | open — blocks on DQ-1/2/3 contracts |
-| M0e | groups/WAL, delivery/resume, decode limits | open |
-| M0f | frontiers, checkpoints, snapshots | open |
-| M0 composite | cross-package fixtures | open |
+| M0b | schema IR, epochs, migration DSL, query subset | **done** — [SCHEMA.md](../doc/SCHEMA.md), 57-vector corpus (C2 2026-07-18); TS→IR ≤ M1 |
+| M0c | Merkle tree + sync state machine | **done** — [MERKLE.md](../doc/MERKLE.md) (C3) |
+| M0d | datastore / identity / authorization | **done** — [AUTH.md](../doc/AUTH.md) (C4+C5) |
+| M0e | groups/WAL, delivery/resume, versions | **done** — WAL / DELIVERY / VERSIONS (C8, H4, H7, H11) |
+| M0f | frontiers, checkpoints, snapshots | **done** — [FRONTIER.md](../doc/FRONTIER.md) (C7/O7); GC disabled |
+| M0 composite | cross-package fixtures | **done** — COMP-001; 103 vectors; draft-1 only |
 
 Dependency order (SPEC §10): `M0a → {M0b, M0c, M0d, M0e}`; `M0c + M0e.2 → M0f`; composite → M1.
 
@@ -67,9 +67,9 @@ DQ-1..DQ-12 defined below; resolution tracked in [LEDGER.md](LEDGER.md). A decis
 
 | ID | Decision | Blocks | Status |
 |----|----------|--------|--------|
-| DQ-1 | Identity: key, device, or principal-with-devices? | M0d | direction ratified ([DQ-PROPOSALS](DQ-PROPOSALS.md)) |
-| DQ-2 | Datastore genesis + root authority? | M0d | direction ratified |
-| DQ-3 | Per-op author-membership + historical authorization? | M0d | direction ratified |
+| DQ-1 | Identity: key, device, or principal-with-devices? | M0d | **resolved** — AUTH §1 |
+| DQ-2 | Datastore genesis + root authority? | M0d | **resolved** — AUTH §2 |
+| DQ-3 | Per-op author-membership + historical authorization? | M0d | **resolved** — AUTH §4 |
 | DQ-4 | Executable model closing C8 without SQLite? | M0e.1 | direction ratified |
 | DQ-5 | Encryption unit + frozen envelope bytes? | M0a/M0b | **resolved** — KERNEL §7 |
 | DQ-6 | Extension/blob strategy? | M0a | **resolved** — KERNEL §8 |
@@ -92,11 +92,9 @@ DQ-1..DQ-4 gate M0d/M0e contract writing (directions in [DQ-PROPOSALS.md](DQ-PRO
 
 ## 8. Immediate next actions (ordered)
 
-1. **M0b exit** — ship the standalone TS→IR compiler tool (can trail to M1) and run the C2 approved-resolution checklist to close the package.
-2. **M0d contracts** — turn DQ-1/2/3 directions into normative prose + negative auth vectors (identity, genesis/root authority, causal grant-time verification). Unblocks CX-02.
-3. **M0e** — WAL/crash reference model (DQ-4), delivery/ack/resume state machine, CBOR decode profile + limits.
-4. **M0c** — canonical Merkle tree + mismatch-recovery transcript.
-5. **M0f** — frontiers/checkpoints/snapshots (after M0c + M0e.2).
-6. **Composite M0** — cross-package fixtures; then and only then start M1.
+1. **M1** — local durable core: Rust + SQLite + CLI (`v0.1.0-local`); layer-2 crash injection for WAL contracts; E1/E2/E4/E9.
+2. **TS→IR compiler** (≤ M1) — standalone npm tool emitting SCHEMA §2 IR.
+3. **M2** — Node/NAPI SDK vertical.
+4. **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.
 
-No M1 implementation begins before the composite-M0 model gates it depends on are green.
+**Composite M0 closed 2026-07-18** (contract-model layer). M1 may begin; format freezes still require an explicit Decision Log freeze naming a versioned profile.

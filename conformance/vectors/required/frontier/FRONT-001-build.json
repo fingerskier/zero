@@ -1,0 +1,29 @@
+{
+  "description": "Frontier keeps max OpId per author by §4.5 order.",
+  "id": "FRONT-001",
+  "type": "frontier-build",
+  "ops": [
+    {
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "physical_ms": 100,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "physical_ms": 200,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "op_id": "0303030303030303030303030303030303030303030303030303030303030303",
+      "physical_ms": 150,
+      "logical": 0,
+      "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "expect_frontier": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0202020202020202020202020202020202020202020202020202020202020202",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "0303030303030303030303030303030303030303030303030303030303030303"
+  }
+}

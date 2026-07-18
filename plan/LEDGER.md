@@ -24,11 +24,11 @@ DQ-1..DQ-12 are defined in [PLAN.md §6](PLAN.md). Track resolution here; closur
 
 | ID | Status | Blocks |
 |----|--------|--------|
-| DQ-1 identity model | direction ratified 2026-07-16 ([DQ-PROPOSALS](DQ-PROPOSALS.md)); resolves via M0d checklist | M0d |
-| DQ-2 datastore genesis/root authority | direction ratified 2026-07-16; resolves via M0d checklist | M0d |
-| DQ-3 per-op membership verification + historical auth | direction ratified 2026-07-16; resolves via M0d checklist | M0d |
-| DQ-4 C8 executable model w/o SQLite | direction ratified 2026-07-16; resolves via M0e.1 checklist | M0e.1 |
-| DQ-5 encryption envelope scope + frozen bytes | **resolved 2026-07-16** (C1 closure; KERNEL §7 + ENV vectors); schema annotation half → M0b | M0b remainder |
+| DQ-1 identity model | **resolved 2026-07-18** (M0d exit; AUTH §1 + AUTH-CERT vectors) | — |
+| DQ-2 datastore genesis/root authority | **resolved 2026-07-18** (M0d exit; AUTH §2 + AUTH-GEN vectors) | — |
+| DQ-3 per-op membership verification + historical auth | **resolved 2026-07-18** (M0d exit; AUTH §4 + AUTH-AUTHZ/ADM vectors) | — |
+| DQ-4 C8 executable model w/o SQLite | **resolved 2026-07-18** (M0e.1; WAL.md + WAL vectors) | — |
+| DQ-5 encryption envelope scope + frozen bytes | **resolved 2026-07-16** (C1 closure; KERNEL §7 + ENV vectors); schema `encrypted` annotation constraints closed with M0b (SCHEMA §2 + SCHEMA-NEG-002) | — |
 | DQ-6 extension/blob strategy | **resolved 2026-07-16** (C1 closure; KERNEL §8 + CRDT-BLOB-001) | — |
 | DQ-7 durable HLC state rule | **resolved 2026-07-16** (contract; KERNEL §5 + HLC-002/005); backend layer re-verified at M1 | M1 layer 2 |
 | DQ-8 equal-timestamp equivocation/tie-break | **resolved 2026-07-16** (C1 closure; KERNEL §4.5 + CRDT-LWW-002) | — |
@@ -43,14 +43,14 @@ DQ-1..DQ-12 are defined in [PLAN.md §6](PLAN.md). Track resolution here; closur
 |----|------|--------|---------|--------|------------|------------------------|----------|
 | VR | Version registry (5 namespaces) | done(`conformance/registry.json` + KERNEL §1) | P0-5 | S | P0 done | registry file + fixtures | naming churn |
 | M0a | Semantic & operation kernel | **done(2026-07-16)** — C1 + C4-context resolved via SPEC §10 checklist; 24-vector corpus CI-blocking in both runners; draft-1 profile (byte freeze at composite M0). Evidence in resolved records below | VR, DQ-5..8 | L | registry merged | model suites green Rust+TS; golden vectors ✓ | corpus is a growing baseline, not exhaustive |
-| M0b | Schema IR / epochs / query profile | in-progress — O2/O3 decided (Decision Log 2026-07-16: TS authoring-canonical → IR identity-canonical, `.zerodb` dropped; minimal query subset); doc/SCHEMA.md draft (IR §2, epochs §3, migration DSL §4 + §4.1 segmented-replay model, query grammar §5). Done: IR validator + 5 negatives; **epoch-replay model + full vector suite both runners** (`epoch.rs`/`epoch.mjs`, EPOCH-001..014: change_crdt replay, same-type pooling, single/multi-level fork + descendant quarantine, broken-chain + past-end EPOCH_UNKNOWN, `reset_to`, depth-3 two-boundary, equivocation×epoch + dedup, ep=0 schemaless, pncounter negative seed, type-change-without-migration negative — every model branch exercised). **migration-transform** family done: shared `transform_value` (single source of truth with the epoch boundary), MIG-001..005 all 5 v1 transforms incl. degenerate inputs + i64-overflow cross-runner agreement. **query grammar parser** both runners (`query.rs`/`query.mjs`, SCHEMA.md §5 tokenizer + recursive-descent AST) + QUERY-PARSE-001/002 (25 cases) + **query evaluator** both runners (`queryeval.rs`/`queryeval.mjs`) + QUERY-EVAL-001..006 (filter/order/limit/project, two-valued null logic, cross-type total-order, IS NULL, one-hop out/in edges, bare-var node projection, MVRegister conflict surfacing). **All five M0b vector families complete.** SCHEMA.md §5 pinned ORDER BY default-ASC + singleton-MVRegister comparison. Remaining: TS→IR compiler tool (can trail to M1), C2 exit checklist | M0a ✓, DQ-10 | M | M0a vectors ✓ | epoch replay vectors incl. type change | migration DSL design |
-| M0c | Merkle / sync state machine | open | M0a | M | M0a vectors | root vectors + mismatch transcript | canonical-tree edge cases |
-| M0d | Datastore / identity / authorization | open | M0a, DQ-1..3 | L | M0a vectors | negative auth vectors; control-plane spec | identity-model rework |
-| M0e.1 | Group/WAL reference model | open | M0a, DQ-4 | M | M0a vectors | crash-point transcripts green (model) | C8 model fidelity vs SQLite |
-| M0e.2 | Delivery/ack/resume state machine | open | M0a | M | M0a vectors | loss/reorder/resume model suite | cursor semantics (HX-04) |
-| M0e.3 | CBOR decode profile + limits + registry | open | VR | S | registry merged | negative decode fixtures | pre-auth resource limits |
-| M0f | Frontiers / checkpoints / snapshots | open | M0c, M0e.2 | M | both green | retirement/late-op/root-comparison models | frontier compactness (O7) |
-| M0 | Composite gate | open | M0a–M0f | — | all packages | cross-package fixtures green both runners | silent gate waivers |
+| M0b | Schema IR / epochs / query profile | **done(2026-07-18)** — C2 + O2/O3 resolved via SPEC §10 checklist; SCHEMA.md draft-1; 57-vector corpus (5 families) CI-blocking both runners. Evidence in resolved records below. TS→IR compiler trails ≤ M1 (not a gate); cross-peer migration shipping M4 | M0a ✓, DQ-10 | M | M0a vectors ✓ | epoch replay vectors incl. type change | — |
+| M0c | Merkle / sync state machine | **done(2026-07-18)** — C3 resolved via SPEC §10 checklist; MERKLE.md draft-1; MERKLE-001..004 roots + MERKLE-T-001..004 transcripts CI-blocking both runners; wire framing M3. Evidence in resolved records below | M0a ✓ | M | M0a vectors | root vectors + mismatch transcript | — |
+| M0d | Datastore / identity / authorization | **done(2026-07-18)** — C4 admission + C5 resolved via SPEC §10 checklist; AUTH.md draft-1; 18 auth vectors (+ full corpus 75) CI-blocking both runners; DQ-1/2/3 contract layer closed. On-wire enforcement M3b. Evidence in resolved records below | M0a ✓, DQ-1..3 | L | M0a vectors | negative auth vectors; control-plane spec | — |
+| M0e.1 | Group/WAL reference model | **done(2026-07-18)** — C8; WAL.md draft-1; WAL-001..012 | M0a ✓, DQ-4 | M | M0a vectors | crash-point transcripts green (model) | — |
+| M0e.2 | Delivery/ack/resume state machine | **done(2026-07-18)** — H4/H11 contract; DELIVERY.md; DELIV-001..004 | M0a ✓ | M | M0a vectors | loss/reorder/resume model suite | — |
+| M0e.3 | CBOR decode profile + limits + registry | **done(2026-07-18)** — VERSIONS.md + registry + OP-NEG (M0a) | VR ✓ | S | registry merged | negative decode fixtures | — |
+| M0f | Frontiers / checkpoints / snapshots | **done(2026-07-18)** — C7/O7 contract; FRONTIER.md; FRONT-001..003; GC disabled | M0c ✓, M0e.2 ✓ | M | both green | retirement/late-op/root-comparison models | — |
+| M0 | Composite gate | **done(2026-07-18)** — C1–C5,C7–C8 resolved; COMP-001 smoke; 103 vectors both runners; draft-1 only (no format freeze) | M0a–M0f | — | all packages | cross-package fixtures green both runners | — |
 
 ## Post-M0
 
@@ -77,3 +77,11 @@ Durable closure records (HX-10): issue ID, outcome, evidence, approver. Decision
 | O5 | 2026-07-16 | won't do — clean break, no migration tooling | Decision Log entry; README expectation set (`1db205e`) | fingerskier |
 | C1 (+C4 context, O6 provisional) | 2026-07-16 | M0a package exit: operation algebra/encoding/preimages normative in doc/KERNEL.md; draft-1 profile, byte freeze deferred to composite M0 | Contract commits `da48531`..exit commit; `conformance/registry.json`; 24 vectors in `conformance/vectors/required/` green in Rust harnesses + JS runner (CI blocking); DQ-5..8 directions ratified 2026-07-16 | fingerskier ("go ahead with the exit pass") |
 | DQ-5..DQ-8 | 2026-07-16 | Contract layer resolved inside C1 closure (KERNEL §7, §8, §5, §4.5 respectively); DQ-7 backend durability layer re-verified at M1 | Same vector corpus (ENV-001/002, CRDT-BLOB-001, HLC-002/005, CRDT-LWW-002) | fingerskier |
+| C2 (+O2/O3 residual) | 2026-07-18 | M0b package exit: schema IR / epochs / migration DSL / v0.1 query normative in doc/SCHEMA.md; draft-1 profile, byte freeze deferred to composite M0; TS→IR compiler ≤ M1; cross-peer migration shipping M4 | Contract commits `8cf044f`..`5c4ccdb` + exit pass; 57 vectors in `conformance/vectors/required/` (schema×6, epoch×14, migration×5, query×8 + M0a families) green in Rust harnesses + JS runner (CI blocking); O2/O3 Decision Log 2026-07-16 | fingerskier ("please continue with the plan") |
+| C4 admission (+C5, DQ-1..3) | 2026-07-18 | M0d package exit: identity/genesis/membership/authz normative in doc/AUTH.md; draft-1 profile; on-wire enforcement deferred to M3b; closes CX-02 | AUTH.md + `zerodb-core/src/auth.rs` + JS model; 18 vectors under `conformance/vectors/required/auth/` (CERT×5, GEN×3, AUTHZ×6, ADM×4) green both runners; full required corpus 75 | fingerskier ("please continue") |
+| C3 | 2026-07-18 | M0c package exit: canonical Merkle tree + mismatch-recovery walk normative in doc/MERKLE.md; draft-1; wire framing M3 | MERKLE.md + `merkle.rs`/`merkle.mjs`; MERKLE-001..004 + MERKLE-T-001..004 green both runners (corpus 95 at exit) | fingerskier ("please continue") |
+| C8 (+DQ-4) | 2026-07-18 | M0e.1: WAL/group reference model | WAL.md; WAL-001..012 | fingerskier |
+| H4/H11 | 2026-07-18 | M0e.2: delivery/ack/resume contract | DELIVERY.md; DELIV-001..004 | fingerskier |
+| H7 (+H9 registry) | 2026-07-18 | M0e.3: version policy + limits | VERSIONS.md; registry | fingerskier |
+| C7 (+O7) | 2026-07-18 | M0f: frontiers/snapshots; GC disabled | FRONTIER.md; FRONT-001..003 | fingerskier |
+| Composite M0 | 2026-07-18 | All M0 packages closed at model layer; no format freeze | 103 required vectors both runners; COMP-001 | fingerskier ("lets finish M0, then commit") |

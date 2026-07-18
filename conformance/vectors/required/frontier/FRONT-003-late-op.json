@@ -1,0 +1,20 @@
+{
+  "description": "Op older than published author tip is LATE_OP (expect_late true).",
+  "id": "FRONT-003",
+  "type": "late-op",
+  "frontier_ops": [
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "physical_ms": 200,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "op": {
+    "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+    "physical_ms": 100,
+    "logical": 0,
+    "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "expect_late": true
+}

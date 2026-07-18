@@ -1,0 +1,24 @@
+{
+  "description": "B is a superset within the same bucket; leaf mismatch + Delta.",
+  "id": "MERKLE-T-003",
+  "type": "merkle-transcript",
+  "invariants": ["I-11"],
+  "peer_a": [
+    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  ],
+  "peer_b": [
+    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  ],
+  "final_root_hex": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097",
+  "transcript": [
+    { "type": "RootOffer", "from": "A", "root": "c059a7bb6294be70fceca60b6a16a6d8ee4e3949bf6aef1cbd70ecc11d0fc11a" },
+    { "type": "RootOffer", "from": "B", "root": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097" },
+    { "type": "LeafRequest", "from": "A", "leaf_index": 0, "bucket_index": 0 },
+    { "type": "LeafResponse", "from": "B", "leaf_index": 0, "bucket_index": 0, "op_ids": ["0101010101010101010101010101010101010101010101010101010101010101", "0202020202020202020202020202020202020202020202020202020202020202"] },
+    { "type": "Delta", "from": "B", "op_ids": ["0202020202020202020202020202020202020202020202020202020202020202"] },
+    { "type": "RootOffer", "from": "A", "root": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097" },
+    { "type": "RootOffer", "from": "B", "root": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097" },
+    { "type": "Converged", "root": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097" }
+  ]
+}

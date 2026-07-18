@@ -2,7 +2,8 @@
 
 **Status:** design proposals. Nothing here becomes normative except through the [SPEC §10](../doc/SPEC.md) approved-resolution checklist (normative prose + machine-readable artifact + golden vectors + Decision Log entry).
 
-- **DQ-1..DQ-4** (below, full text) — **directions ratified 2026-07-16**, awaiting contract prose in their owning packages (M0d, M0e.1). These are the live proposals.
+- **DQ-1..DQ-3** — **resolved 2026-07-18** via M0d exit; contracts live in [AUTH.md](../doc/AUTH.md). Text below is historical design rationale.
+- **DQ-4** (below) — **direction ratified 2026-07-16**, awaiting contract prose in M0e.1.
 - **DQ-5..DQ-8** — **resolved**; the contracts now live in [KERNEL.md](../doc/KERNEL.md). Only compact resolution stubs remain here (§DQ-5..§DQ-8); KERNEL is authoritative.
 
 Each live proposal states: recommendation, rationale, rejected alternatives, and what freezes where. Decision IDs from [PLAN.md §6](PLAN.md); tracking in [LEDGER.md](LEDGER.md).

@@ -1,0 +1,32 @@
+{
+  "description": "Crash after wal_sync before state_apply: recover re-applies from durable wal; HLC resumes from oplog.",
+  "id": "WAL-002",
+  "type": "wal-crash",
+  "invariants": ["I-3", "I-14", "DQ-7"],
+  "crash_after_step": 1,
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+        "body": "op-a",
+        "group": null,
+        "author_ts": { "p": 1000, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101"
+    },
+    { "op": "hlc_persist", "ts": { "p": 1000, "l": 0 } }
+  ],
+  "expect_after_recover": {
+    "wal_len": 1,
+    "applied": [
+      "0101010101010101010101010101010101010101010101010101010101010101"
+    ],
+    "hlc": { "p": 1000, "l": 0 },
+    "sealed": []
+  }
+}

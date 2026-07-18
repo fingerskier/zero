@@ -1,0 +1,135 @@
+// Frontiers + snapshot identity per doc/FRONTIER.md (M0f).
+
+import { blake3 } from './blake3.mjs';
+import { bytesToHex, hexToBytes } from './cbor.mjs';
+import { merkleRootOnce } from './merkle.mjs';
+
+const DOMAIN_SNAPSHOT = new TextEncoder().encode('zerodb-snapshot-v1');
+const SNAPSHOT_FORMAT_VERSION = 1;
+
+function parseOp(o) {
+  return {
+    op_id: hexToBytes(o.op_id),
+    physical_ms: o.physical_ms,
+    logical: o.logical ?? 0,
+    author: hexToBytes(o.author),
+  };
+}
+
+function orderKey(op) {
+  return [op.physical_ms, op.logical, bytesToHex(op.author), bytesToHex(op.op_id)];
+}
+
+function cmpKey(a, b) {
+  const ka = orderKey(a);
+  const kb = orderKey(b);
+  for (let i = 0; i < ka.length; i++) {
+    if (ka[i] < kb[i]) return -1;
+    if (ka[i] > kb[i]) return 1;
+  }
+  return 0;
+}
+
+export function buildFrontier(ops) {
+  const best = new Map();
+  for (const op of ops) {
+    const a = bytesToHex(op.author);
+    if (!best.has(a) || cmpKey(op, best.get(a)) > 0) best.set(a, op);
+  }
+  const out = {};
+  for (const [a, op] of [...best.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
+    out[a] = bytesToHex(op.op_id);
+  }
+  return out;
+}
+
+export function tailBoundary(ops) {
+  if (ops.length === 0) return null;
+  let best = ops[0];
+  for (const op of ops) if (cmpKey(op, best) > 0) best = op;
+  return bytesToHex(best.op_id);
+}
+
+function frontierBytes(frontier) {
+  const authors = Object.keys(frontier).sort();
+  const parts = [];
+  for (const a of authors) {
+    parts.push(hexToBytes(a));
+    parts.push(hexToBytes(frontier[a]));
+  }
+  let n = 0;
+  for (const p of parts) n += p.length;
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+export function snapshotId(datastoreIdHex, frontier, merkleHex, tailHex) {
+  const parts = [
+    DOMAIN_SNAPSHOT,
+    new Uint8Array([SNAPSHOT_FORMAT_VERSION]),
+    hexToBytes(datastoreIdHex),
+    frontierBytes(frontier),
+    hexToBytes(merkleHex),
+  ];
+  if (tailHex) {
+    parts.push(new Uint8Array([1]));
+    parts.push(hexToBytes(tailHex));
+  } else {
+    parts.push(new Uint8Array([0]));
+  }
+  let n = 0;
+  for (const p of parts) n += p.length;
+  const pre = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) {
+    pre.set(p, o);
+    o += p.length;
+  }
+  return bytesToHex(blake3(pre));
+}
+
+export function isLateAgainstOps(op, frontierOps) {
+  const f = buildFrontier(frontierOps);
+  const tipHex = f[bytesToHex(op.author)];
+  if (!tipHex) return false;
+  const tip = frontierOps.find((o) => bytesToHex(o.op_id) === tipHex);
+  return cmpKey(op, tip) < 0 && bytesToHex(op.op_id) !== tipHex;
+}
+
+export function runFrontierBuildVector(vector) {
+  const ops = (vector.ops || []).map(parseOp);
+  const got = buildFrontier(ops);
+  if (JSON.stringify(got) !== JSON.stringify(vector.expect_frontier)) {
+    throw new Error(
+      `frontier mismatch:\n  expected ${JSON.stringify(vector.expect_frontier)}\n  got ${JSON.stringify(got)}`
+    );
+  }
+}
+
+export function runSnapshotIdVector(vector) {
+  const ops = (vector.ops || []).map(parseOp);
+  const f = buildFrontier(ops);
+  const root = bytesToHex(merkleRootOnce(ops));
+  const tail = tailBoundary(ops);
+  const id = snapshotId(vector.datastore_id_hex, f, root, tail);
+  if (id !== vector.expect_snapshot_id_hex) {
+    throw new Error(`snapshot id: expected ${vector.expect_snapshot_id_hex}, got ${id}`);
+  }
+  if (vector.expect_merkle_root_hex && root !== vector.expect_merkle_root_hex) {
+    throw new Error(`merkle root: expected ${vector.expect_merkle_root_hex}, got ${root}`);
+  }
+}
+
+export function runLateOpVector(vector) {
+  const base = (vector.frontier_ops || []).map(parseOp);
+  const op = parseOp(vector.op);
+  const late = isLateAgainstOps(op, base);
+  if (late !== vector.expect_late) {
+    throw new Error(`late: expected ${vector.expect_late}, got ${late}`);
+  }
+}

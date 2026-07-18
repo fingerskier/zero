@@ -1,0 +1,28 @@
+{
+  "description": "wal_truncate of applied but unsealed group members → TRUNCATE_UNSAFE.",
+  "id": "WAL-007",
+  "type": "group-seal",
+  "invariants": ["I-13", "I-14"],
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "body": "g1",
+        "group": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "author_ts": { "p": 10, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    },
+    {
+      "op": "wal_truncate",
+      "up_to_index": 1,
+      "expect_error": "TRUNCATE_UNSAFE"
+    }
+  ],
+  "expect_sealed": []
+}

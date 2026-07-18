@@ -1,0 +1,17 @@
+{
+  "description": "Genesis with non-zero ds must fail AUTH_WRONG_DATASTORE.",
+  "id": "AUTH-GEN-002",
+  "type": "genesis-id",
+  "invariants": ["I-9"],
+  "expect": "AUTH_WRONG_DATASTORE",
+  "op": {
+    "v": 1, "ds": "ff00000000000000000000000000000000000000000000000000000000000000", "ep": 0, "author": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+    "ts": { "p": 1700000000000, "l": 0 }, "deps": [], "grp": null, "kind": 0,
+    "body": { "t": "map", "v": {
+      "founder": { "t": "bytes", "hex": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0" },
+      "salt": { "t": "bytes", "hex": "0102030405060708090a0b0c0d0e0f10" },
+      "init_ep": { "t": "uint", "v": 0 },
+      "fmt_v": { "t": "uint", "v": 1 }
+    } }
+  }
+}

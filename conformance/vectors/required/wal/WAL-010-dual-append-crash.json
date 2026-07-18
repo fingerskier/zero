@@ -1,0 +1,34 @@
+{
+  "description": "Two appends then crash before sync: both buffer records lost.",
+  "id": "WAL-010",
+  "type": "wal-crash",
+  "invariants": ["I-14"],
+  "crash_after_step": 1,
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0404040404040404040404040404040404040404040404040404040404040404",
+        "body": "a",
+        "group": null,
+        "author_ts": { "p": 1, "l": 0 }
+      }
+    },
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0505050505050505050505050505050505050505050505050505050505050505",
+        "body": "b",
+        "group": null,
+        "author_ts": { "p": 2, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" }
+  ],
+  "expect_after_recover": {
+    "wal_len": 0,
+    "applied": [],
+    "hlc": null,
+    "sealed": []
+  }
+}

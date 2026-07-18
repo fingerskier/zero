@@ -23,6 +23,22 @@ import { runEpochReplayVector } from './models/epoch.mjs';
 import { runMigrationTransformVector } from './models/migration.mjs';
 import { runQueryParseVector } from './models/query.mjs';
 import { runQueryEvalVector } from './models/queryeval.mjs';
+import {
+  runDeviceCertVector,
+  runGenesisIdVector,
+  runAuthzPredicateVector,
+  runAdmissionTokenVector,
+} from './models/auth.mjs';
+import { runWalCrashVector, runGroupSealVector } from './models/wal.mjs';
+import { runMerkleRootVector, runMerkleTranscriptVector, merkleRootOnce } from './models/merkle.mjs';
+import { runDeliveryScheduleVector } from './models/delivery.mjs';
+import {
+  runFrontierBuildVector,
+  runSnapshotIdVector,
+  runLateOpVector,
+  isLateAgainstOps,
+} from './models/frontier.mjs';
+import { hexToBytes, bytesToHex } from './models/cbor.mjs';
 
 const laneArg = process.argv.indexOf('--lane');
 const lane = laneArg === -1 ? 'required' : process.argv[laneArg + 1];
@@ -46,6 +62,39 @@ const handlers = {
   'migration-transform': runMigrationTransformVector,
   'query-parse': runQueryParseVector,
   'query-eval': runQueryEvalVector,
+  'device-cert': runDeviceCertVector,
+  'genesis-id': runGenesisIdVector,
+  'authz-predicate': runAuthzPredicateVector,
+  'admission-token': runAdmissionTokenVector,
+  'wal-crash': runWalCrashVector,
+  'group-seal': runGroupSealVector,
+  'merkle-root': runMerkleRootVector,
+  'merkle-transcript': runMerkleTranscriptVector,
+  'delivery-schedule': runDeliveryScheduleVector,
+  'frontier-build': runFrontierBuildVector,
+  'snapshot-id': runSnapshotIdVector,
+  'late-op': runLateOpVector,
+  'composite-smoke': (vector) => {
+    const op = {
+      op_id: hexToBytes(vector.op.op_id),
+      physical_ms: vector.op.physical_ms,
+      logical: vector.op.logical ?? 0,
+      author: hexToBytes(vector.op.author),
+    };
+    const root = bytesToHex(merkleRootOnce([op]));
+    if (root !== vector.expect_merkle_root_hex) {
+      throw new Error(`merkle root: expected ${vector.expect_merkle_root_hex}, got ${root}`);
+    }
+    // delivery single accept
+    runDeliveryScheduleVector({
+      schedule: [{ op: 'deliver', op_id: vector.op.op_id }],
+      expect: { last_outcomes: [vector.expect_delivery] },
+    });
+    const late = isLateAgainstOps(op, [op]);
+    if (late !== vector.expect_late) {
+      throw new Error(`late: expected ${vector.expect_late}, got ${late}`);
+    }
+  },
 };
 
 const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'vectors', lane);

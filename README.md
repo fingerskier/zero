@@ -2,8 +2,9 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** Milestone 0 in progress — **M0a (operation kernel) resolved 2026-07-16**; **M0b (schema IR, epochs, migrations, query subset) near exit** — all five conformance vector families promoted, remaining: the TS→IR compiler tool + C2 checklist. The [Kernel](doc/KERNEL.md) and [Schema](doc/SCHEMA.md) specifications are backed by a two-language conformance corpus (Rust + independent JS runners, CI-blocking). Remaining M0 packages: M0c–M0f. No wire or persistent format freezes before composite M0.
-`zerodb-core` / `zerodb-storage` crates remain **experimental** until composite M0.
+**Status:** **Composite M0 contract-model gate closed 2026-07-18** (C1–C5, C7–C8; C6 deferred). Draft-1 profiles only — **no wire/persistent format freeze** until an explicit freeze Decision Log entry. Two-language conformance corpus **103** required vectors, CI-blocking. Next: **M1** (`v0.1.0-local`). TS→IR compiler trails ≤ M1.
+`zerodb-core` / `zerodb-storage` crates remain **experimental** until a format freeze; M1 may begin on the model contracts.
+
 
 ## Documents
 
@@ -11,7 +12,13 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 |-----|------------|
 | [Technical Specification](doc/SPEC.md) | Core architecture, data model, CRDT type system, sync, storage, security — and the milestone roadmap (§10) |
 | [Kernel Specification](doc/KERNEL.md) | M0a contract (resolved): operation algebra, canonical encoding, preimages, HLC state machine, CRDT semantic kernel |
-| [Schema Specification](doc/SCHEMA.md) | M0b contract draft: schema IR, epochs, migration DSL, v0.1 query subset |
+| [Schema Specification](doc/SCHEMA.md) | M0b contract (draft-1): schema IR, epochs, migration DSL, v0.1 query subset |
+| [Authorization Specification](doc/AUTH.md) | M0d contract (draft-1): identity, genesis, membership, authz predicate |
+| [WAL Specification](doc/WAL.md) | M0e.1 (draft-1): WAL crash model, group seal (C8) |
+| [Delivery Specification](doc/DELIVERY.md) | M0e.2 (draft-1): delivery, anti-replay, resume (H4/H11) |
+| [Version Policy](doc/VERSIONS.md) | M0e.3 (draft-1): version namespaces + decode limits |
+| [Frontier Specification](doc/FRONTIER.md) | M0f (draft-1): frontiers, snapshots; GC disabled (C7) |
+| [Merkle Specification](doc/MERKLE.md) | M0c (draft-1): canonical sync tree + mismatch walk (C3) |
 | [Relay Protocol Specification](doc/RELAY-SPEC.md) | Draft wire protocol for relay servers (not yet implementation-ready — see ISSUES) |
 | [Issues & Decisions](doc/ISSUES.md) | Tracked specification issues (C/H/O IDs), M0 package map, and the decision log |
 | [Exemplar](doc/EXEMPLAR.md) | Distributed ToDo app used as the end-to-end acceptance target |
@@ -29,14 +36,10 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 
 ## Roadmap (SPEC §10)
 
-- **M0** — executable contracts as packages:
-  - **M0a** — operation algebra & canonical encoding (C1, C4 context)
-  - **M0b** — schema IR, epochs, migration DSL, minimal query (C2, O2, O3)
-  - **M0c** — Merkle tree & sync state machine (C3)
-  - **M0d** — author keys & datastore membership (C4 admission, C5)
-  - **M0e** — groups, delivery, version policy (C8, H4, H7, …)
-  - **M0f** — causal frontiers & snapshot contracts (C7, O7) — GC still disabled
-  Exit: C1–C5, C7–C8 resolved with conformance fixtures; **no format freezes before composite M0**
+- **M0** — executable contracts as packages **(composite exit 2026-07-18)**:
+  - **M0a–M0f** closed at contract-model layer (C1–C5, C7–C8; C6 deferred)
+  - Draft-1 profiles; format freeze still requires an explicit Decision Log freeze
+  - **103** two-language conformance vectors CI-blocking
 - **M1** — local durable core: Rust + SQLite + CLI (`v0.1.0-local`)
 - **M2** — Node/NAPI TypeScript SDK vertical, byte-identical to the core (`v0.1.0-sdk`)
 - **M3** — secure multi-peer sync in three gates: **M3a** durable convergence (L2 relay + offline catch-up), **M3b** security (signatures, admission, E2E encryption), **M3c** interop TS wire peer + release (`v0.1.0`)
@@ -47,4 +50,4 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-The Critical issues mapped to **M0a–M0f** must be resolved before any format freezes — design proposals against those package IDs are the highest-value contributions right now.
+Composite M0 model contracts are closed; highest-value work is **M1** (SQLite durable core) and M3 wire enforcement. Format freezes still need an explicit Decision Log freeze.

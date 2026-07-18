@@ -13,13 +13,13 @@
       "authority": "doc/SCHEMA.md §3",
       "current": null,
       "binding": "per-datastore causally ordered sequence, not a global constant; signed into every data operation; IR carries its own schema_ir_format_version (currently 1)",
-      "status": "M0b in progress"
+      "status": "draft-1 (M0b exit 2026-07-18; frozen only at composite M0)"
     },
     "snapshot_format_version": {
-      "authority": "doc/SPEC.md §7 (contract M0f)",
-      "current": null,
+      "authority": "doc/FRONTIER.md §5",
+      "current": 1,
       "binding": "persistent snapshot/checkpoint artifacts only",
-      "status": "pending M0f"
+      "status": "draft-1 (M0f; frozen only at composite M0)"
     },
     "storage_format_version": {
       "authority": "zerodb-storage (M1)",
@@ -57,8 +57,22 @@
     "genesis":      "zerodb-genesis-v1",
     "device_cert":  "zerodb-device-cert-v1",
     "value_aad":    "zerodb-value-aad-v1",
-    "relay_auth":   "zerodb-relay-auth-v1"
+    "relay_auth":   "zerodb-relay-auth-v1",
+    "merkle_leaf":  "zerodb-merkle-leaf-v1",
+    "merkle_node":  "zerodb-merkle-node-v1",
+    "merkle_empty": "zerodb-merkle-empty-v1",
+    "snapshot":     "zerodb-snapshot-v1"
   },
+
+
+  "merkle": {
+    "authority": "doc/MERKLE.md",
+    "merkle_format_version": 1,
+    "bucket_width_ms": 60000,
+    "status": "draft-1 (M0c exit 2026-07-18; frozen only at composite M0)"
+  },
+
+
 
   "limits": {
     "status": "provisional (ISSUES O6; ratified with the O6 fixture set)",

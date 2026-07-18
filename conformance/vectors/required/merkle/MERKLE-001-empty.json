@@ -1,0 +1,8 @@
+{
+  "description": "Empty op set → fixed empty-leaf root.",
+  "id": "MERKLE-001",
+  "type": "merkle-root",
+  "invariants": ["I-11"],
+  "ops": [],
+  "root_hex": "7fdc1b75ec3916d3ba5d37d59cca44f7699e1582d923569759c1826688c2047b"
+}

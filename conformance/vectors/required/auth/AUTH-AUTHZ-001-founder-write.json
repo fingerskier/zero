@@ -1,0 +1,11 @@
+{
+  "description": "Founder synthetic grant covers CreateNode (write).",
+  "id": "AUTH-AUTHZ-001", "type": "authz-predicate",
+  "invariants": ["I-8", "I-9"], "expect": "ok",
+  "datastore_id_hex": "05b8bdd43486448bdb00f6ce65a9135ac9162f67d92ed9b0285046f93fa2daf3",
+  "applied": [{ "id": "8762a1cf3043f8ea63f7f217c1fcb4e9e6eff1672aa5ad46b5992297abeec32e", "kind": 0, "author": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "principal": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+    "ds": "0000000000000000000000000000000000000000000000000000000000000000", "deps": [], "ts_p": 1000,
+    "body": { "type": "genesis", "founder": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0" } }],
+  "candidate": { "id": "5555555555555555555555555555555555555555555555555555555555555555", "kind": 1, "author": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "principal": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+    "ds": "05b8bdd43486448bdb00f6ce65a9135ac9162f67d92ed9b0285046f93fa2daf3", "deps": ["8762a1cf3043f8ea63f7f217c1fcb4e9e6eff1672aa5ad46b5992297abeec32e"], "ts_p": 2000, "body": { "type": "other" } }
+}
