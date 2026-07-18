@@ -4,6 +4,7 @@ pub mod epoch;
 pub mod hlc;
 pub mod kernel;
 pub mod op;
+pub mod query;
 pub mod schema;
 pub mod sign;
 pub mod types;

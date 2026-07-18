@@ -1,0 +1,18 @@
+{
+  "id": "QUERY-PARSE-001",
+  "type": "query-parse",
+  "invariants": [],
+  "description": "Well-formed v0.1 queries (SCHEMA.md §5) that both parsers MUST accept: bare match, labels, one directed hop (out and in, with/without edge var), case-insensitive keywords, boolean WHERE with precedence and parentheses, IS [NOT] NULL, negative/bool/param operands, projection lists, ORDER BY ASC/DESC, LIMIT.",
+  "cases": [
+    { "query": "MATCH (a) RETURN a", "accept": true },
+    { "query": "MATCH (a:User) RETURN a.name", "accept": true },
+    { "query": "MATCH (a:User)-[:FOLLOWS]->(b:User) WHERE a.age >= $min AND NOT b.name IS NULL RETURN a.name, b.name ORDER BY a.age DESC LIMIT 10", "accept": true },
+    { "query": "MATCH (a)<-[r:R]-(b) RETURN a, b", "accept": true },
+    { "query": "MATCH (a) WHERE a.x = 1 OR (a.y < 2 AND a.z <> 3) RETURN a", "accept": true },
+    { "query": "match (a) where a.x is not null return a.x", "accept": true },
+    { "query": "MATCH (a) RETURN a ORDER BY a.name ASC", "accept": true },
+    { "query": "MATCH (a) WHERE a.score >= -5 AND a.k = true RETURN a", "accept": true },
+    { "query": "MATCH (a)-[e]->(b) RETURN a", "accept": true },
+    { "query": "MATCH (a) WHERE $threshold < a.v RETURN a, a.b, a.c", "accept": true }
+  ]
+}

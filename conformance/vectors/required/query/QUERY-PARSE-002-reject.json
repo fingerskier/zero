@@ -1,0 +1,23 @@
+{
+  "id": "QUERY-PARSE-002",
+  "type": "query-parse",
+  "invariants": [],
+  "description": "Strings outside the v0.1 profile that both parsers MUST reject, not partially execute (SCHEMA.md §5): multi-hop patterns, aggregation, mutation, non-MATCH start, missing RETURN/items, signed/fractional LIMIT, undirected edge, malformed operators/clauses, unbalanced syntax, and unsupported predicates (IN).",
+  "cases": [
+    { "query": "MATCH (a)-[:R]->(b)-[:S]->(c) RETURN a", "accept": false },
+    { "query": "MATCH (a) RETURN count(a)", "accept": false },
+    { "query": "MATCH (a) SET a.x = 1 RETURN a", "accept": false },
+    { "query": "CREATE (a) RETURN a", "accept": false },
+    { "query": "MATCH (a) WHERE a.x = 1", "accept": false },
+    { "query": "MATCH (a) RETURN a LIMIT -1", "accept": false },
+    { "query": "MATCH (a) RETURN a LIMIT 1.5", "accept": false },
+    { "query": "MATCH (a RETURN a", "accept": false },
+    { "query": "MATCH (a) WHERE a.x == 1 RETURN a", "accept": false },
+    { "query": "MATCH (a) WHERE RETURN a", "accept": false },
+    { "query": "MATCH (a) RETURN a EXTRA", "accept": false },
+    { "query": "MATCH (a) WHERE a.x IN (1, 2) RETURN a", "accept": false },
+    { "query": "MATCH () RETURN a", "accept": false },
+    { "query": "MATCH (a) RETURN", "accept": false },
+    { "query": "MATCH (a)-[:R]-(b) RETURN a", "accept": false }
+  ]
+}
