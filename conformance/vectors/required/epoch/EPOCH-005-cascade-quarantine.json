@@ -1,0 +1,22 @@
+{
+  "id": "EPOCH-005",
+  "type": "epoch-replay",
+  "property": "state",
+  "invariants": ["I-1", "I-17"],
+  "description": "Multi-level fork with descendant quarantine (SCHEMA.md §3/§4.1 M1). Epoch 1 forks rA(aa, winner)/rB(bb, loser). Epoch 2 has rD(prev=rA, on the winning chain) and rC(prev=rB, descendant of the loser). rC quarantines because its prev chain does not lead to a winner; rB and rC's bound ops (a2, a3) quarantine. rA and rD are the same CRDT with no change_crdt, so a1 (epoch 1) and a4 (epoch 2) pool into one lww order — a4 (@40) wins.",
+  "epochs": [
+    { "record": "rA", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "eA" }, "crdt": "lww" },
+    { "record": "rB", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "bb", "op_id": "eB" }, "crdt": "lww" },
+    { "record": "rC", "epoch": 2, "prev": "rB", "order_key": { "physical_ms": 20, "logical": 0, "author": "aa", "op_id": "eC" }, "crdt": "lww" },
+    { "record": "rD", "epoch": 2, "prev": "rA", "order_key": { "physical_ms": 20, "logical": 0, "author": "bb", "op_id": "eD" }, "crdt": "lww" }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 1, "ep_record": "rA", "payload": { "set": "one" } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 31, "logical": 0 }, "ep": 1, "ep_record": "rB", "payload": { "set": "lose1" } },
+    { "op_id": "a3", "author": "aa", "ts": { "physical_ms": 32, "logical": 0 }, "ep": 2, "ep_record": "rC", "payload": { "set": "lose2" } },
+    { "op_id": "a4", "author": "bb", "ts": { "physical_ms": 40, "logical": 0 }, "ep": 2, "ep_record": "rD", "payload": { "set": "two" } }
+  ],
+  "orders": [[0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1]],
+  "expect": { "value": "two" },
+  "expect_quarantine": ["a2", "a3"]
+}

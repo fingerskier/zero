@@ -1,0 +1,16 @@
+{
+  "id": "EPOCH-012",
+  "type": "epoch-replay",
+  "property": "title",
+  "invariants": ["I-1", "I-17"],
+  "description": "An op authored under schemaless epoch 0 (SCHEMA.md §2/§3: implicit lww/any-scalar default) pools with an epoch-1 op of the same type. a1 (ep=0) and a2 (ep=1) are both lww with no change_crdt, so they share one total order; a2 (@40) outranks a1 (@30). Exercises the schemaless start-level path.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 50, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "lww" }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 0, "payload": { "set": "zero" } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 40, "logical": 0 }, "ep": 1, "payload": { "set": "one" } }
+  ],
+  "orders": [[0, 1], [1, 0]],
+  "expect": { "value": "one" }
+}

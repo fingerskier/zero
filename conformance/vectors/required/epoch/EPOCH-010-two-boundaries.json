@@ -1,0 +1,19 @@
+{
+  "id": "EPOCH-010",
+  "type": "epoch-replay",
+  "property": "field",
+  "invariants": ["I-1", "I-17"],
+  "description": "Depth-3 chain with TWO change_crdt boundaries, each applied exactly once in order (SCHEMA.md §4/I-17). Epoch 1 gcounter (total 4) -> epoch 2 lww via counter_value_to_lww_int (seed int 4 @30; a2 'mid' @40 wins the segment) -> epoch 3 lww via reset_to 'reset' (seed @50 discards 'mid'). The only epoch-3 op a3 (@20) is older than the reset seed, so 'reset' survives, proving the second boundary ran after the first.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "gcounter" },
+    { "record": "r2", "epoch": 2, "prev": "r1", "order_key": { "physical_ms": 30, "logical": 0, "author": "aa", "op_id": "e2" }, "crdt": "lww", "migration": { "transform": "counter_value_to_lww_int" } },
+    { "record": "r3", "epoch": 3, "prev": "r2", "order_key": { "physical_ms": 50, "logical": 0, "author": "aa", "op_id": "e3" }, "crdt": "lww", "migration": { "transform": "reset_to", "default": "reset" } }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 15, "logical": 0 }, "ep": 1, "payload": { "inc": 4 } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 40, "logical": 0 }, "ep": 2, "payload": { "set": "mid" } },
+    { "op_id": "a3", "author": "bb", "ts": { "physical_ms": 20, "logical": 0 }, "ep": 3, "payload": { "set": "lo" } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0], [1, 0, 2]],
+  "expect": { "value": "reset" }
+}

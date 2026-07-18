@@ -1,0 +1,18 @@
+{
+  "id": "EPOCH-011",
+  "type": "epoch-replay",
+  "property": "note",
+  "invariants": ["I-1", "I-3"],
+  "description": "Equivocation exclusion spans epochs, and duplicate op ids dedup (SCHEMA.md §4.1 M2 / KERNEL §4.5). a1 (epoch 1) and a2 (epoch 2) share author 'aa' and equal timestamp (30,0) with distinct op ids -> both are an equivocation group and are excluded from state even though they live in different epochs; a3 survives. The third order lists a3 twice to confirm op-id dedup collapses it to one apply.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "lww" },
+    { "record": "r2", "epoch": 2, "prev": "r1", "order_key": { "physical_ms": 20, "logical": 0, "author": "aa", "op_id": "e2" }, "crdt": "lww" }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 1, "payload": { "set": "x" } },
+    { "op_id": "a2", "author": "aa", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 2, "payload": { "set": "y" } },
+    { "op_id": "a3", "author": "bb", "ts": { "physical_ms": 40, "logical": 0 }, "ep": 1, "payload": { "set": "keep" } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0], [0, 1, 2, 2]],
+  "expect": { "value": "keep" }
+}

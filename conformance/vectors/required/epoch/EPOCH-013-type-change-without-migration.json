@@ -1,0 +1,17 @@
+{
+  "id": "EPOCH-013",
+  "type": "epoch-replay",
+  "property": "count",
+  "invariants": ["I-17"],
+  "description": "Negative: two adjacent epochs in one segment disagree on the property's CRDT type with no change_crdt between them (SCHEMA.md §4.1 named outcomes). Epoch 1 is lww, epoch 2 is gcounter, and r2 carries no migration, so the schema is malformed -> SCHEMA_TYPE_CHANGE_WITHOUT_MIGRATION.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "lww" },
+    { "record": "r2", "epoch": 2, "prev": "r1", "order_key": { "physical_ms": 20, "logical": 0, "author": "aa", "op_id": "e2" }, "crdt": "gcounter" }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 1, "payload": { "set": "x" } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 40, "logical": 0 }, "ep": 2, "payload": { "inc": 5 } }
+  ],
+  "orders": [[0, 1], [1, 0]],
+  "expect_error": "SCHEMA_TYPE_CHANGE_WITHOUT_MIGRATION"
+}

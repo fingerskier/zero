@@ -1,0 +1,17 @@
+{
+  "id": "EPOCH-008",
+  "type": "epoch-replay",
+  "property": "note",
+  "invariants": ["I-1", "I-17"],
+  "description": "Companion to EPOCH-007: same reset_to boundary, but the epoch-2 write a2 (@70) is genuinely newer than the seed at the SchemaEpoch order key (50,0,aa,e2), so it outranks the 'fresh' default. Confirms the reset seed is beatable by a strictly-later post-migration op.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "lww" },
+    { "record": "r2", "epoch": 2, "prev": "r1", "order_key": { "physical_ms": 50, "logical": 0, "author": "aa", "op_id": "e2" }, "crdt": "lww", "migration": { "transform": "reset_to", "default": "fresh" } }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 1, "payload": { "set": "old" } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 70, "logical": 0 }, "ep": 2, "payload": { "set": "high" } }
+  ],
+  "orders": [[0, 1], [1, 0]],
+  "expect": { "value": "high" }
+}

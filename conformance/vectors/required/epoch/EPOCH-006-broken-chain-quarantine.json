@@ -1,0 +1,20 @@
+{
+  "id": "EPOCH-006",
+  "type": "epoch-replay",
+  "property": "state",
+  "invariants": ["I-17"],
+  "description": "Broken chain (SCHEMA.md §4.1 M1). Epoch 1 (r1) is the only reachable winner. r3 (epoch 3) has prev='ghost' (a record absent from the set) so it cannot join the chain; the chain breaks, and r4 (epoch 4, prev=r3) is a descendant of the break. Both r3 and r4 quarantine, and the ops bound to them (a2, a3) quarantine; a1 (bound to r1) materializes.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "lww" },
+    { "record": "r3", "epoch": 3, "prev": "ghost", "order_key": { "physical_ms": 30, "logical": 0, "author": "aa", "op_id": "e3" }, "crdt": "lww" },
+    { "record": "r4", "epoch": 4, "prev": "r3", "order_key": { "physical_ms": 40, "logical": 0, "author": "aa", "op_id": "e4" }, "crdt": "lww" }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 20, "logical": 0 }, "ep": 1, "ep_record": "r1", "payload": { "set": "keep" } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 35, "logical": 0 }, "ep": 3, "ep_record": "r3", "payload": { "set": "x" } },
+    { "op_id": "a3", "author": "bb", "ts": { "physical_ms": 45, "logical": 0 }, "ep": 4, "ep_record": "r4", "payload": { "set": "y" } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0]],
+  "expect": { "value": "keep" },
+  "expect_quarantine": ["a2", "a3"]
+}

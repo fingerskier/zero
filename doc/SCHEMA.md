@@ -98,6 +98,8 @@ The reference model materializes one property from its operation set and the can
 
 Because every segment is a set-based CRDT materialization and the chain/segment structure is a pure function of the record set, the result is independent of arrival order (I-1) and fresh replay equals incremental application (I-17).
 
+*Named outcomes.* `EPOCH_UNKNOWN` — a surviving op resolves to an epoch with no winner in the known chain, whether past the chain's end or stranded behind a gap/broken link. `SCHEMA_TYPE_CHANGE_WITHOUT_MIGRATION` — two adjacent epochs in one segment (no `change_crdt` between them) disagree on the property's CRDT type; the schema is malformed, because a type change must carry a migration. These are model-visible, not silent.
+
 ## 5. Query subset (O3)
 
 v0.1 grammar (case-insensitive keywords; parameterization via `$name` placeholders only — no string splicing):

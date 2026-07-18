@@ -1,0 +1,17 @@
+{
+  "id": "EPOCH-007",
+  "type": "epoch-replay",
+  "property": "note",
+  "invariants": ["I-1", "I-17"],
+  "description": "change_crdt with the reset_to transform (SCHEMA.md §4 registry, §4.1 M4). Epoch 1's materialized value ('old') is DISCARDED at the boundary; the seed is the migration default 'fresh' placed at the epoch-2 SchemaEpoch order key (50,0,aa,e2). The only epoch-2 op (a2 @20) is older than the seed, so 'fresh' survives — proving prior state is dropped and the seed sits at the SchemaEpoch key.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "lww" },
+    { "record": "r2", "epoch": 2, "prev": "r1", "order_key": { "physical_ms": 50, "logical": 0, "author": "aa", "op_id": "e2" }, "crdt": "lww", "migration": { "transform": "reset_to", "default": "fresh" } }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 1, "payload": { "set": "old" } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 20, "logical": 0 }, "ep": 2, "payload": { "set": "low" } }
+  ],
+  "orders": [[0, 1], [1, 0]],
+  "expect": { "value": "fresh" }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "EPOCH-009",
+  "type": "epoch-replay",
+  "property": "count",
+  "invariants": ["I-1", "I-17"],
+  "description": "Depth-3 chain (SCHEMA.md §4.1 M1 level-n prev walk). Epochs 1 and 2 are both gcounter with no change_crdt, so their increments pool into one counter (3 + 5 = 8) across the epoch boundary; epoch 3 is a change_crdt to lww seeded with the pooled total 8 at (50,0,aa,e3). a3 (set 100 @60) outranks the seed. Exercises the 3-deep prev chain (r3->r2->r1) and multi-epoch same-type pooling feeding a boundary.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "gcounter" },
+    { "record": "r2", "epoch": 2, "prev": "r1", "order_key": { "physical_ms": 20, "logical": 0, "author": "aa", "op_id": "e2" }, "crdt": "gcounter" },
+    { "record": "r3", "epoch": 3, "prev": "r2", "order_key": { "physical_ms": 50, "logical": 0, "author": "aa", "op_id": "e3" }, "crdt": "lww", "migration": { "transform": "counter_value_to_lww_int" } }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 15, "logical": 0 }, "ep": 1, "payload": { "inc": 3 } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 25, "logical": 0 }, "ep": 2, "payload": { "inc": 5 } },
+    { "op_id": "a3", "author": "aa", "ts": { "physical_ms": 60, "logical": 0 }, "ep": 3, "payload": { "set": 100 } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0], [1, 2, 0]],
+  "expect": { "value": 100 }
+}

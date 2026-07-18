@@ -1,0 +1,18 @@
+{
+  "id": "EPOCH-014",
+  "type": "epoch-replay",
+  "property": "balance",
+  "invariants": ["I-1", "I-17"],
+  "description": "pncounter (not gcounter) as the pre-migration type, materializing a NEGATIVE value (SCHEMA.md §4 counter_value_to_lww_int, §4.1 M4). Epoch 1 pncounter: inc 3, dec 7 -> -4. Epoch 2 change_crdt to lww seeds int -4 at (50,0,aa,e2). a3 (set 0 @20) is older than the seed, so -4 survives. Exercises the pncounter seed arm and a sub-zero seed value.",
+  "epochs": [
+    { "record": "r1", "epoch": 1, "prev": null, "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" }, "crdt": "pncounter" },
+    { "record": "r2", "epoch": 2, "prev": "r1", "order_key": { "physical_ms": 50, "logical": 0, "author": "aa", "op_id": "e2" }, "crdt": "lww", "migration": { "transform": "counter_value_to_lww_int" } }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 15, "logical": 0 }, "ep": 1, "payload": { "inc": 3 } },
+    { "op_id": "a2", "author": "aa", "ts": { "physical_ms": 25, "logical": 0 }, "ep": 1, "payload": { "dec": 7 } },
+    { "op_id": "a3", "author": "bb", "ts": { "physical_ms": 20, "logical": 0 }, "ep": 2, "payload": { "set": 0 } }
+  ],
+  "orders": [[0, 1, 2], [2, 1, 0], [1, 0, 2]],
+  "expect": { "value": -4 }
+}
