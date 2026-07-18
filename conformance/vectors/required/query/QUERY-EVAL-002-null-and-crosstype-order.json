@@ -1,0 +1,21 @@
+{
+  "id": "QUERY-EVAL-002",
+  "type": "query-eval",
+  "description": "Two-valued null logic + cross-type ORDER BY (SCHEMA.md §5). t.a = 5 is FALSE when a is explicitly null (n2) or missing ≡ null (n3), true for n1 and n4. Projecting t.b then ordering mixes int (n4, rank 2) and text (n1, rank 3): the int sorts first under the single total order.",
+  "graph": {
+    "nodes": [
+      { "id": "n1", "label": "T", "props": { "a": { "t": "int", "v": 5 }, "b": { "t": "text", "v": "x" } } },
+      { "id": "n2", "label": "T", "props": { "a": { "t": "null" }, "b": { "t": "text", "v": "y" } } },
+      { "id": "n3", "label": "T", "props": { "b": { "t": "text", "v": "z" } } },
+      { "id": "n4", "label": "T", "props": { "a": { "t": "int", "v": 5 }, "b": { "t": "int", "v": 9 } } }
+    ],
+    "edges": []
+  },
+  "query": "MATCH (t:T) WHERE t.a = 5 RETURN t.b ORDER BY t.b",
+  "expect": {
+    "rows": [
+      [ { "t": "int", "v": 9 } ],
+      [ { "t": "text", "v": "x" } ]
+    ]
+  }
+}

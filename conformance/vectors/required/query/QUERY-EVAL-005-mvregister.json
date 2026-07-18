@@ -1,0 +1,19 @@
+{
+  "id": "QUERY-EVAL-005",
+  "type": "query-eval",
+  "description": "MVRegister conflict surfacing (SCHEMA.md §5). A comparison against an MVRegister with >1 value is false (n1); a singleton compares as its element (n2 matches 'done'); projection surfaces the whole array, never silently collapsing. n3's plain text does not match.",
+  "graph": {
+    "nodes": [
+      { "id": "n1", "label": "T", "props": { "status": { "t": "mv", "v": [ { "t": "text", "v": "open" }, { "t": "text", "v": "wip" } ] } } },
+      { "id": "n2", "label": "T", "props": { "status": { "t": "mv", "v": [ { "t": "text", "v": "done" } ] } } },
+      { "id": "n3", "label": "T", "props": { "status": { "t": "text", "v": "closed" } } }
+    ],
+    "edges": []
+  },
+  "query": "MATCH (t:T) WHERE t.status = 'done' RETURN t.status",
+  "expect": {
+    "rows": [
+      [ { "t": "mv", "v": [ { "t": "text", "v": "done" } ] } ]
+    ]
+  }
+}

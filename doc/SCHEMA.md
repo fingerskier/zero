@@ -131,8 +131,8 @@ sort     := var "." path
 Deterministic semantics:
 
 - **Null:** any `cmp` with `null` evaluates **false** (not unknown — two-valued logic); `IS NULL / IS NOT NULL` are the only null tests. Missing property ≡ null.
-- **Cross-type comparison** is false except int/float64 numeric comparison (exact where representable). `ORDER BY` uses one total order over values: `null < bool < int/float (numeric) < text (bytewise UTF-8) < bytes (bytewise)`, with the owning entity id as final tiebreaker — result order is identical on every peer (I-1 extended to reads).
-- **Conflict surfacing:** LWW/counters/sets/flags read their materialized value (`orset` → sorted array). `MVRegister` (M2) reads as an array of concurrent values; a comparison against an MVRegister with > 1 value is false and selection surfaces the array — conflicts are visible, never silently collapsed.
+- **Cross-type comparison** is false except int/float64 numeric comparison (exact where representable). `ORDER BY` uses one total order over values: `null < bool < int/float (numeric) < text (bytewise UTF-8) < bytes (bytewise)`, with the owning entity id as final tiebreaker — result order is identical on every peer (I-1 extended to reads). **`ORDER BY` is ascending when neither `ASC` nor `DESC` is given.** With no `ORDER BY` clause, rows are ordered by the bound entity ids in pattern order — never left arrival-dependent.
+- **Conflict surfacing:** LWW/counters/sets/flags read their materialized value (`orset` → sorted array). `MVRegister` (M2) reads as an array of concurrent values; **a singleton MVRegister compares as its one element, while an MVRegister with zero or more than one value makes the comparison false.** Selection always surfaces the array — conflicts are visible, never silently collapsed.
 - Aggregation, multi-hop paths, and mutation-in-query are **post-v0.1**; the parser MUST reject them, not partially execute.
 
 ## 6. Conformance vectors

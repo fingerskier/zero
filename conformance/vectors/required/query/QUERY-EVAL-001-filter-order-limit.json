@@ -1,0 +1,22 @@
+{
+  "id": "QUERY-EVAL-001",
+  "type": "query-eval",
+  "description": "Basic MATCH (label filter) + WHERE ($param int cmp) + ORDER BY DESC + LIMIT + property projection (SCHEMA.md §5). Only User nodes with age >= 28 survive; results are age-descending, truncated to 2.",
+  "graph": {
+    "nodes": [
+      { "id": "n1", "label": "User", "props": { "name": { "t": "text", "v": "alice" }, "age": { "t": "int", "v": 30 } } },
+      { "id": "n2", "label": "User", "props": { "name": { "t": "text", "v": "bob" }, "age": { "t": "int", "v": 25 } } },
+      { "id": "n3", "label": "User", "props": { "name": { "t": "text", "v": "carol" }, "age": { "t": "int", "v": 35 } } },
+      { "id": "n4", "label": "Admin", "props": { "name": { "t": "text", "v": "dave" }, "age": { "t": "int", "v": 40 } } }
+    ],
+    "edges": []
+  },
+  "query": "MATCH (a:User) WHERE a.age >= $min RETURN a.name ORDER BY a.age DESC LIMIT 2",
+  "params": { "min": { "t": "int", "v": 28 } },
+  "expect": {
+    "rows": [
+      [ { "t": "text", "v": "carol" } ],
+      [ { "t": "text", "v": "alice" } ]
+    ]
+  }
+}

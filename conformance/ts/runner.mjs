@@ -22,6 +22,7 @@ import { runSchemaIrVector, runSchemaIrInvalidVector } from './models/schema.mjs
 import { runEpochReplayVector } from './models/epoch.mjs';
 import { runMigrationTransformVector } from './models/migration.mjs';
 import { runQueryParseVector } from './models/query.mjs';
+import { runQueryEvalVector } from './models/queryeval.mjs';
 
 const laneArg = process.argv.indexOf('--lane');
 const lane = laneArg === -1 ? 'required' : process.argv[laneArg + 1];
@@ -44,6 +45,7 @@ const handlers = {
   'epoch-replay': runEpochReplayVector,
   'migration-transform': runMigrationTransformVector,
   'query-parse': runQueryParseVector,
+  'query-eval': runQueryEvalVector,
 };
 
 const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'vectors', lane);

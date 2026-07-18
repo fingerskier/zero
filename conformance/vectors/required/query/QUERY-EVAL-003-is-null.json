@@ -1,0 +1,21 @@
+{
+  "id": "QUERY-EVAL-003",
+  "type": "query-eval",
+  "description": "IS NULL is the only null test (SCHEMA.md §5): it matches both an explicit null (n2) and a missing property ≡ null (n3), and nothing else. n1 (a=5) and n4 (a=5) are excluded.",
+  "graph": {
+    "nodes": [
+      { "id": "n1", "label": "T", "props": { "a": { "t": "int", "v": 5 }, "b": { "t": "text", "v": "x" } } },
+      { "id": "n2", "label": "T", "props": { "a": { "t": "null" }, "b": { "t": "text", "v": "y" } } },
+      { "id": "n3", "label": "T", "props": { "b": { "t": "text", "v": "z" } } },
+      { "id": "n4", "label": "T", "props": { "a": { "t": "int", "v": 5 }, "b": { "t": "text", "v": "w" } } }
+    ],
+    "edges": []
+  },
+  "query": "MATCH (t:T) WHERE t.a IS NULL RETURN t.b ORDER BY t.b",
+  "expect": {
+    "rows": [
+      [ { "t": "text", "v": "y" } ],
+      [ { "t": "text", "v": "z" } ]
+    ]
+  }
+}

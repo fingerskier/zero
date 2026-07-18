@@ -1,0 +1,24 @@
+{
+  "id": "QUERY-EVAL-006",
+  "type": "query-eval",
+  "description": "Incoming edge direction + bare-variable projection (SCHEMA.md §5). MATCH (a:User)<-[:FOLLOWS]-(b:User) reads the FOLLOWS edge as b->a, so a is the edge's destination. WHERE filters on b (the follower). RETURN a projects a node reference, ordered by a.name.",
+  "graph": {
+    "nodes": [
+      { "id": "n1", "label": "User", "props": { "name": { "t": "text", "v": "a" } } },
+      { "id": "n2", "label": "User", "props": { "name": { "t": "text", "v": "b" } } },
+      { "id": "n3", "label": "User", "props": { "name": { "t": "text", "v": "c" } } }
+    ],
+    "edges": [
+      { "id": "e1", "label": "FOLLOWS", "src": "n1", "dst": "n2", "props": {} },
+      { "id": "e2", "label": "FOLLOWS", "src": "n1", "dst": "n3", "props": {} },
+      { "id": "e3", "label": "FOLLOWS", "src": "n2", "dst": "n3", "props": {} }
+    ]
+  },
+  "query": "MATCH (a:User)<-[:FOLLOWS]-(b:User) WHERE b.name = 'a' RETURN a ORDER BY a.name",
+  "expect": {
+    "rows": [
+      [ { "t": "node", "id": "n2" } ],
+      [ { "t": "node", "id": "n3" } ]
+    ]
+  }
+}

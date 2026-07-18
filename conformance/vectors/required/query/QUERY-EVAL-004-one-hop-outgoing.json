@@ -1,0 +1,24 @@
+{
+  "id": "QUERY-EVAL-004",
+  "type": "query-eval",
+  "description": "One-hop outgoing edge (SCHEMA.md §5). MATCH (a:User)-[:FOLLOWS]->(b:User) enumerates FOLLOWS edges; WHERE filters on the left node; RETURN projects the right node's property. Only edges out of 'a' (n1) survive.",
+  "graph": {
+    "nodes": [
+      { "id": "n1", "label": "User", "props": { "name": { "t": "text", "v": "a" } } },
+      { "id": "n2", "label": "User", "props": { "name": { "t": "text", "v": "b" } } },
+      { "id": "n3", "label": "User", "props": { "name": { "t": "text", "v": "c" } } }
+    ],
+    "edges": [
+      { "id": "e1", "label": "FOLLOWS", "src": "n1", "dst": "n2", "props": {} },
+      { "id": "e2", "label": "FOLLOWS", "src": "n1", "dst": "n3", "props": {} },
+      { "id": "e3", "label": "FOLLOWS", "src": "n2", "dst": "n3", "props": {} }
+    ]
+  },
+  "query": "MATCH (a:User)-[:FOLLOWS]->(b:User) WHERE a.name = 'a' RETURN b.name ORDER BY b.name",
+  "expect": {
+    "rows": [
+      [ { "t": "text", "v": "b" } ],
+      [ { "t": "text", "v": "c" } ]
+    ]
+  }
+}
