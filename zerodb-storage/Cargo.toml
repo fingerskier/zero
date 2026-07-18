@@ -8,4 +8,10 @@ license.workspace = true
 [dependencies]
 zerodb-core = { path = "../zerodb-core" }
 thiserror.workspace = true
-async-trait = "0.1"
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+blake3.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+uuid.workspace = true

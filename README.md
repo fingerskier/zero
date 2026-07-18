@@ -47,7 +47,34 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 - **M5** — production readiness & GA: compaction/GC, backup/restore, fuzzing, Lean 4 proofs, external audit
 - **M6** — ecosystem: mobile/Flutter bindings over a shared C ABI, plugins, hosted relay, tooling
 
+## Local MVP (M1 slice) — multi-process / multi-machine
+
+```bash
+cargo build -p zerodb-cli
+# Peer A
+./target/debug/zerodb init --path ./a.sqlite
+NODE=$(./target/debug/zerodb create-node --path ./a.sqlite --label Todo)
+./target/debug/zerodb set --path ./a.sqlite --node $NODE --key title --value "milk"
+
+# Peer B (empty DB adopts A's datastore id on first import)
+./target/debug/zerodb init --path ./b.sqlite
+./target/debug/zerodb export --path ./a.sqlite --out ./bundle.json
+./target/debug/zerodb import --path ./b.sqlite --file ./bundle.json
+
+# Concurrent edits then two-way merge (same machine, two DB files / processes)
+./target/debug/zerodb set --path ./b.sqlite --node $NODE --key title --value "oat"
+./target/debug/zerodb sync --path ./a.sqlite --peer ./b.sqlite
+
+# Multi-machine (or second process): serve one peer, pull from the other
+./target/debug/zerodb serve --path ./a.sqlite --listen 0.0.0.0:7700
+# on other process/host:
+./target/debug/zerodb pull --path ./b.sqlite --from host:7700
+```
+
+Smoke test: `powershell -File scripts/test-mvp.ps1`  
+Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an **experimental M1 path** toward `v0.1.0-local`, not a format freeze.
+
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-Composite M0 model contracts are closed; highest-value work is **M1** (SQLite durable core) and M3 wire enforcement. Format freezes still need an explicit Decision Log freeze.
+Composite M0 model contracts are closed; highest-value work is **M1** (SQLite durable core + peer exchange) and M3 wire enforcement. Format freezes still need an explicit Decision Log freeze.
