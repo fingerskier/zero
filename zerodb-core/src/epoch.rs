@@ -140,18 +140,64 @@ fn equivocated(ops: &[EpochOp]) -> BTreeSet<Id> {
         .collect()
 }
 
+/// The source property's materialized scalar, for a migration transform.
+fn read_scalar(input: &Read) -> Value {
+    match input {
+        Read::Lww(Some(v)) => v.clone(),
+        Read::Lww(None) => Value::Null,
+        Read::GCounter(n) => Value::Int(*n as i64),
+        Read::PnCounter(n) => Value::Int(*n as i64),
+        Read::Flag(b) => Value::Bool(*b),
+        Read::OrSet(_) => Value::Null,
+    }
+}
+
+/// Strict `^[+-]?\d+$` + `i64` range (matches JS BigInt range check).
+fn parse_i64_strict(s: &str) -> Option<i64> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let start = usize::from(bytes[0] == b'+' || bytes[0] == b'-');
+    if start == bytes.len() || !bytes[start..].iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    s.parse::<i64>().ok()
+}
+
+/// The value a v1 migration transform produces from the source materialized
+/// state (doc/SCHEMA.md §4). Every non-mvregister transform targets lww.
+pub fn transform_value(
+    transform: &str,
+    default: Option<&Value>,
+    input: &Read,
+) -> Result<Value, EpochError> {
+    let scalar = read_scalar(input);
+    let dflt = || default.cloned().unwrap_or(Value::Null);
+    Ok(match transform {
+        "keep_text" => scalar,
+        "counter_value_to_lww_int" => match scalar {
+            Value::Int(i) => Value::Int(i),
+            _ => Value::Null,
+        },
+        "int_to_text" => match scalar {
+            Value::Int(i) => Value::Text(i.to_string()),
+            Value::Null => Value::Null,
+            other => other,
+        },
+        "parse_int_or" => match &scalar {
+            Value::Text(s) => parse_i64_strict(s).map(Value::Int).unwrap_or_else(dflt),
+            _ => dflt(),
+        },
+        "reset_to" => dflt(),
+        other => return Err(EpochError::UnsupportedTransform(other.into())),
+    })
+}
+
 /// Synthetic seed op for a `change_crdt` boundary, placed at the SchemaEpoch
 /// order key so post-migration writes outrank it iff genuinely newer.
 fn build_seed(mig: &Migration, prev: &Read, key: &OrderKey) -> Result<KernelOp, EpochError> {
-    let value = match mig.transform.as_str() {
-        "counter_value_to_lww_int" => match prev {
-            Read::GCounter(v) => Value::Int(*v as i64),
-            Read::PnCounter(v) => Value::Int(*v as i64),
-            _ => Value::Null,
-        },
-        "reset_to" => mig.default.clone().unwrap_or(Value::Null),
-        other => return Err(EpochError::UnsupportedTransform(other.into())),
-    };
+    let value = transform_value(&mig.transform, mig.default.as_ref(), prev)?;
     Ok(KernelOp {
         op_id: key.op_id.clone(),
         author: key.author.clone(),

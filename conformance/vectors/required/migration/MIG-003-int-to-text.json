@@ -1,0 +1,13 @@
+{
+  "id": "MIG-003",
+  "type": "migration-transform",
+  "transform": "int_to_text",
+  "invariants": ["I-17"],
+  "description": "int_to_text (SCHEMA.md §4): lww int -> its base-10 decimal string; null stays null.",
+  "cases": [
+    { "input": { "crdt": "lww", "value": 42 }, "output": { "value": "42" } },
+    { "input": { "crdt": "lww", "value": -7 }, "output": { "value": "-7" } },
+    { "input": { "crdt": "lww", "value": 0 }, "output": { "value": "0" } },
+    { "input": { "crdt": "lww", "value": null }, "output": { "value": null } }
+  ]
+}

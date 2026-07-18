@@ -1,0 +1,13 @@
+{
+  "id": "MIG-004",
+  "type": "migration-transform",
+  "transform": "counter_value_to_lww_int",
+  "invariants": ["I-17"],
+  "description": "counter_value_to_lww_int (SCHEMA.md §4): a counter's materialized total becomes an lww int. gcounter (>=0) and pncounter (may be negative or zero) both map to their integer value.",
+  "cases": [
+    { "input": { "crdt": "gcounter", "value": 8 }, "output": { "value": 8 } },
+    { "input": { "crdt": "gcounter", "value": 0 }, "output": { "value": 0 } },
+    { "input": { "crdt": "pncounter", "value": -4 }, "output": { "value": -4 } },
+    { "input": { "crdt": "pncounter", "value": 12 }, "output": { "value": 12 } }
+  ]
+}

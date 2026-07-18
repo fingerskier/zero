@@ -1,0 +1,13 @@
+{
+  "id": "MIG-005",
+  "type": "migration-transform",
+  "transform": "reset_to",
+  "default": "fresh",
+  "invariants": ["I-17"],
+  "description": "reset_to(default) (SCHEMA.md §4): prior state is discarded and the default is produced, regardless of the source type or value.",
+  "cases": [
+    { "input": { "crdt": "lww", "value": "old" }, "output": { "value": "fresh" } },
+    { "input": { "crdt": "gcounter", "value": 5 }, "output": { "value": "fresh" } },
+    { "input": { "crdt": "lww", "value": null }, "output": { "value": "fresh" } }
+  ]
+}

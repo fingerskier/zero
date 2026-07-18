@@ -1,0 +1,12 @@
+{
+  "id": "MIG-001",
+  "type": "migration-transform",
+  "transform": "keep_text",
+  "invariants": ["I-17"],
+  "description": "keep_text (SCHEMA.md §4): lww text value is carried across a change_crdt boundary unchanged; null stays null.",
+  "cases": [
+    { "input": { "crdt": "lww", "value": "hello" }, "output": { "value": "hello" } },
+    { "input": { "crdt": "lww", "value": "" }, "output": { "value": "" } },
+    { "input": { "crdt": "lww", "value": null }, "output": { "value": null } }
+  ]
+}

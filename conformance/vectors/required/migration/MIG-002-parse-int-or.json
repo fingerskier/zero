@@ -1,0 +1,21 @@
+{
+  "id": "MIG-002",
+  "type": "migration-transform",
+  "transform": "parse_int_or",
+  "default": 0,
+  "invariants": ["I-17"],
+  "description": "parse_int_or(default=0) (SCHEMA.md §4): lww text -> int when it matches ^[+-]?\\d+$ and fits i64; otherwise the default. Covers leading sign, leading zeros, whitespace rejection, and every degenerate class (non-numeric, empty, fractional, null). The two out-of-i64-range cases (one over i64::MAX, one under i64::MIN) fall to the default, pinning that Rust str::parse overflow and the JS BigInt range check agree (both land on 0, avoiding any Number-precision confound).",
+  "cases": [
+    { "input": { "crdt": "lww", "value": "42" }, "output": { "value": 42 } },
+    { "input": { "crdt": "lww", "value": "-7" }, "output": { "value": -7 } },
+    { "input": { "crdt": "lww", "value": "+5" }, "output": { "value": 5 } },
+    { "input": { "crdt": "lww", "value": "007" }, "output": { "value": 7 } },
+    { "input": { "crdt": "lww", "value": "notnum" }, "output": { "value": 0 } },
+    { "input": { "crdt": "lww", "value": "" }, "output": { "value": 0 } },
+    { "input": { "crdt": "lww", "value": "3.5" }, "output": { "value": 0 } },
+    { "input": { "crdt": "lww", "value": " 42" }, "output": { "value": 0 } },
+    { "input": { "crdt": "lww", "value": "9223372036854775808" }, "output": { "value": 0 } },
+    { "input": { "crdt": "lww", "value": "-9223372036854775809" }, "output": { "value": 0 } },
+    { "input": { "crdt": "lww", "value": null }, "output": { "value": 0 } }
+  ]
+}

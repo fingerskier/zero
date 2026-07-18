@@ -56,23 +56,55 @@ function resolveChain(records) {
   return { winners, quarantined };
 }
 
+// The source property's materialized scalar (mirrors the Rust read_scalar over
+// the KERNEL §6 read shapes: {value} for lww/counters, {enabled} for flag).
+function readScalar(read) {
+  if ('value' in read) return read.value;
+  if ('enabled' in read) return read.enabled;
+  return null; // orset — not a transform source in v1
+}
+
+// Strict ^[+-]?\d+$ + i64 range (matches Rust parse_i64_strict). Uses BigInt so
+// the range check is exact regardless of Number precision.
+function parseI64Strict(s, dflt) {
+  if (!/^[+-]?\d+$/.test(s)) return dflt;
+  const v = BigInt(s);
+  if (v < -(2n ** 63n) || v > 2n ** 63n - 1n) return dflt;
+  return Number(v);
+}
+
+// The value a v1 migration transform produces from the source materialized
+// state (doc/SCHEMA.md §4). Every non-mvregister transform targets lww.
+export function transformValue(transform, defaultValue, read) {
+  const scalar = readScalar(read);
+  const dflt = () => defaultValue ?? null;
+  switch (transform) {
+    case 'keep_text':
+      return scalar;
+    case 'counter_value_to_lww_int':
+      return typeof scalar === 'number' && Number.isInteger(scalar) ? scalar : null;
+    case 'int_to_text':
+      if (scalar === null) return null;
+      return typeof scalar === 'number' && Number.isInteger(scalar) ? String(scalar) : scalar;
+    case 'parse_int_or':
+      return typeof scalar === 'string' ? parseI64Strict(scalar, dflt()) : dflt();
+    case 'reset_to':
+      return dflt();
+    default:
+      throw new Error(`unsupported change_crdt transform ${transform}`);
+  }
+}
+
 // A change_crdt boundary materializes the completed segment's value into one
 // synthetic seed op of the next type, placed exactly at the SchemaEpoch op's
 // order key so post-migration writes outrank it iff genuinely newer.
 function buildSeed(migration, prevRead, seedKey) {
-  const base = {
+  return {
     op_id: seedKey.op_id,
     author: seedKey.author,
     ts: { physical_ms: seedKey.physical_ms, logical: seedKey.logical },
+    payload: { set: transformValue(migration.transform, migration.default, prevRead) },
   };
-  switch (migration.transform) {
-    case 'counter_value_to_lww_int':
-      return { ...base, payload: { set: prevRead.value } };
-    case 'reset_to':
-      return { ...base, payload: { set: migration.default ?? null } };
-    default:
-      throw new Error(`unsupported change_crdt transform ${migration.transform}`);
-  }
 }
 
 // Materialize one property. Returns { read, quarantined }. Throws Error with

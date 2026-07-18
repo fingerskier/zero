@@ -80,7 +80,18 @@ Migrations are **data, not code** — a list of steps from a closed, versioned r
 | `change_crdt` | entity, path, from-PropDef, to-PropDef, `transform` (registry tag) | Rebinds the property; `transform` maps old materialized state to the new type. |
 | `add_entity` / `remove_entity` | label (+EntityDef) | Introduce / hide an entity type (visibility semantics as `remove_prop`). |
 
-**Transform registry v1** (each total — defined for every input): `keep_text`, `parse_int_or(default)`, `int_to_text`, `counter_value_to_lww_int` (counter reads out as an LWW int seeded at the migration epoch), `lww_to_mvregister` (singleton), `reset_to(default)`. Anything not expressible ⇒ the schema author picks `reset_to` — silent partial transforms do not exist.
+**Transform registry v1.** Each transform is **total** (defined for every input, including degenerate ones) and **deterministic**; each reads the source property's materialized scalar and produces the new lww value. `null` is a legal input and output.
+
+| Transform | Source → target | Rule | Degenerate input |
+|-----------|-----------------|------|------------------|
+| `keep_text` | lww → lww | value unchanged | `null` → `null` |
+| `parse_int_or(default)` | lww(text) → lww(int) | if the text matches `^[+-]?\d+$` and fits `i64`, that integer; else `default` | non-text / non-numeric / overflow / `null` → `default` |
+| `int_to_text` | lww(int) → lww(text) | base-10 decimal string of the integer | `null` → `null` |
+| `counter_value_to_lww_int` | gcounter\|pncounter → lww(int) | the counter's materialized total as an `int` | (counters are always defined; pncounter may be negative) |
+| `reset_to(default)` | any → lww | `default`, ignoring prior state | any input → `default` |
+| `lww_to_mvregister` | lww → mvregister | singleton — **M2-reserved**, not in the v0.1 profile | — |
+
+Anything not expressible ⇒ the schema author picks `reset_to` — silent partial transforms do not exist. The seed produced by every non-mvregister transform is placed at the SchemaEpoch order key per the *Seed order key* rule above.
 
 *Seed order key.* Transforms that materialize prior state into an order-keyed register (`counter_value_to_lww_int`, `lww_to_mvregister`, `reset_to`) place the seeded value at a definite point in the §4.5 total order: **the `SchemaEpoch` operation's own order key** `(ts.physical_ms, ts.logical, author, OpId)`. A data op authored under the new epoch outranks the seed iff its order key is greater — so a concurrent pre-migration write cannot silently beat a post-migration one, and the seed position is identical on every peer.
 
