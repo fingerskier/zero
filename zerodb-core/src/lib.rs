@@ -1,5 +1,6 @@
 pub mod cbor;
 pub mod envelope;
+pub mod epoch;
 pub mod hlc;
 pub mod kernel;
 pub mod op;

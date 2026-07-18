@@ -19,7 +19,7 @@ function keyGreater(a, b) {
   return false; // identical keys — identical op
 }
 
-const CRDTS = {
+export const CRDTS = {
   lww: {
     init: () => ({ value: null, key: null }),
     apply(state, op) {

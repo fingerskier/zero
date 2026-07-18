@@ -1,0 +1,29 @@
+{
+  "id": "EPOCH-002",
+  "type": "epoch-replay",
+  "property": "title",
+  "invariants": ["I-1", "I-17"],
+  "description": "Property stays lww across an add_prop epoch boundary (no change_crdt). Epochs 1 and 2 resolve the property to the same CRDT, so both epochs' ops pool into ONE lww total order (SCHEMA.md §4.1 segment rule). The newest op (a1 @90) lives in the EARLIER epoch yet still wins: per-epoch partitioning would wrongly reseed at the epoch-2 order key and let a2 (@60) win — the falsification target.",
+  "epochs": [
+    {
+      "record": "r1",
+      "epoch": 1,
+      "prev": null,
+      "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" },
+      "crdt": "lww"
+    },
+    {
+      "record": "r2",
+      "epoch": 2,
+      "prev": "r1",
+      "order_key": { "physical_ms": 50, "logical": 0, "author": "aa", "op_id": "e2" },
+      "crdt": "lww"
+    }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 90, "logical": 0 }, "ep": 1, "payload": { "set": "x" } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 60, "logical": 0 }, "ep": 2, "payload": { "set": "y" } }
+  ],
+  "orders": [[0, 1], [1, 0]],
+  "expect": { "value": "x" }
+}

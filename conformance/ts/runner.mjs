@@ -19,6 +19,7 @@ import {
 } from './models/op.mjs';
 import { runEnvelopeVector } from './models/envelope.mjs';
 import { runSchemaIrVector, runSchemaIrInvalidVector } from './models/schema.mjs';
+import { runEpochReplayVector } from './models/epoch.mjs';
 
 const laneArg = process.argv.indexOf('--lane');
 const lane = laneArg === -1 ? 'required' : process.argv[laneArg + 1];
@@ -38,6 +39,7 @@ const handlers = {
   envelope: runEnvelopeVector,
   'schema-ir': runSchemaIrVector,
   'schema-ir-invalid': runSchemaIrInvalidVector,
+  'epoch-replay': runEpochReplayVector,
 };
 
 const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'vectors', lane);

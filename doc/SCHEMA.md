@@ -82,7 +82,21 @@ Migrations are **data, not code** — a list of steps from a closed, versioned r
 
 **Transform registry v1** (each total — defined for every input): `keep_text`, `parse_int_or(default)`, `int_to_text`, `counter_value_to_lww_int` (counter reads out as an LWW int seeded at the migration epoch), `lww_to_mvregister` (singleton), `reset_to(default)`. Anything not expressible ⇒ the schema author picks `reset_to` — silent partial transforms do not exist.
 
+*Seed order key.* Transforms that materialize prior state into an order-keyed register (`counter_value_to_lww_int`, `lww_to_mvregister`, `reset_to`) place the seeded value at a definite point in the §4.5 total order: **the `SchemaEpoch` operation's own order key** `(ts.physical_ms, ts.logical, author, OpId)`. A data op authored under the new epoch outranks the seed iff its order key is greater — so a concurrent pre-migration write cannot silently beat a post-migration one, and the seed position is identical on every peer.
+
 **Replay determinism rule (I-17):** materialization is a pure function of (operation set, epoch chain). Ops apply under their own epoch's types; at each epoch boundary the migration steps transform materialized state exactly once, in list order. Fresh full replay ≡ any incremental application order (the vector suite's falsification target).
+
+### 4.1 Executable materialization model (segmented replay)
+
+The reference model materializes one property from its operation set and the canonical epoch chain, reusing the KERNEL §6 CRDT apply rules unchanged:
+
+1. **Canonical chain.** Resolve the `SchemaEpoch` records into one linear chain. Level 1's winner is the record with the **lowest §4.5 order key** among `prev = null` records; level `n`'s winner is the lowest-order-key record whose `prev` is level `n−1`'s winner. Every other record — a fork loser, or any record whose `prev` chain does not lead to a winner — is **quarantined** (application-visible), and so is any data op bound to a quarantined record (KERNEL §4.5 quarantine, not exclusion-from-set: convergent and reversible if the authority later ratifies it).
+2. **Pipeline steps 4–5.** Dedup by `OpId`; exclude equivocation groups (§4.5). An op whose resolved epoch has no winner in the known chain yields `EPOCH_UNKNOWN` (the bounded-buffer/late-op outcome of §3, retryable) — the model raises it rather than buffering.
+3. **Segments.** Split the chain into maximal runs of epochs that resolve the property to **one CRDT type** (a `change_crdt` starts a new segment; `add_prop`/`remove_prop`/entity steps do not). Within a segment all surviving ops — regardless of which epoch in the segment authored them — apply to **one** replica of that type, so their §4.5 total order is pooled (a late op in an earlier epoch still competes with a later epoch's op; per-epoch partitioning would wrongly reorder them).
+4. **Boundaries.** At each `change_crdt`, read the completed segment's materialized value and emit one **synthetic seed op** of the next type carrying that value at the seed order key above; it is ingested into the next segment's replica alongside that segment's ops. The transform is applied exactly once, in list order.
+5. **Read** the final segment's replica.
+
+Because every segment is a set-based CRDT materialization and the chain/segment structure is a pure function of the record set, the result is independent of arrival order (I-1) and fresh replay equals incremental application (I-17).
 
 ## 5. Query subset (O3)
 
@@ -113,7 +127,7 @@ Deterministic semantics:
 | `type` | Checks | Invariants |
 |--------|--------|------------|
 | `schema-ir` | canonical IR bytes ↔ tagged description, round trip, `SchemaId`; negatives (unknown key, `unique` smuggling, `encrypted` on a counter) | I-6, I-17 |
-| `epoch-replay` | op sets spanning a `SchemaEpoch` (incl. a `change_crdt` type change) → identical state under permutations and fresh replay | I-1, I-17 |
+| `epoch-replay` | op sets spanning a `SchemaEpoch` (incl. a `change_crdt` type change) → identical state under permutations and fresh replay (§4.1 model); own-epoch type resolution, same-type cross-epoch pooling, fork lowest-order-key resolution + descendant quarantine, `EPOCH_UNKNOWN` for an op past the known chain | I-1, I-17 |
 | `migration-transform` | each registry transform: input state → output state, incl. degenerate inputs | I-17 |
 | `query-eval` | grammar accept/reject cases; evaluation over a fixture graph incl. null, cross-type, MVRegister, ORDER BY determinism | — (read-side determinism) |
 

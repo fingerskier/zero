@@ -1,0 +1,30 @@
+{
+  "id": "EPOCH-003",
+  "type": "epoch-replay",
+  "property": "state",
+  "invariants": ["I-1", "I-17"],
+  "description": "Fork: two SchemaEpoch records claim epoch 1 with prev=null. The lower §4.5 order key wins (rA author aa < rB author bb), so rA (lww) is canonical and rB (gcounter) plus every op bound to it quarantine — application-visible, convergent, reversible if the M0d authority later ratifies rB. a2 is bound to the losing record and is excluded from materialized state; a1 (bound to the winner) materializes.",
+  "epochs": [
+    {
+      "record": "rA",
+      "epoch": 1,
+      "prev": null,
+      "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "eA" },
+      "crdt": "lww"
+    },
+    {
+      "record": "rB",
+      "epoch": 1,
+      "prev": null,
+      "order_key": { "physical_ms": 10, "logical": 0, "author": "bb", "op_id": "eB" },
+      "crdt": "gcounter"
+    }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 20, "logical": 0 }, "ep": 1, "ep_record": "rA", "payload": { "set": "win" } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 1, "ep_record": "rB", "payload": { "inc": 5 } }
+  ],
+  "orders": [[0, 1], [1, 0]],
+  "expect": { "value": "win" },
+  "expect_quarantine": ["a2"]
+}

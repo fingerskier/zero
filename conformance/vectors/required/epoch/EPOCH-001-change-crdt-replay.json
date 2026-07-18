@@ -1,0 +1,32 @@
+{
+  "id": "EPOCH-001",
+  "type": "epoch-replay",
+  "property": "count",
+  "invariants": ["I-1", "I-17"],
+  "description": "gcounter (epoch 1) -> lww (epoch 2) via change_crdt/counter_value_to_lww_int (SCHEMA.md §4.1). Epoch-1 increments materialize under gcounter regardless of arrival position (own-epoch type resolution); the counter total (8) seeds an LWW int at the epoch-2 SchemaEpoch order key (50,0,aa,e2); epoch-2 lww ops pool with the seed by §4.5, newest (a3 @60) wins. Identical under every permutation and fresh replay.",
+  "epochs": [
+    {
+      "record": "r1",
+      "epoch": 1,
+      "prev": null,
+      "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" },
+      "crdt": "gcounter"
+    },
+    {
+      "record": "r2",
+      "epoch": 2,
+      "prev": "r1",
+      "order_key": { "physical_ms": 50, "logical": 0, "author": "aa", "op_id": "e2" },
+      "crdt": "lww",
+      "migration": { "transform": "counter_value_to_lww_int" }
+    }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 20, "logical": 0 }, "ep": 1, "payload": { "inc": 3 } },
+    { "op_id": "a2", "author": "bb", "ts": { "physical_ms": 30, "logical": 0 }, "ep": 1, "payload": { "inc": 5 } },
+    { "op_id": "a3", "author": "aa", "ts": { "physical_ms": 60, "logical": 0 }, "ep": 2, "payload": { "set": 100 } },
+    { "op_id": "a4", "author": "bb", "ts": { "physical_ms": 40, "logical": 0 }, "ep": 2, "payload": { "set": 7 } }
+  ],
+  "orders": [[0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1]],
+  "expect": { "value": 100 }
+}

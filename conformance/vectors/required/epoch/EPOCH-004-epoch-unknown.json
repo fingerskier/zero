@@ -1,0 +1,21 @@
+{
+  "id": "EPOCH-004",
+  "type": "epoch-replay",
+  "property": "count",
+  "invariants": ["I-17"],
+  "description": "An op authored under epoch 2 arrives at a peer whose known chain defines only epoch 1 (no record at level 2). SCHEMA.md §3/§4.1: the op's epoch has no winner in the known chain, so materialization raises EPOCH_UNKNOWN (the bounded-buffer / late-op outcome, retryable) rather than applying the op under the wrong epoch's types.",
+  "epochs": [
+    {
+      "record": "r1",
+      "epoch": 1,
+      "prev": null,
+      "order_key": { "physical_ms": 10, "logical": 0, "author": "aa", "op_id": "e1" },
+      "crdt": "lww"
+    }
+  ],
+  "ops": [
+    { "op_id": "a1", "author": "aa", "ts": { "physical_ms": 20, "logical": 0 }, "ep": 2, "payload": { "set": "x" } }
+  ],
+  "orders": [[0]],
+  "expect_error": "EPOCH_UNKNOWN"
+}
