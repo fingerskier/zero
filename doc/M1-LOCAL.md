@@ -108,9 +108,9 @@ Smoke: `powershell -File scripts/test-mvp.ps1`.
 |---------------|--------------------|-----------|
 | E1 restart/replay | partial (open/replay tests; not full exemplar) | clock-rollback, larger load, kill-not-shutdown |
 | E2 model conflicts | kernel vectors + happy-path multi-peer smokes | store-level equal-ts / equivocation |
-| E4 groups/crash | `atomic_group` multi-op + shared `grp` | named WAL crash-injection matrix |
-| E9 delete | node tombstone hide | edges, late-edge, H3 derived visibility |
-| Schema/query CLI | inspect only | schema apply, repl, O3 query, TS→IR |
+| E4 groups/crash | `atomic_group` + atomic mid-batch rollback | fine-grained WAL named crash points (append/sync/apply) optional |
+| E9 delete | node tombstone + edge derived visibility | no cascade edge ops; late edges hidden |
+| Schema/query CLI | `schema-apply`, `query`, edges | interactive repl optional; full CBOR SchemaEpoch later |
 | Format freeze | `storage_format_version=1` written | Decision Log freeze still required |
 
 Live work tracking: [plan/LEDGER.md](../plan/LEDGER.md). Open review notes: [plan/FINDINGS.GROK.md](../plan/FINDINGS.GROK.md).

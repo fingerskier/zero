@@ -19,9 +19,12 @@ use zerodb_core::kernel::{
     Flag, GCounter, KernelOp, Lww, OrSet, Payload, PnCounter, Replica, Value,
 };
 use zerodb_core::op::{OpEnvelope, OpTs};
+use zerodb_core::query::parse as parse_query;
+use zerodb_core::queryeval::{self, GEdge, GNode, Graph, QValue};
 use zerodb_core::sign::{DOMAIN_OP_SIG, verify_op};
 
 const KIND_CREATE_NODE: u64 = 1;
+const KIND_CREATE_EDGE: u64 = 2;
 const KIND_SET_PROPERTY: u64 = 3;
 const KIND_TOMBSTONE: u64 = 4;
 const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
@@ -84,6 +87,8 @@ pub struct InspectReport {
     pub peer: String,
     pub ops: u64,
     pub nodes: Vec<InspectNode>,
+    #[serde(default)]
+    pub edges: Vec<InspectEdge>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +97,17 @@ pub struct InspectNode {
     pub label: String,
     pub deleted: bool,
     pub props: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectEdge {
+    pub id: String,
+    pub label: String,
+    pub src: String,
+    pub dst: String,
+    pub deleted: bool,
+    /// False when an endpoint is missing or tombstoned (H3 derived visibility).
+    pub visible: bool,
 }
 
 pub struct LocalStore {
@@ -229,8 +245,163 @@ impl LocalStore {
                 "UPDATE nodes SET deleted = 1 WHERE id = ?1",
                 params![node_hex],
             )?;
+            // H3 derived visibility: do not emit cascade edge tombstones.
             Ok(())
         })
+    }
+
+    /// Create an edge. Visibility is derived: hidden if either endpoint is
+    /// missing or deleted (H3) — no cascade ops.
+    pub fn create_edge(
+        &mut self,
+        label: &str,
+        src_hex: &str,
+        dst_hex: &str,
+    ) -> Result<String, StoreError> {
+        let src = decode_node(src_hex)?;
+        let dst = decode_node(dst_hex)?;
+        let edge = Uuid::now_v7();
+        let edge_bytes = *edge.as_bytes();
+        let edge_hex = hex::encode(edge_bytes);
+        let body = Cbor::Map(vec![
+            ("edge".into(), Cbor::Bytes(edge_bytes.to_vec())),
+            ("label".into(), Cbor::Text(label.into())),
+            ("src".into(), Cbor::Bytes(src)),
+            ("dst".into(), Cbor::Bytes(dst)),
+        ]);
+        let body_json = serde_json::json!({
+            "edge": edge_hex,
+            "label": label,
+            "src": src_hex,
+            "dst": dst_hex,
+        });
+        self.commit_local(KIND_CREATE_EDGE, body, body_json, |tx, _| {
+            tx.execute(
+                "INSERT INTO edges (id, label, src, dst, deleted) VALUES (?1,?2,?3,?4,0)
+                 ON CONFLICT(id) DO UPDATE SET label=excluded.label, src=excluded.src, dst=excluded.dst",
+                params![edge_hex, label, src_hex, dst_hex],
+            )?;
+            Ok(())
+        })?;
+        Ok(edge_hex)
+    }
+
+    /// Visible edges only (both endpoints live and not deleted; edge not deleted).
+    pub fn list_edges_visible(&self) -> Result<Vec<(String, String, String, String)>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.id, e.label, e.src, e.dst FROM edges e
+             JOIN nodes s ON s.id = e.src AND s.deleted = 0
+             JOIN nodes d ON d.id = e.dst AND d.deleted = 0
+             WHERE e.deleted = 0
+             ORDER BY e.id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Apply a simplified JSON schema pin: `{ "nodes": { "Todo": { "props": { "title": "lww" }}} }`.
+    /// Stores in meta; subsequent local mutations must match the pin for known labels.
+    pub fn apply_schema_json(&mut self, schema_json: &str) -> Result<(), StoreError> {
+        let v: serde_json::Value =
+            serde_json::from_str(schema_json).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let nodes = v
+            .get("nodes")
+            .and_then(|n| n.as_object())
+            .ok_or_else(|| StoreError::Invalid("schema.nodes required".into()))?;
+        for (label, entity) in nodes {
+            let props = entity
+                .get("props")
+                .and_then(|p| p.as_object())
+                .ok_or_else(|| StoreError::Invalid(format!("schema.nodes.{label}.props")))?;
+            for (path, crdt) in props {
+                let c = crdt
+                    .as_str()
+                    .ok_or_else(|| StoreError::Invalid("prop crdt must be string".into()))?;
+                if !matches!(c, "lww" | "gcounter" | "pncounter" | "orset" | "flag") {
+                    return Err(StoreError::Invalid(format!("unknown crdt {c}")));
+                }
+                let _ = path;
+            }
+        }
+        meta_set(&self.conn, "schema_json", schema_json.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn schema_json(&self) -> Result<Option<String>, StoreError> {
+        Ok(meta_get(&self.conn, "schema_json")?.map(|b| String::from_utf8_lossy(&b).into_owned()))
+    }
+
+    /// O3 minimal query over visible graph materialization.
+    pub fn query(&self, q: &str) -> Result<serde_json::Value, StoreError> {
+        let ast = parse_query(q).map_err(|e| StoreError::Invalid(format!("query parse: {e}")))?;
+        let graph = self.to_query_graph()?;
+        let rows = queryeval::eval(&ast, &graph, &BTreeMap::new())
+            .map_err(|e| StoreError::Invalid(format!("query eval: {e}")))?;
+        let cols: Vec<String> = ast
+            .items
+            .iter()
+            .map(|item| match &item.path {
+                Some(p) => format!("{}.{}", item.var, p),
+                None => item.var.clone(),
+            })
+            .collect();
+        let json_rows: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|row| {
+                let mut obj = serde_json::Map::new();
+                for (i, v) in row.into_iter().enumerate() {
+                    let key = cols.get(i).cloned().unwrap_or_else(|| format!("c{i}"));
+                    obj.insert(key, qvalue_to_json(&v));
+                }
+                serde_json::Value::Object(obj)
+            })
+            .collect();
+        Ok(serde_json::Value::Array(json_rows))
+    }
+
+    fn to_query_graph(&self) -> Result<Graph, StoreError> {
+        let mut nodes = Vec::new();
+        for (id, label, deleted) in self.list_nodes()? {
+            if deleted {
+                continue;
+            }
+            let mut props = BTreeMap::new();
+            let mut stmt = self
+                .conn
+                .prepare("SELECT path, value_json FROM props WHERE entity = ?1 ORDER BY path")?;
+            let rows = stmt.query_map(params![id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (p, vj) = row?;
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&vj) {
+                    props.insert(p, json_to_qvalue(&v));
+                }
+            }
+            nodes.push(GNode { id, label, props });
+        }
+        let mut edges = Vec::new();
+        for (id, label, src, dst) in self.list_edges_visible()? {
+            edges.push(GEdge {
+                id,
+                label,
+                src,
+                dst,
+                props: BTreeMap::new(),
+            });
+        }
+        Ok(Graph { nodes, edges })
     }
 
     pub fn set_lww(&mut self, node: &str, path: &str, value: &str) -> Result<String, StoreError> {
@@ -325,6 +496,7 @@ impl LocalStore {
             Some(true) => return Err(StoreError::Invalid("node is deleted".into())),
             Some(false) => {}
         }
+        self.check_schema_pin(node_hex, path, crdt)?;
         let mut body_json = extra;
         let obj = body_json
             .as_object_mut()
@@ -428,13 +600,71 @@ impl LocalStore {
                 props,
             });
         }
+        let mut edges = Vec::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, label, src, dst, deleted FROM edges ORDER BY id")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)? != 0,
+                ))
+            })?;
+            for row in rows {
+                let (id, label, src, dst, deleted) = row?;
+                let visible = !deleted
+                    && self.node_deleted_state(&src)? == Some(false)
+                    && self.node_deleted_state(&dst)? == Some(false);
+                edges.push(InspectEdge {
+                    id,
+                    label,
+                    src,
+                    dst,
+                    deleted,
+                    visible,
+                });
+            }
+        }
         Ok(InspectReport {
             path: path.display().to_string(),
             datastore_id: self.datastore_id_hex(),
             peer: self.author_hex(),
             ops: self.op_count()?,
             nodes,
+            edges,
         })
+    }
+
+    fn check_schema_pin(&self, node_hex: &str, path: &str, crdt: &str) -> Result<(), StoreError> {
+        let Some(raw) = self.schema_json()? else {
+            return Ok(());
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let label = self
+            .list_nodes()?
+            .into_iter()
+            .find(|(id, _, del)| id == node_hex && !*del)
+            .map(|(_, l, _)| l);
+        let Some(label) = label else {
+            return Ok(());
+        };
+        let Some(expected) = v
+            .pointer(&format!("/nodes/{label}/props/{path}"))
+            .and_then(|x| x.as_str())
+        else {
+            return Ok(()); // undeclared paths allowed in soft pin mode
+        };
+        if expected != crdt {
+            return Err(StoreError::Invalid(format!(
+                "schema pin: {label}.{path} expects crdt {expected}, got {crdt}"
+            )));
+        }
+        Ok(())
     }
 
     pub fn op_count(&self) -> Result<u64, StoreError> {
@@ -557,6 +787,7 @@ impl LocalStore {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM props", [])?;
         tx.execute("DELETE FROM nodes", [])?;
+        tx.execute("DELETE FROM edges", [])?;
         let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
         let mut max_p: u64 = 0;
         let mut max_l: u16 = 0;
@@ -591,6 +822,17 @@ impl LocalStore {
                             "INSERT INTO nodes (id, label, deleted) VALUES (?1,?2,0)
                              ON CONFLICT(id) DO UPDATE SET label = excluded.label",
                             params![node, label],
+                        )?;
+                    }
+                    KIND_CREATE_EDGE => {
+                        let edge = body["edge"].as_str().unwrap_or("");
+                        let label = body["label"].as_str().unwrap_or("Edge");
+                        let src = body["src"].as_str().unwrap_or("");
+                        let dst = body["dst"].as_str().unwrap_or("");
+                        tx.execute(
+                            "INSERT INTO edges (id, label, src, dst, deleted) VALUES (?1,?2,?3,?4,0)
+                             ON CONFLICT(id) DO UPDATE SET label=excluded.label, src=excluded.src, dst=excluded.dst",
+                            params![edge, label, src, dst],
                         )?;
                     }
                     KIND_TOMBSTONE => {
@@ -715,14 +957,22 @@ impl LocalStore {
             staged: Vec::new(),
         };
         let out = f(&mut builder)?;
-        if builder.staged.is_empty() {
-            return Ok(out);
+        if !builder.staged.is_empty() {
+            self.commit_wires_atomic(&builder.staged)?;
         }
+        Ok(out)
+    }
 
+    /// Apply a batch of already-signed wires in one SQLite transaction (E4 layer 2).
+    /// On any validation/apply failure the whole batch is rolled back.
+    pub fn commit_wires_atomic(&mut self, wires: &[WireOp]) -> Result<(), StoreError> {
+        if wires.is_empty() {
+            return Ok(());
+        }
         let mut next_p = self.hlc_p;
         let mut next_l = self.hlc_l;
         let tx = self.conn.transaction()?;
-        for wire in &builder.staged {
+        for wire in wires {
             let validated = validate_wire_for_ds(wire, &self.ds)?;
             if wire_exists(&tx, &validated.id)? {
                 return Err(StoreError::Duplicate);
@@ -735,7 +985,7 @@ impl LocalStore {
         tx.commit()?;
         self.hlc_p = next_p;
         self.hlc_l = next_l;
-        Ok(out)
+        Ok(())
     }
 
     fn commit_local<F>(
@@ -985,6 +1235,23 @@ fn apply_wire(
                 params![node, label],
             )?;
         }
+        KIND_CREATE_EDGE => {
+            let edge = wire.body["edge"]
+                .as_str()
+                .ok_or_else(|| StoreError::Invalid("body.edge".into()))?;
+            let label = wire.body["label"].as_str().unwrap_or("Edge");
+            let src = wire.body["src"]
+                .as_str()
+                .ok_or_else(|| StoreError::Invalid("body.src".into()))?;
+            let dst = wire.body["dst"]
+                .as_str()
+                .ok_or_else(|| StoreError::Invalid("body.dst".into()))?;
+            tx.execute(
+                "INSERT INTO edges (id, label, src, dst, deleted) VALUES (?1,?2,?3,?4,0)
+                 ON CONFLICT(id) DO UPDATE SET label=excluded.label, src=excluded.src, dst=excluded.dst",
+                params![edge, label, src, dst],
+            )?;
+        }
         KIND_TOMBSTONE => {
             let node = wire.body["node"]
                 .as_str()
@@ -1130,14 +1397,14 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
     let object = body
         .as_object()
         .ok_or_else(|| StoreError::Invalid("operation body must be an object".into()))?;
-    let node = object
-        .get("node")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
-    decode_node(node)?;
 
     match kind {
         KIND_CREATE_NODE => {
+            let node = object
+                .get("node")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
+            decode_node(node)?;
             let label = object
                 .get("label")
                 .and_then(serde_json::Value::as_str)
@@ -1146,7 +1413,36 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
                 return Err(StoreError::Invalid("node label exceeds 256 bytes".into()));
             }
         }
+        KIND_CREATE_EDGE => {
+            let label = object
+                .get("label")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| StoreError::Invalid("body.label".into()))?;
+            if label.len() > 256 {
+                return Err(StoreError::Invalid("edge label exceeds 256 bytes".into()));
+            }
+            let src = object
+                .get("src")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| StoreError::Invalid("body.src".into()))?;
+            let dst = object
+                .get("dst")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| StoreError::Invalid("body.dst".into()))?;
+            decode_node(src)?;
+            decode_node(dst)?;
+            let edge = object
+                .get("edge")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| StoreError::Invalid("body.edge".into()))?;
+            decode_node(edge)?;
+        }
         KIND_TOMBSTONE => {
+            let node = object
+                .get("node")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
+            decode_node(node)?;
             if object
                 .get("tombstone")
                 .is_some_and(|value| value.as_bool() != Some(true))
@@ -1155,6 +1451,11 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
             }
         }
         KIND_SET_PROPERTY => {
+            let node = object
+                .get("node")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
+            decode_node(node)?;
             let path = object
                 .get("path")
                 .and_then(serde_json::Value::as_str)
@@ -1275,6 +1576,13 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
           crdt TEXT NOT NULL,
           value_json TEXT NOT NULL,
           PRIMARY KEY (entity, path)
+        );
+        CREATE TABLE IF NOT EXISTS edges (
+          id TEXT PRIMARY KEY,
+          label TEXT NOT NULL,
+          src TEXT NOT NULL,
+          dst TEXT NOT NULL,
+          deleted INTEGER NOT NULL DEFAULT 0
         );
         ",
     )?;
@@ -1515,7 +1823,7 @@ fn json_to_cbor_body(v: &serde_json::Value) -> Result<Cbor, StoreError> {
         for (k, val) in obj {
             let c = match val {
                 serde_json::Value::String(s) => {
-                    if k == "node" {
+                    if k == "node" || k == "edge" || k == "src" || k == "dst" {
                         let b = hex::decode(s).map_err(|e| StoreError::Invalid(e.to_string()))?;
                         Cbor::Bytes(b)
                     } else {
@@ -1597,6 +1905,40 @@ fn decode_node(s: &str) -> Result<Vec<u8>, StoreError> {
 
 fn getrandom_fill(buf: &mut [u8]) {
     getrandom::getrandom(buf).expect("OS CSPRNG unavailable for key material");
+}
+
+fn json_to_qvalue(v: &serde_json::Value) -> QValue {
+    match v {
+        serde_json::Value::Null => QValue::Null,
+        serde_json::Value::Bool(b) => QValue::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                QValue::Int(i)
+            } else if let Some(u) = n.as_u64() {
+                QValue::Int(u as i64)
+            } else if let Some(f) = n.as_f64() {
+                QValue::Float(f)
+            } else {
+                QValue::Null
+            }
+        }
+        serde_json::Value::String(s) => QValue::Text(s.clone()),
+        serde_json::Value::Array(a) => QValue::Mv(a.iter().map(json_to_qvalue).collect()),
+        serde_json::Value::Object(_) => QValue::Text(v.to_string()),
+    }
+}
+
+fn qvalue_to_json(v: &QValue) -> serde_json::Value {
+    match v {
+        QValue::Null => serde_json::Value::Null,
+        QValue::Bool(b) => serde_json::json!(b),
+        QValue::Int(i) => serde_json::json!(i),
+        QValue::Float(f) => serde_json::json!(f),
+        QValue::Text(s) => serde_json::json!(s),
+        QValue::Bytes(b) => serde_json::json!(hex::encode(b)),
+        QValue::Mv(xs) => serde_json::Value::Array(xs.iter().map(qvalue_to_json).collect()),
+        QValue::Node(id) | QValue::Edge(id) => serde_json::json!(id),
+    }
 }
 
 /// Durable HLC high-water = max over oplog timestamps; rewrite meta if stale (DQ-7).

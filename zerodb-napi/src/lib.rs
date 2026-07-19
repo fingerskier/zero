@@ -103,10 +103,12 @@ impl Database {
     /// Get a materialized property as JSON (string, number, bool, array, or null).
     #[napi]
     pub fn get_prop(&self, node: String, key: String) -> Result<serde_json::Value> {
-        self.with_store(|store| match store.get_prop(&node, &key).map_err(map_err)? {
-            Some(v) => Ok(v),
-            None => Ok(serde_json::Value::Null),
-        })
+        self.with_store(
+            |store| match store.get_prop(&node, &key).map_err(map_err)? {
+                Some(v) => Ok(v),
+                None => Ok(serde_json::Value::Null),
+            },
+        )
     }
 
     #[napi]

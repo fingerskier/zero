@@ -129,6 +129,34 @@ enum Cmd {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
     },
+    CreateEdge {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        label: String,
+        #[arg(long)]
+        src: String,
+        #[arg(long)]
+        dst: String,
+    },
+    Edges {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+    },
+    /// Apply simplified schema pin JSON: { "nodes": { "Todo": { "props": { "title": "lww" } } } }
+    SchemaApply {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// O3 minimal query (MATCH/WHERE/RETURN/ORDER BY/LIMIT).
+    Query {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        q: String,
+    },
     /// Rebuild all props from oplog (E1 fresh replay).
     Replay {
         #[arg(long, default_value = "./zerodb.sqlite")]
@@ -297,6 +325,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let flag = if deleted { "deleted" } else { "live" };
                 println!("{id}\t{label}\t{flag}");
             }
+        }
+        Cmd::CreateEdge {
+            path,
+            label,
+            src,
+            dst,
+        } => {
+            let mut store = LocalStore::open(&path)?;
+            println!("ok edge {}", store.create_edge(&label, &src, &dst)?);
+        }
+        Cmd::Edges { path } => {
+            let store = LocalStore::open(&path)?;
+            for (id, label, src, dst) in store.list_edges_visible()? {
+                println!("{id}\t{label}\t{src}\t{dst}");
+            }
+        }
+        Cmd::SchemaApply { path, file } => {
+            let mut store = LocalStore::open(&path)?;
+            let raw = std::fs::read_to_string(&file)?;
+            store.apply_schema_json(&raw)?;
+            println!("schema applied from {}", file.display());
+        }
+        Cmd::Query { path, q } => {
+            let store = LocalStore::open(&path)?;
+            let rows = store.query(&q)?;
+            println!("{}", serde_json::to_string_pretty(&rows)?);
         }
         Cmd::Replay { path } => {
             let mut store = LocalStore::open(&path)?;

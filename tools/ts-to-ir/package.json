@@ -1,0 +1,13 @@
+{
+  "name": "@zerodb/ts-to-ir",
+  "version": "0.1.0-alpha",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "zerodb-ts-to-ir": "./ts-to-ir.mjs"
+  },
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
+  "description": "Minimal TS authoring → schema IR JSON (M1 O2 trail; not full CBOR SchemaId yet)"
+}

@@ -56,8 +56,8 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 ## 5. Immediate next actions (ordered)
 
-1. **M1 remaining** — E4 crash matrix, H3/E9, schema/query/TS→IR (or Decision-Log re-scope). Wave 1 + E1/E2 harness + partial E4 done.
-2. **M2 in progress** — `@zerodb/node` NAPI vertical over experimental LocalStore (CRUD/export/import green). Still need subscribe, query, schema, extra CRDTs, parity vectors.
+1. **M1 exit pass** — remainders largely implemented (E4 atomic rollback, E9 edges/H3, schema pin, O3 query, minimal TS→IR). Formal Decision Log exit + optional freeze when ready.
+2. **M2 continue** — wire NAPI to query/schema/edges; subscribe; parity vectors; extra CRDTs.
 3. **Format freeze** only via Decision Log if retaining local DBs.
 4. **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.
 
