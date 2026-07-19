@@ -1,0 +1,6 @@
+target
+node_modules
+*.node
+*.node.bak
+npm-debug.log
+index.js.bak

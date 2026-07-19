@@ -56,9 +56,9 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 ## 5. Immediate next actions (ordered)
 
-1. **M1 exit path** — fuller E1/E2, layer-2 crash/groups (E4), H3/E9, schema apply + query + TS→IR (or Decision-Log re-scope). Wave 1 correctness (CSPRNG, HLC recover, fmtver, serve fail-closed) is done — see LEDGER.
-2. **Format freeze** only via Decision Log if retaining local DBs.
-3. **M2** — Node/NAPI SDK vertical.
+1. **M1 remaining** — E4 crash matrix, H3/E9, schema/query/TS→IR (or Decision-Log re-scope). Wave 1 + E1/E2 harness + partial E4 done.
+2. **M2 in progress** — `@zerodb/node` NAPI vertical over experimental LocalStore (CRUD/export/import green). Still need subscribe, query, schema, extra CRDTs, parity vectors.
+3. **Format freeze** only via Decision Log if retaining local DBs.
 4. **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.
 
 Live rows and exit evidence: [LEDGER.md](LEDGER.md). Open review backlog: [FINDINGS.GROK.md](FINDINGS.GROK.md).

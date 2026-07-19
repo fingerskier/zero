@@ -4,6 +4,7 @@ members = [
     "zerodb-core",
     "zerodb-storage",
     "zerodb-cli",
+    "zerodb-napi",
 ]
 
 [workspace.package]

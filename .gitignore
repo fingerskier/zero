@@ -140,3 +140,7 @@ vite.config.ts.timestamp-*
 
 # Rust
 /target/
+
+# NAPI native addons (build with npm run build in zerodb-napi/)
+*.node
+

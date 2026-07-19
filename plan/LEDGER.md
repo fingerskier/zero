@@ -69,7 +69,20 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 
 | ID | Work | Status | Depends | Effort | Release |
 |----|------|--------|---------|--------|---------|
-| M2 | Node/NAPI SDK vertical (E11 provisional) | open | M1-exit | M | `v0.1.0-sdk` |
+| M2 | Node/NAPI SDK vertical (E11 provisional) | in-progress | M1 (rides experimental LocalStore) | M | `v0.1.0-sdk` |
+
+### M2 subtasks
+
+| ID | Work | Status | Evidence |
+|----|------|--------|----------|
+| M2-napi-scaffold | `zerodb-napi` crate + `@zerodb/node` package | done | `zerodb-napi/`; `napi build` |
+| M2-napi-crud | Database init/open/mutate/get/inspect/export/import/close | done | `test/m2-basic.test.mjs` (3) |
+| M2-subscribe | `subscribe` / live change notifications | open | — |
+| M2-query | O3 query via NAPI | open | blocked(M1-query) |
+| M2-schema | schema apply / TS→IR pipeline (O2) | open | blocked(M1-schema/tsir) |
+| M2-crdts | MVRegister + resolve, RGA, LWWMap | open | kernel + binding |
+| M2-parity | binding parity vectors vs core fixtures | open | — |
+| M2-exit | Close `v0.1.0-sdk` | blocked(above) | SPEC §10 M2 checklist |
 | M3a | L2 relay + offline catch-up (E3) | open | M2, M0c/M0f | L | internal |
 | M3b | Security: auth, envelope, negatives (E5–E8) | open | M3a, M0d | L | internal |
 | M3c | Interop TS wire peer + release | open | M3b | M | `v0.1.0` |

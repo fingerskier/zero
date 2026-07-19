@@ -2,8 +2,8 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** **Composite M0 contract-model gate closed 2026-07-18** (C1–C5, C7–C8; C6 deferred). Draft-1 profiles only — **no wire/persistent format freeze** until an explicit freeze Decision Log entry. Two-language conformance corpus **103** required vectors, CI-blocking. Next: **M1** (`v0.1.0-local`). TS→IR compiler trails ≤ M1.
-`zerodb-core` / `zerodb-storage` crates remain **experimental** until a format freeze; M1 may begin on the model contracts.
+**Status:** **Composite M0 closed** (2026-07-18). **M1** local store in progress (`v0.1.0-local` not exited). **M2** Node/NAPI scaffold started (`@zerodb/node` experimental). Draft-1 profiles only — **no format freeze** without Decision Log. Conformance **103** vectors CI-blocking.
+Crates remain **experimental** until a format freeze.
 
 
 ## Documents
@@ -27,6 +27,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [Execution Plan](plan/PLAN.md) | Live path-to-MVP delivery plan |
 | [Delivery Ledger](plan/LEDGER.md) | Live work tracker — M1 subtasks, post-M1 milestones |
 | [Open findings](plan/FINDINGS.GROK.md) | Open review backlog (maps to LEDGER rows) |
+| [Node SDK (M2)](zerodb-napi/) | Experimental `@zerodb/node` NAPI binding — `npm install && npm run build && npm test` |
 
 ## v0.1 scope
 
