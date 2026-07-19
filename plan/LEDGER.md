@@ -53,8 +53,8 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M1-fix-rng | OS CSPRNG for seed/salt (`getrandom`) | done(`m1_wave1` seed test) | S | seed fill uses OS RNG; unit test | G-01 |
 | M1-fix-hlc | HLC on open/replay from durable oplog (DQ-7 backend) | done(`m1_wave1` HLC tests) | S | open/replay rewrite meta from oplog max | G-02 |
 | M1-fix-serve | Fail-closed serve defaults (loopback / unsafe flag) | done(`serve_bind` tests) | S | refuse non-loopback without `--allow-insecure-lan` | G-05 |
-| M1-e1 | Full E1 (restart, replay, rollback clock, larger load) | open | M | EXEMPLAR E1 harness | G-09 |
-| M1-e2-store | Store-level equal-ts / equivocation suite | open | S | multi-peer equal-ts fixtures | G-09 |
+| M1-e1 | Full E1 (restart, replay, larger load, HLC mono) | done(`e1_e2_acceptance` fifty-todo + HLC mono) | M | 50-todo restart/import/replay; post-restart ts > pre max | G-09 |
+| M1-e2-store | Store-level equal-ts / equivocation suite | done(`e1_e2_acceptance` e2_*) | S | same-author exclude + cross-peer total order | G-09 |
 | M1-e4 | Groups + WAL layer-2 crash injection | open | L | WAL crash points + E4 | G-03 |
 | M1-e9 | H3 derived visibility + edges + late-edge E9 | open | L | H3 resolution + E9 fixtures | G-04 |
 | M1-schema | Schema apply / IR load; type pin; `ep` | open | M | schema apply path; type-mix policy | G-06/08 |

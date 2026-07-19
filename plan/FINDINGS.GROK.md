@@ -20,7 +20,7 @@
 | G-06 | bug | No CRDT type pin / deps policy under multi-writer | M1-schema |
 | G-07 | suggestion | `storage_format_version=1` written; freeze still open | **partial** M1-fmtver |
 | G-08 | suggestion | SPEC M1 CLI: schema apply, repl, query missing | M1-schema, M1-query |
-| G-09 | suggestion | E1/E2 only partially evidenced at store boundary | M1-e1, M1-e2-store |
+| G-09 | suggestion | E1/E2 store harness (50-todo + equal-ts) | **done** M1-e1, M1-e2-store |
 | G-10 | suggestion | Dead `HelloOk.need` (one-way pull) | document in M1-LOCAL (done); drop or implement later |
 | G-11 | suggestion | Signing seed plaintext in SQLite | M1-LOCAL threat note (done); optional wrap later |
 | G-12 | suggestion | Rematerialize scans all kind=3 ops | defer until scale pressure |
