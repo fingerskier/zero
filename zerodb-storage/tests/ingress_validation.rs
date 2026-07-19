@@ -85,6 +85,7 @@ fn signed_create_wire(datastore_id: &str, physical_ms: u64) -> WireOp {
             l: 0,
         },
         deps: vec![],
+        grp: None,
         kind: 1,
         body: serde_json::json!({
             "label": "Future",

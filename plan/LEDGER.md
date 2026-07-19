@@ -55,7 +55,7 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M1-fix-serve | Fail-closed serve defaults (loopback / unsafe flag) | done(`serve_bind` tests) | S | refuse non-loopback without `--allow-insecure-lan` | G-05 |
 | M1-e1 | Full E1 (restart, replay, larger load, HLC mono) | done(`e1_e2_acceptance` fifty-todo + HLC mono) | M | 50-todo restart/import/replay; post-restart ts > pre max | G-09 |
 | M1-e2-store | Store-level equal-ts / equivocation suite | done(`e1_e2_acceptance` e2_*) | S | same-author exclude + cross-peer total order | G-09 |
-| M1-e4 | Groups + WAL layer-2 crash injection | open | L | WAL crash points + E4 | G-03 |
+| M1-e4 | Groups + WAL layer-2 crash injection | in-progress | L | `atomic_group` + grp export done (`e4_groups`); named WAL crash injection still open | G-03 |
 | M1-e9 | H3 derived visibility + edges + late-edge E9 | open | L | H3 resolution + E9 fixtures | G-04 |
 | M1-schema | Schema apply / IR load; type pin; `ep` | open | M | schema apply path; type-mix policy | G-06/08 |
 | M1-query | O3 minimal query + repl | open | M | CLI query greening SCHEMA vectors | G-08 |

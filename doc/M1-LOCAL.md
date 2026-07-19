@@ -68,7 +68,7 @@ These rules were accepted for the LAN dataflow slice and are enforced by tests u
 6. **Property-before-CreateNode:** remote SetProperty ops for unknown nodes are retained in the oplog and rematerialized as **shadow** property state; they MUST NOT invent a visible placeholder node. The CreateNode supplies the label regardless of arrival order, restart, or `replay`. Local mutation against an unknown node is rejected.
 7. **`replay`:** atomically wipe and rebuild `nodes`/`props` from the oplog only (no orphan materialization).
 
-Open gaps (not closed by the above): CRDT type pin under concurrent mixed types, causal `deps` buffering, groups / crash injection.
+Open gaps (not closed by the above): CRDT type pin under concurrent mixed types, causal `deps` buffering, WAL named crash-injection matrix (partial: `atomic_group` exists).
 
 ---
 
@@ -108,7 +108,7 @@ Smoke: `powershell -File scripts/test-mvp.ps1`.
 |---------------|--------------------|-----------|
 | E1 restart/replay | partial (open/replay tests; not full exemplar) | clock-rollback, larger load, kill-not-shutdown |
 | E2 model conflicts | kernel vectors + happy-path multi-peer smokes | store-level equal-ts / equivocation |
-| E4 groups/crash | single-op txn only | WAL layer-2 crash matrix + groups |
+| E4 groups/crash | `atomic_group` multi-op + shared `grp` | named WAL crash-injection matrix |
 | E9 delete | node tombstone hide | edges, late-edge, H3 derived visibility |
 | Schema/query CLI | inspect only | schema apply, repl, O3 query, TS→IR |
 | Format freeze | `storage_format_version=1` written | Decision Log freeze still required |

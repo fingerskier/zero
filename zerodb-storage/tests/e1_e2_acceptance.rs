@@ -113,6 +113,7 @@ fn signed_lww(
             l: logical,
         },
         deps: vec![],
+        grp: None,
         kind: 3,
         body: serde_json::json!({
             "node": node_hex,
@@ -135,9 +136,7 @@ fn e1_fifty_todos_restart_and_fresh_replay_match() {
     let mut nodes = Vec::with_capacity(N);
     for i in 0..N {
         let id = store.create_node("Todo").unwrap();
-        store
-            .set_lww(&id, "title", &format!("item-{i}"))
-            .unwrap();
+        store.set_lww(&id, "title", &format!("item-{i}")).unwrap();
         if i % 2 == 0 {
             store.flag_enable(&id, "done").unwrap();
         }
@@ -344,7 +343,10 @@ fn e2_cross_peer_equal_ts_lww_total_order_converges() {
 
     let ta = store_a.get_lww(&node, "title").unwrap();
     let tb = store_b.get_lww(&node, "title").unwrap();
-    assert_eq!(ta, tb, "arrival order must not affect LWW equal-ts total order");
+    assert_eq!(
+        ta, tb,
+        "arrival order must not affect LWW equal-ts total order"
+    );
     assert!(
         ta.as_deref() == Some("from-a") || ta.as_deref() == Some("from-b"),
         "winner must be one of the two concurrent writes, got {ta:?}"

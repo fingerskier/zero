@@ -56,6 +56,9 @@ pub struct WireOp {
     pub author_pk: String,
     pub ts: WireTs,
     pub deps: Vec<String>,
+    /// Optional group id (16-byte hex). Present on atomic_group members (M1-e4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grp: Option<String>,
     pub kind: u64,
     pub body: serde_json::Value,
     pub sig: String,
@@ -694,6 +697,47 @@ impl LocalStore {
             .collect())
     }
 
+    /// Run multiple local mutations in one SQLite transaction sharing a GroupId (M1-e4 / I-13).
+    /// On any error from `f`, nothing is persisted.
+    pub fn atomic_group<F, T>(&mut self, f: F) -> Result<T, StoreError>
+    where
+        F: FnOnce(&mut GroupBuilder) -> Result<T, StoreError>,
+    {
+        let group_id = *Uuid::now_v7().as_bytes();
+        let mut builder = GroupBuilder {
+            signing: self.signing.clone(),
+            author: self.author,
+            author_pk: self.author_pk,
+            ds: self.ds,
+            hlc_p: self.hlc_p,
+            hlc_l: self.hlc_l,
+            group_id,
+            staged: Vec::new(),
+        };
+        let out = f(&mut builder)?;
+        if builder.staged.is_empty() {
+            return Ok(out);
+        }
+
+        let mut next_p = self.hlc_p;
+        let mut next_l = self.hlc_l;
+        let tx = self.conn.transaction()?;
+        for wire in &builder.staged {
+            let validated = validate_wire_for_ds(wire, &self.ds)?;
+            if wire_exists(&tx, &validated.id)? {
+                return Err(StoreError::Duplicate);
+            }
+            (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, now_ms())?;
+            apply_wire(&tx, wire, &validated)?;
+        }
+        meta_set_u64(&tx, "hlc_p", next_p)?;
+        meta_set_u64(&tx, "hlc_l", next_l as u64)?;
+        tx.commit()?;
+        self.hlc_p = next_p;
+        self.hlc_l = next_l;
+        Ok(out)
+    }
+
     fn commit_local<F>(
         &mut self,
         kind: u64,
@@ -733,6 +777,7 @@ impl LocalStore {
                 l: ts.logical,
             },
             deps: vec![],
+            grp: None,
             kind,
             body: body_json.clone(),
             sig: hex::encode(sig),
@@ -763,6 +808,134 @@ impl LocalStore {
         self.hlc_p = ts.physical_ms;
         self.hlc_l = ts.logical;
         Ok(hex::encode(id))
+    }
+}
+
+/// Builder for [`LocalStore::atomic_group`] — stages ops, commits as one transaction.
+pub struct GroupBuilder {
+    signing: SigningKey,
+    author: [u8; 32],
+    author_pk: [u8; 32],
+    ds: [u8; 32],
+    hlc_p: u64,
+    hlc_l: u16,
+    group_id: [u8; 16],
+    staged: Vec<WireOp>,
+}
+
+impl GroupBuilder {
+    fn next_ts(&mut self) -> Result<OpTs, StoreError> {
+        let wall = now_ms();
+        let p = wall.max(self.hlc_p);
+        let (p, l) = if p == self.hlc_p {
+            match self.hlc_l.checked_add(1) {
+                Some(l) => (p, l),
+                None => (
+                    p.checked_add(1)
+                        .ok_or_else(|| StoreError::Invalid("HLC physical time overflow".into()))?,
+                    0,
+                ),
+            }
+        } else {
+            (p, 0)
+        };
+        self.hlc_p = p;
+        self.hlc_l = l;
+        Ok(OpTs {
+            physical_ms: p,
+            logical: l,
+        })
+    }
+
+    fn stage(
+        &mut self,
+        kind: u64,
+        body: Cbor,
+        body_json: serde_json::Value,
+    ) -> Result<(), StoreError> {
+        let ts = self.next_ts()?;
+        let env = OpEnvelope {
+            v: 1,
+            ds: self.ds,
+            ep: 0,
+            author: self.author,
+            ts,
+            deps: vec![],
+            grp: Some(self.group_id),
+            kind,
+            body,
+        };
+        let id = env.op_id().map_err(|e| StoreError::Cbor(e.to_string()))?;
+        let sig = {
+            let pre = [DOMAIN_OP_SIG, id.as_slice()].concat();
+            self.signing.sign(&pre).to_bytes()
+        };
+        self.staged.push(WireOp {
+            id: hex::encode(id),
+            v: 1,
+            ds: hex::encode(self.ds),
+            ep: 0,
+            author: hex::encode(self.author),
+            author_pk: hex::encode(self.author_pk),
+            ts: WireTs {
+                p: ts.physical_ms,
+                l: ts.logical,
+            },
+            deps: vec![],
+            grp: Some(hex::encode(self.group_id)),
+            kind,
+            body: body_json,
+            sig: hex::encode(sig),
+        });
+        Ok(())
+    }
+
+    pub fn create_node(&mut self, label: &str) -> Result<String, StoreError> {
+        let node = Uuid::now_v7();
+        let node_bytes = *node.as_bytes();
+        let node_hex = hex::encode(node_bytes);
+        let body = Cbor::Map(vec![
+            ("label".into(), Cbor::Text(label.into())),
+            ("node".into(), Cbor::Bytes(node_bytes.to_vec())),
+        ]);
+        let body_json = serde_json::json!({ "label": label, "node": node_hex });
+        self.stage(KIND_CREATE_NODE, body, body_json)?;
+        Ok(node_hex)
+    }
+
+    pub fn set_lww(&mut self, node: &str, path: &str, value: &str) -> Result<(), StoreError> {
+        let body_json = serde_json::json!({
+            "node": node, "path": path, "crdt": "lww", "value": value
+        });
+        let body = json_to_cbor_body(&body_json)?;
+        self.stage(KIND_SET_PROPERTY, body, body_json)
+    }
+
+    pub fn set_add(&mut self, node: &str, path: &str, value: &str) -> Result<(), StoreError> {
+        let body_json = serde_json::json!({
+            "node": node, "path": path, "crdt": "orset", "op": "add", "value": value
+        });
+        let body = json_to_cbor_body(&body_json)?;
+        self.stage(KIND_SET_PROPERTY, body, body_json)
+    }
+
+    pub fn flag_enable(&mut self, node: &str, path: &str) -> Result<(), StoreError> {
+        let body_json = serde_json::json!({
+            "node": node, "path": path, "crdt": "flag", "op": "enable"
+        });
+        let body = json_to_cbor_body(&body_json)?;
+        self.stage(KIND_SET_PROPERTY, body, body_json)
+    }
+
+    pub fn counter_inc(&mut self, node: &str, path: &str, n: u64) -> Result<(), StoreError> {
+        if n == 0 {
+            return Err(StoreError::Invalid("n must be > 0".into()));
+        }
+        let body_json = serde_json::json!({
+            "node": node, "path": path, "crdt": "pncounter", "op": "inc", "n": n
+        });
+        let body = json_to_cbor_body(&body_json)?;
+        self.stage(KIND_SET_PROPERTY, body, body_json)
     }
 }
 
@@ -903,6 +1076,16 @@ fn validate_wire_for_ds(
         .iter()
         .map(|dep| decode32(dep))
         .collect::<Result<Vec<_>, _>>()?;
+    let grp = match &wire.grp {
+        None => None,
+        Some(h) => {
+            let b = decode_node(h)?;
+            let arr: [u8; 16] = b
+                .try_into()
+                .map_err(|_| StoreError::Invalid("grp length".into()))?;
+            Some(arr)
+        }
+    };
     let envelope = OpEnvelope {
         v: wire.v,
         ds: wire_ds,
@@ -913,7 +1096,7 @@ fn validate_wire_for_ds(
             logical: wire.ts.l,
         },
         deps,
-        grp: None,
+        grp,
         kind: wire.kind,
         body: json_to_cbor_body(&wire.body)?,
     };
