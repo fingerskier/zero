@@ -65,11 +65,13 @@ NODE=$(./target/debug/zerodb create-node --path ./a.sqlite --label Todo)
 ./target/debug/zerodb set --path ./b.sqlite --node $NODE --key title --value "oat"
 ./target/debug/zerodb sync --path ./a.sqlite --peer ./b.sqlite
 
-# Multi-machine (or second process): serve one peer, pull from the other
-./target/debug/zerodb serve --path ./a.sqlite --listen 0.0.0.0:7700
+# Multi-machine (or second process): bind only the serving host's private LAN IP
+./target/debug/zerodb serve --path ./a.sqlite --listen 192.168.1.12:7700
 # on other process/host:
-./target/debug/zerodb pull --path ./b.sqlite --from host:7700
+./target/debug/zerodb pull --path ./b.sqlite --from 192.168.1.12:7700
 ```
+
+`pull` is one-way; reverse the serving and pulling hosts to exchange writes in both directions. The M1 TCP transport is plaintext and has no peer authentication, so use it only with disposable test data on a trusted private LAN. Do not bind it to a wildcard or public interface. See the [Windows ↔ Raspberry Pi test runbook](doc/M1-LAN-TEST.md) for the complete two-machine acceptance procedure.
 
 Smoke test: `powershell -File scripts/test-mvp.ps1`  
 Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an **experimental M1 path** toward `v0.1.0-local`, not a format freeze.

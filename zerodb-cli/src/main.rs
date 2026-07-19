@@ -1,4 +1,4 @@
-//! ZeroDB CLI — local MVP + process/machine sync helpers.
+//! ZeroDB CLI — M1 local durable core + process/machine sync.
 //!
 //! Multi-process: `export` / `import` or `sync --peer <other.db>`
 //! Multi-machine: `serve` + `pull --from host:port`
@@ -15,7 +15,7 @@ use zerodb_storage::{ExportBundle, LocalStore, WireOp};
 #[derive(Parser)]
 #[command(
     name = "zerodb",
-    about = "ZeroDB local MVP CLI (M1 slice + peer exchange)"
+    about = "ZeroDB M1 CLI — local SQLite + CRDT props + peer exchange"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -24,24 +24,31 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Create a new local datastore file.
     Init {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
     },
-    /// Show peer id and datastore id.
     Info {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
     },
-    /// Create a node; prints node id (hex).
+    Inspect {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+    },
     CreateNode {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
         #[arg(long, default_value = "Todo")]
         label: String,
     },
-    /// Set an LWW text property on a node.
+    DeleteNode {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        node: String,
+    },
+    /// Set LWW text (default) or --crdt for typed write helpers.
     Set {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
@@ -52,7 +59,6 @@ enum Cmd {
         #[arg(long)]
         value: String,
     },
-    /// Get an LWW text property.
     Get {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
@@ -61,40 +67,97 @@ enum Cmd {
         #[arg(long)]
         key: String,
     },
-    /// List nodes.
+    Inc {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long, default_value_t = 1)]
+        n: u64,
+        #[arg(long, default_value = "pn")]
+        kind: String, // pn | g
+    },
+    Dec {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long, default_value_t = 1)]
+        n: u64,
+    },
+    SetAdd {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        value: String,
+    },
+    SetRemove {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        value: String,
+    },
+    FlagOn {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        key: String,
+    },
+    FlagOff {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        key: String,
+    },
     Nodes {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
     },
-    /// Export all ops to a JSON bundle (file exchange / multi-process).
+    /// Rebuild all props from oplog (E1 fresh replay).
+    Replay {
+        #[arg(long, default_value = "./zerodb.sqlite")]
+        path: PathBuf,
+    },
     Export {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
         #[arg(long)]
         out: PathBuf,
     },
-    /// Import ops from a JSON bundle (merge / multi-process).
     Import {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
         #[arg(long)]
         file: PathBuf,
     },
-    /// Two-way file sync with another local database (same machine, two processes' DBs).
     Sync {
         #[arg(long)]
         path: PathBuf,
         #[arg(long)]
         peer: PathBuf,
     },
-    /// Serve ops over TCP for multi-machine pull.
     Serve {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
         #[arg(long, default_value = "127.0.0.1:7700")]
         listen: String,
     },
-    /// Pull missing ops from a remote `serve` peer and merge.
     Pull {
         #[arg(long, default_value = "./zerodb.sqlite")]
         path: PathBuf,
@@ -147,10 +210,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("peer      {}", store.author_hex());
             println!("ops       {}", store.op_count()?);
         }
+        Cmd::Inspect { path } => {
+            let store = LocalStore::open(&path)?;
+            let rep = store.inspect(&path)?;
+            println!("{}", serde_json::to_string_pretty(&rep)?);
+        }
         Cmd::CreateNode { path, label } => {
             let mut store = LocalStore::open(&path)?;
-            let id = store.create_node(&label)?;
-            println!("{id}");
+            println!("{}", store.create_node(&label)?);
+        }
+        Cmd::DeleteNode { path, node } => {
+            let mut store = LocalStore::open(&path)?;
+            println!("ok op {}", store.delete_node(&node)?);
         }
         Cmd::Set {
             path,
@@ -159,24 +230,75 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             value,
         } => {
             let mut store = LocalStore::open(&path)?;
-            let op = store.set_lww(&node, &key, &value)?;
-            println!("ok op {op}");
+            println!("ok op {}", store.set_lww(&node, &key, &value)?);
         }
         Cmd::Get { path, node, key } => {
             let store = LocalStore::open(&path)?;
-            match store.get_lww(&node, &key)? {
-                Some(v) => println!("{v}"),
+            match store.get_prop(&node, &key)? {
+                Some(serde_json::Value::String(s)) => println!("{s}"),
+                Some(v) => println!("{}", serde_json::to_string(&v)?),
                 None => {
                     eprintln!("(null)");
                     std::process::exit(2);
                 }
             }
         }
+        Cmd::Inc {
+            path,
+            node,
+            key,
+            n,
+            kind,
+        } => {
+            let mut store = LocalStore::open(&path)?;
+            let op = if kind == "g" {
+                store.gcounter_inc(&node, &key, n)?
+            } else {
+                store.counter_inc(&node, &key, n)?
+            };
+            println!("ok op {op}");
+        }
+        Cmd::Dec { path, node, key, n } => {
+            let mut store = LocalStore::open(&path)?;
+            println!("ok op {}", store.counter_dec(&node, &key, n)?);
+        }
+        Cmd::SetAdd {
+            path,
+            node,
+            key,
+            value,
+        } => {
+            let mut store = LocalStore::open(&path)?;
+            println!("ok op {}", store.set_add(&node, &key, &value)?);
+        }
+        Cmd::SetRemove {
+            path,
+            node,
+            key,
+            value,
+        } => {
+            let mut store = LocalStore::open(&path)?;
+            println!("ok op {}", store.set_remove(&node, &key, &value)?);
+        }
+        Cmd::FlagOn { path, node, key } => {
+            let mut store = LocalStore::open(&path)?;
+            println!("ok op {}", store.flag_enable(&node, &key)?);
+        }
+        Cmd::FlagOff { path, node, key } => {
+            let mut store = LocalStore::open(&path)?;
+            println!("ok op {}", store.flag_disable(&node, &key)?);
+        }
         Cmd::Nodes { path } => {
             let store = LocalStore::open(&path)?;
-            for (id, label) in store.list_nodes()? {
-                println!("{id}\t{label}");
+            for (id, label, deleted) in store.list_nodes()? {
+                let flag = if deleted { "deleted" } else { "live" };
+                println!("{id}\t{label}\t{flag}");
             }
+        }
+        Cmd::Replay { path } => {
+            let mut store = LocalStore::open(&path)?;
+            store.replay_all()?;
+            println!("replayed {} ops", store.op_count()?);
         }
         Cmd::Export { path, out } => {
             let store = LocalStore::open(&path)?;
@@ -192,16 +314,55 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("imported accepted={a} skipped={s}");
         }
         Cmd::Sync { path, peer } => {
-            // Two-way merge via in-memory export (no temp file required).
             let mut a = LocalStore::open(&path)?;
             let mut b = LocalStore::open(&peer)?;
+            let mut ba = 0;
+            let mut bs = 0;
+            let mut aa = 0;
+            let mut as_ = 0;
+
+            if a.datastore_id_hex() != b.datastore_id_hex() {
+                match (a.op_count()?, b.op_count()?) {
+                    (0, 0) => {
+                        return Err(
+                            "cannot choose a datastore when syncing two empty databases".into()
+                        );
+                    }
+                    (0, _) => {
+                        let from_b = b.export_all()?;
+                        let (accepted, skipped) = a.import_bundle(&from_b)?;
+                        aa += accepted;
+                        as_ += skipped;
+                    }
+                    (_, 0) => {
+                        let from_a = a.export_all()?;
+                        let (accepted, skipped) = b.import_bundle(&from_a)?;
+                        ba += accepted;
+                        bs += skipped;
+                    }
+                    _ => {
+                        return Err(format!(
+                            "datastore mismatch: local {} peer {}",
+                            a.datastore_id_hex(),
+                            b.datastore_id_hex()
+                        )
+                        .into());
+                    }
+                }
+            }
+
+            // Export only after any empty-peer adoption so neither side sees a
+            // stale pre-adoption datastore ID.
             let from_a = a.export_all()?;
             let from_b = b.export_all()?;
-            let (ba, bs) = b.import_bundle(&from_a)?;
-            let (aa, as_) = a.import_bundle(&from_b)?;
+            let (accepted, skipped) = b.import_bundle(&from_a)?;
+            ba += accepted;
+            bs += skipped;
+            let (accepted, skipped) = a.import_bundle(&from_b)?;
+            aa += accepted;
+            as_ += skipped;
             println!(
-                "sync done: {} <- peer accepted={ba} skipped={bs}; peer <- {} accepted={aa} skipped={as_}",
-                path.display(),
+                "sync done: {} <- peer accepted={aa} skipped={as_}; peer <- local accepted={ba} skipped={bs}",
                 path.display()
             );
             println!(
@@ -232,33 +393,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let mut stream = TcpStream::connect(&from)?;
             stream.set_read_timeout(Some(Duration::from_secs(30)))?;
             stream.set_write_timeout(Some(Duration::from_secs(30)))?;
-
             let local_ids = store
                 .list_op_ids()?
                 .into_iter()
                 .map(hex::encode)
                 .collect::<Vec<_>>();
-            let hello = Hello {
-                v: 1,
-                datastore_id: store.datastore_id_hex(),
-                peer: store.author_hex(),
-                op_ids: local_ids,
-            };
-            write_msg(&mut stream, &hello)?;
+            write_msg(
+                &mut stream,
+                &Hello {
+                    v: 1,
+                    datastore_id: store.datastore_id_hex(),
+                    peer: store.author_hex(),
+                    op_ids: local_ids,
+                },
+            )?;
             let hello_ok: HelloOk = read_msg(&mut stream)?;
             if hello_ok.v != 1 {
-                return Err("protocol version".into());
+                return Err(format!("bad hello version {}", hello_ok.v).into());
             }
-            // If empty local, adopt remote ds via first ops batch
-            let need: Vec<[u8; 32]> = hello_ok
-                .need
-                .iter()
-                .filter_map(|h| hex::decode(h).ok()?.try_into().ok())
-                .collect();
-            // Request is implicit: server sends ops we need based on inverse...
-            // Protocol: client sends its ids; server replies with ops client is missing
-            // (server computes client_missing = server - client). Client's `need` field
-            // is unused in this direction; server ignores need from client HelloOk.
             let ops_msg: OpsMsg = read_msg(&mut stream)?;
             let bundle = ExportBundle {
                 format: 1,
@@ -270,7 +422,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "pull from {from}: accepted={a} skipped={s}; local ops={}",
                 store.op_count()?
             );
-            let _ = need;
         }
     }
     Ok(())
@@ -290,9 +441,7 @@ fn handle_peer(path: &Path, mut stream: TcpStream) -> Result<(), Box<dyn std::er
         .iter()
         .filter_map(|h| hex::decode(h).ok()?.try_into().ok())
         .collect();
-    // Ops remote is missing
     let missing: Vec<[u8; 32]> = local.difference(&remote).copied().collect();
-    // Ops we might want from them (not sent in this one-way pull protocol)
     let need: Vec<String> = remote.difference(&local).map(hex::encode).collect();
     write_msg(
         &mut stream,
