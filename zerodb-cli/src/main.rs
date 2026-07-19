@@ -157,6 +157,9 @@ enum Cmd {
         path: PathBuf,
         #[arg(long, default_value = "127.0.0.1:7700")]
         listen: String,
+        /// Allow binding to a non-loopback address (plaintext, unauthenticated).
+        #[arg(long, default_value_t = false)]
+        allow_insecure_lan: bool,
     },
     Pull {
         #[arg(long, default_value = "./zerodb.sqlite")]
@@ -373,7 +376,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 b.op_count()?
             );
         }
-        Cmd::Serve { path, listen } => {
+        Cmd::Serve {
+            path,
+            listen,
+            allow_insecure_lan,
+        } => {
+            assert_serve_bind_allowed(&listen, allow_insecure_lan)?;
             let store = LocalStore::open(&path)?;
             let listener = TcpListener::bind(&listen)?;
             println!(
@@ -423,6 +431,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 store.op_count()?
             );
         }
+    }
+    Ok(())
+}
+
+fn assert_serve_bind_allowed(
+    listen: &str,
+    allow_insecure_lan: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if allow_insecure_lan {
+        return Ok(());
+    }
+    let host = listen
+        .rsplit_once(':')
+        .map(|(h, _)| h.trim_matches(|c| c == '[' || c == ']'))
+        .unwrap_or(listen);
+    let loopback = matches!(host, "127.0.0.1" | "localhost" | "::1" | "0:0:0:0:0:0:0:1");
+    if !loopback {
+        return Err(format!(
+            "serve refuses non-loopback bind {listen:?} without --allow-insecure-lan \
+             (plaintext, unauthenticated; use loopback or pass the flag for disposable LAN tests only)"
+        )
+        .into());
     }
     Ok(())
 }

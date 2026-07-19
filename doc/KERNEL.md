@@ -17,7 +17,7 @@ Five independent version namespaces exist. They MUST never be conflated:
 | `operation_format_version` | this document | Signed and hashed into **every operation preimage**. Persistent forever. Incrementing it is a new format generation with its own vectors. |
 | `schema_epoch` | SCHEMA.md §3 (M0b ✓) | Per-datastore causally ordered sequence bound into every **data** operation. Not a global constant. |
 | `snapshot_format_version` | SPEC §7 (M0f) | Snapshot/checkpoint artifacts only. |
-| `storage_format_version` | zerodb-storage (M1) | Local on-disk layout only. MUST NOT appear on the wire or in any preimage. |
+| `storage_format_version` | zerodb-storage (M1) | Local on-disk layout only. MUST NOT appear on the wire or in any preimage. Experimental layout notes: [M1-LOCAL.md](M1-LOCAL.md). |
 | `relay_protocol_version` | RELAY-SPEC | Connection negotiation (HELLO/WELCOME) only. MUST NOT enter any operation preimage or persistent artifact. |
 
 The current values and statuses are in the registry. `operation_format_version = 1` names *this draft*; it is not frozen.

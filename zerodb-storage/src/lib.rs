@@ -25,6 +25,8 @@ const KIND_CREATE_NODE: u64 = 1;
 const KIND_SET_PROPERTY: u64 = 3;
 const KIND_TOMBSTONE: u64 = 4;
 const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
+/// Experimental local SQLite layout version (KERNEL `storage_format_version`).
+const STORAGE_FORMAT_VERSION: u64 = 1;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -123,8 +125,8 @@ impl LocalStore {
             .ok_or_else(|| StoreError::Invalid("missing ds".into()))?
             .try_into()
             .map_err(|_| StoreError::Invalid("ds length".into()))?;
-        let hlc_p = meta_get_u64(&conn, "hlc_p")?.unwrap_or(0);
-        let hlc_l = meta_get_u64(&conn, "hlc_l")?.unwrap_or(0) as u16;
+        ensure_storage_format_version(&conn)?;
+        let (hlc_p, hlc_l) = recover_hlc_from_oplog(&conn)?;
         Ok(Self {
             conn,
             signing,
@@ -159,6 +161,7 @@ impl LocalStore {
         meta_set(&conn, "salt", &salt)?;
         meta_set_u64(&conn, "hlc_p", 0)?;
         meta_set_u64(&conn, "hlc_l", 0)?;
+        meta_set_u64(&conn, "storage_format_version", STORAGE_FORMAT_VERSION)?;
         drop(conn);
         Self::open(path)
     }
@@ -552,12 +555,29 @@ impl LocalStore {
         tx.execute("DELETE FROM props", [])?;
         tx.execute("DELETE FROM nodes", [])?;
         let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut max_p: u64 = 0;
+        let mut max_l: u16 = 0;
         {
-            let mut stmt =
-                tx.prepare("SELECT kind, body_json FROM ops ORDER BY physical_ms, logical, id")?;
-            let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+            let mut stmt = tx.prepare(
+                "SELECT kind, body_json, physical_ms, logical FROM ops
+                 ORDER BY physical_ms, logical, id",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })?;
             for row in rows {
-                let (kind, body_s) = row?;
+                let (kind, body_s, physical_ms, logical) = row?;
+                let p = physical_ms as u64;
+                let l = logical as u16;
+                if (p, l) > (max_p, max_l) {
+                    max_p = p;
+                    max_l = l;
+                }
                 let body: serde_json::Value = serde_json::from_str(&body_s)
                     .map_err(|e| StoreError::Invalid(e.to_string()))?;
                 match kind as u64 {
@@ -590,7 +610,11 @@ impl LocalStore {
         for (n, p) in pairs {
             rematerialize_prop(&tx, &n, &p)?;
         }
+        meta_set_u64(&tx, "hlc_p", max_p)?;
+        meta_set_u64(&tx, "hlc_l", max_l as u64)?;
         tx.commit()?;
+        self.hlc_p = max_p;
+        self.hlc_l = max_l;
         Ok(())
     }
 
@@ -1389,13 +1413,40 @@ fn decode_node(s: &str) -> Result<Vec<u8>, StoreError> {
 }
 
 fn getrandom_fill(buf: &mut [u8]) {
-    let u = Uuid::new_v4();
-    let b = u.as_bytes();
-    for (i, slot) in buf.iter_mut().enumerate() {
-        *slot = b[i % 16] ^ ((i as u8).wrapping_mul(31));
+    getrandom::getrandom(buf).expect("OS CSPRNG unavailable for key material");
+}
+
+/// Durable HLC high-water = max over oplog timestamps; rewrite meta if stale (DQ-7).
+fn recover_hlc_from_oplog(conn: &Connection) -> Result<(u64, u16), StoreError> {
+    let max: Option<(u64, u16)> = conn
+        .query_row(
+            "SELECT physical_ms, logical FROM ops
+             ORDER BY physical_ms DESC, logical DESC LIMIT 1",
+            [],
+            |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u16)),
+        )
+        .optional()?;
+    let (max_p, max_l) = max.unwrap_or((0, 0));
+    let meta_p = meta_get_u64(conn, "hlc_p")?.unwrap_or(0);
+    let meta_l = meta_get_u64(conn, "hlc_l")?.unwrap_or(0) as u16;
+    let (p, l) = if (max_p, max_l) > (meta_p, meta_l) {
+        (max_p, max_l)
+    } else {
+        (meta_p, meta_l)
+    };
+    if (p, l) != (meta_p, meta_l) {
+        meta_set_u64(conn, "hlc_p", p)?;
+        meta_set_u64(conn, "hlc_l", l as u64)?;
     }
-    let x = now_ms().to_le_bytes();
-    for (i, slot) in buf.iter_mut().enumerate() {
-        *slot ^= x[i % 8];
+    Ok((p, l))
+}
+
+fn ensure_storage_format_version(conn: &Connection) -> Result<(), StoreError> {
+    match meta_get_u64(conn, "storage_format_version")? {
+        Some(v) if v == STORAGE_FORMAT_VERSION => Ok(()),
+        Some(v) => Err(StoreError::Invalid(format!(
+            "unsupported storage_format_version {v} (expected {STORAGE_FORMAT_VERSION})"
+        ))),
+        None => meta_set_u64(conn, "storage_format_version", STORAGE_FORMAT_VERSION),
     }
 }

@@ -14,12 +14,12 @@ powershell -NoProfile -File scripts/test-mvp.ps1
 cargo build --locked --release -p zerodb-cli
 ```
 
-Record the commit and create a self-contained bundle so both machines build the same source:
+Record the commit SHA and create a self-contained bundle so both machines build the **same** commit (do not pin a branch name):
 
 ```powershell
-git rev-parse HEAD
-git bundle create target/zero-m1-lan.bundle m1-lan-dataflow-hardening
-scp target/zero-m1-lan.bundle <pi-user>@<pi-ip>:/tmp/
+$Sha = git rev-parse HEAD
+git bundle create target/zero-m1-lan-$Sha.bundle $Sha
+scp target/zero-m1-lan-$Sha.bundle <pi-user>@<pi-ip>:/tmp/
 ```
 
 On the Pi, build the native `aarch64` executable from that bundle:
@@ -30,11 +30,12 @@ rustup show active-toolchain
 rustc --version
 sudo apt-get update
 sudo apt-get install -y build-essential pkg-config jq
+# set BUNDLE and EXPECT_SHA to the values recorded on Windows
 CANDIDATE=$(mktemp -d /tmp/zero-m1-lan-candidate.XXXXXX)
-git clone /tmp/zero-m1-lan.bundle "$CANDIDATE"
+git clone "$BUNDLE" "$CANDIDATE"
 cd "$CANDIDATE"
-git checkout m1-lan-dataflow-hardening
-git rev-parse HEAD
+git checkout "$EXPECT_SHA"
+test "$(git rev-parse HEAD)" = "$EXPECT_SHA"
 cargo test --workspace
 cargo build --locked --release -p zerodb-cli
 ```
@@ -85,7 +86,7 @@ $Node = (& $Zero create-node --path $A --label Todo).Trim()
 & $Zero inc --path $A --node $Node --key views --n 2 --kind g
 & $Zero set-add --path $A --node $Node --key tags --value base
 & $Zero flag-on --path $A --node $Node --key done
-& $Zero serve --path $A --listen 192.168.1.12:7700
+& $Zero serve --path $A --listen 192.168.1.12:7700 --allow-insecure-lan
 ```
 
 Leave the Windows server running. On the Pi, initialize an empty database and bootstrap it only through TCP:
@@ -123,7 +124,7 @@ $ZERO dec --path "$B" --node "$NODE" --key score --n 2
 $ZERO inc --path "$B" --node "$NODE" --key views --n 4 --kind g
 $ZERO set-add --path "$B" --node "$NODE" --key tags --value local-b
 $ZERO flag-off --path "$B" --node "$NODE" --key done
-$ZERO serve --path "$B" --listen 192.168.1.70:7700
+$ZERO serve --path "$B" --listen 192.168.1.70:7700 --allow-insecure-lan
 ```
 
 While the Pi serves, pull its five operations on Windows:
@@ -135,7 +136,7 @@ While the Pi serves, pull its five operations on Windows:
 Stop the Pi server. Serve Windows again, then pull on the Pi:
 
 ```powershell
-& $Zero serve --path $A --listen 192.168.1.12:7700
+& $Zero serve --path $A --listen 192.168.1.12:7700 --allow-insecure-lan
 ```
 
 ```bash
@@ -159,7 +160,7 @@ Exchange operations once in each direction again. Both peers must reach 18 opera
 First serve the Pi again and pull on Windows:
 
 ```bash
-$ZERO serve --path "$B" --listen 192.168.1.70:7700
+$ZERO serve --path "$B" --listen 192.168.1.70:7700 --allow-insecure-lan
 ```
 
 ```powershell
@@ -169,7 +170,7 @@ $ZERO serve --path "$B" --listen 192.168.1.70:7700
 Stop the Pi server. Then serve Windows and pull on the Pi:
 
 ```powershell
-& $Zero serve --path $A --listen 192.168.1.12:7700
+& $Zero serve --path $A --listen 192.168.1.12:7700 --allow-insecure-lan
 ```
 
 ```bash
@@ -216,7 +217,7 @@ $ZERO inspect --path "$FOREIGN" | jq -S 'del(.path, .peer)' > "$DATA_DIR/foreign
 Serve A once more on Windows, then attempt the foreign pull on the Pi:
 
 ```powershell
-& $Zero serve --path $A --listen 192.168.1.12:7700
+& $Zero serve --path $A --listen 192.168.1.12:7700 --allow-insecure-lan
 ```
 
 ```bash

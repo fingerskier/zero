@@ -144,4 +144,4 @@ Deterministic semantics:
 | `migration-transform` | each registry transform: input state → output state, incl. degenerate inputs | I-17 |
 | `query-eval` | grammar accept/reject cases; evaluation over a fixture graph incl. null, cross-type, MVRegister, ORDER BY determinism | — (read-side determinism) |
 
-Same lifecycle as every family: red in `xfail/`, promoted on both-runners-green. M0b exit closed 2026-07-18 with all five families promoted (57 required vectors; Decision Log + `plan/LEDGER.md` audit record).
+Same lifecycle as every family: red in `xfail/`, promoted on both-runners-green. M0b exit closed 2026-07-18 with all five families promoted (57 required vectors; Decision Log).

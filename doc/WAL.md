@@ -142,8 +142,8 @@ Lifecycle: red in `xfail/`, promote on both-runners-green. First twelve vectors 
 
 - Delivery cursors, anti-replay compaction, L2 durable ack (M0e.2 / H4 / H11).
 - Version negotiation policy (M0e.3 / H7).
-- SQLite mapping and crash injection (M1 layer 2).
+- SQLite mapping and crash injection (M1 layer 2). The experimental single-op SQLite path is described in [M1-LOCAL.md](M1-LOCAL.md); it does **not** close this layer until named crash points and groups are mapped.
 
 ---
 
-*Draft change policy: until composite M0, ordinary review; after freeze, byte-affecting changes re-run the resolution checklist.*
+*Draft change policy: draft-1 profile — byte-affecting changes re-run the resolution checklist until an explicit freeze Decision Log entry.*

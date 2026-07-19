@@ -114,7 +114,7 @@ A full two-way **transcript** fixture records the ordered message list for unequ
 | `merkle-root` | op set description → root hex; permutation-invariant; empty set; single op; multi-bucket | I-11 |
 | `merkle-transcript` | two peer op sets → message transcript → converged roots | I-11 |
 
-Lifecycle: red in `xfail/`, promote on both-runners-green. Root family MERKLE-001..004 and transcript family MERKLE-T-001..004 promoted 2026-07-18; M0c exit closed with them (Decision Log + `plan/LEDGER.md`).
+Lifecycle: red in `xfail/`, promote on both-runners-green. Root family MERKLE-001..004 and transcript family MERKLE-T-001..004 promoted 2026-07-18; M0c exit closed with them (Decision Log).
 
 ---
 

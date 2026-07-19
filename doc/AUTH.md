@@ -239,7 +239,7 @@ One bounded, application-visible quarantine is shared by:
 | `authz-predicate` | op sets + grants/revokes → accept / named reject; concurrent revoke; founder synthetic grant | I-8, I-9 |
 | `admission-token` | token preimage + relay-side checks (positive + forged/wrong-ds/revoked) | C4 admission |
 
-Lifecycle: red in `xfail/`, promote on both-runners-green. All four families promoted; M0d exit closed 2026-07-18 (Decision Log + `plan/LEDGER.md` audit record).
+Lifecycle: red in `xfail/`, promote on both-runners-green. All four families promoted; M0d exit closed 2026-07-18 (Decision Log).
 
 ---
 

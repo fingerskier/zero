@@ -22,10 +22,11 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [Relay Protocol Specification](doc/RELAY-SPEC.md) | Draft wire protocol for relay servers (not yet implementation-ready — see ISSUES) |
 | [Issues & Decisions](doc/ISSUES.md) | Tracked specification issues (C/H/O IDs), M0 package map, and the decision log |
 | [Exemplar](doc/EXEMPLAR.md) | Distributed ToDo app used as the end-to-end acceptance target |
-| [Execution Plan](plan/PLAN.md) | Path-to-MVP delivery status: blocker rollup, M0 package status, decision queue (live tracking in [LEDGER.md](plan/LEDGER.md)) |
-| [Delivery Ledger](plan/LEDGER.md) | Canonical work tracker — per-item status, dependencies, exit evidence, resolved-issue audit trail |
-| [Findings (Codex)](plan/FINDINGS.CODEX.md) | Historical review that drove the P0/M0 corrections, now executed (2026-07-16) |
-| [Findings (Grok)](plan/FINDINGS.GROK.md) | Historical review that motivated the M0 package-split (2026-07-15) |
+| [M1 local store](doc/M1-LOCAL.md) | Experimental M1 SQLite store + peer exchange (not exit / not freeze) |
+| [M1 LAN test](doc/M1-LAN-TEST.md) | Windows ↔ Pi trusted-LAN runbook for experimental TCP path |
+| [Execution Plan](plan/PLAN.md) | Live path-to-MVP delivery plan |
+| [Delivery Ledger](plan/LEDGER.md) | Live work tracker — M1 subtasks, post-M1 milestones |
+| [Open findings](plan/FINDINGS.GROK.md) | Open review backlog (maps to LEDGER rows) |
 
 ## v0.1 scope
 
@@ -66,12 +67,12 @@ NODE=$(./target/debug/zerodb create-node --path ./a.sqlite --label Todo)
 ./target/debug/zerodb sync --path ./a.sqlite --peer ./b.sqlite
 
 # Multi-machine (or second process): bind only the serving host's private LAN IP
-./target/debug/zerodb serve --path ./a.sqlite --listen 192.168.1.12:7700
+./target/debug/zerodb serve --path ./a.sqlite --listen 192.168.1.12:7700 --allow-insecure-lan
 # on other process/host:
 ./target/debug/zerodb pull --path ./b.sqlite --from 192.168.1.12:7700
 ```
 
-`pull` is one-way; reverse the serving and pulling hosts to exchange writes in both directions. The M1 TCP transport is plaintext and has no peer authentication, so use it only with disposable test data on a trusted private LAN. Do not bind it to a wildcard or public interface. See the [Windows ↔ Raspberry Pi test runbook](doc/M1-LAN-TEST.md) for the complete two-machine acceptance procedure.
+`pull` is one-way; reverse the serving and pulling hosts to exchange writes in both directions. The M1 TCP transport is plaintext and has no peer authentication, so use it only with disposable test data on a trusted private LAN. Non-loopback binds require `--allow-insecure-lan`. Do not bind it to a wildcard or public interface. See the [Windows ↔ Raspberry Pi test runbook](doc/M1-LAN-TEST.md) for the complete two-machine acceptance procedure.
 
 Smoke test: `powershell -File scripts/test-mvp.ps1`  
 Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an **experimental M1 path** toward `v0.1.0-local`, not a format freeze.
