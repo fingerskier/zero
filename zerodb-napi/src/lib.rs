@@ -2,10 +2,12 @@
 //!
 //! Not a format freeze. API mirrors the M1 local slice for open/mutate/inspect.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
 use napi::bindgen_prelude::*;
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use zerodb_storage::LocalStore;
 
@@ -13,13 +15,36 @@ fn map_err(e: impl ToString) -> Error {
     Error::from_reason(e.to_string())
 }
 
+type Subscriber =
+    ThreadsafeFunction<serde_json::Value, (), serde_json::Value, Status, false, true>;
+
 /// SQLite-backed ZeroDB handle for Node (M2 vertical).
 #[napi]
 pub struct Database {
     inner: Mutex<Option<LocalStore>>,
+    subs: Mutex<HashMap<u32, Subscriber>>,
+    next_sub: Mutex<u32>,
 }
 
 impl Database {
+    fn emit(&self, event: serde_json::Value) {
+        if let Ok(subs) = self.subs.lock() {
+            for tsfn in subs.values() {
+                tsfn.call(event.clone(), ThreadsafeFunctionCallMode::NonBlocking);
+            }
+        }
+    }
+
+    fn emit_op(&self, method: &str, node: &str, key: Option<&str>, op_id: Option<&str>) {
+        self.emit(serde_json::json!({
+            "kind": "op",
+            "method": method,
+            "node": node,
+            "key": key,
+            "opId": op_id,
+        }));
+    }
+
     fn with_store<R>(&self, f: impl FnOnce(&LocalStore) -> Result<R>) -> Result<R> {
         let guard = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
         let store = guard
@@ -45,6 +70,8 @@ impl Database {
         let store = LocalStore::init(Path::new(&path)).map_err(map_err)?;
         Ok(Self {
             inner: Mutex::new(Some(store)),
+            subs: Mutex::new(HashMap::new()),
+            next_sub: Mutex::new(0),
         })
     }
 
@@ -54,6 +81,8 @@ impl Database {
         let store = LocalStore::open(Path::new(&path)).map_err(map_err)?;
         Ok(Self {
             inner: Mutex::new(Some(store)),
+            subs: Mutex::new(HashMap::new()),
+            next_sub: Mutex::new(0),
         })
     }
 
@@ -62,6 +91,41 @@ impl Database {
     pub fn close(&self) -> Result<()> {
         let mut guard = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
         *guard = None;
+        if let Ok(mut subs) = self.subs.lock() {
+            subs.clear();
+        }
+        Ok(())
+    }
+
+    /// Register a change callback. Returns a subscription id for `unsubscribe`.
+    ///
+    /// Events (JSON): `{kind:'op', method, node, key?, opId}` for local
+    /// mutations, `{kind:'import', accepted, skipped}`, `{kind:'replay'}`.
+    /// Delivery is asynchronous (next event-loop tick). Experimental surface;
+    /// wire/event shapes are versioned-experimental and may change pre-freeze.
+    #[napi]
+    pub fn subscribe(&self, callback: Function<serde_json::Value, ()>) -> Result<u32> {
+        let tsfn = callback
+            .build_threadsafe_function()
+            .weak::<true>()
+            .build_callback(|ctx| Ok(ctx.value))?;
+        let mut next = self.next_sub.lock().map_err(|e| map_err(e.to_string()))?;
+        let id = *next;
+        *next += 1;
+        self.subs
+            .lock()
+            .map_err(|e| map_err(e.to_string()))?
+            .insert(id, tsfn);
+        Ok(id)
+    }
+
+    /// Remove a subscription; unknown ids are a no-op.
+    #[napi]
+    pub fn unsubscribe(&self, id: u32) -> Result<()> {
+        self.subs
+            .lock()
+            .map_err(|e| map_err(e.to_string()))?
+            .remove(&id);
         Ok(())
     }
 
@@ -82,17 +146,24 @@ impl Database {
 
     #[napi]
     pub fn create_node(&self, label: String) -> Result<String> {
-        self.with_store_mut(|store| store.create_node(&label).map_err(map_err))
+        let id = self.with_store_mut(|store| store.create_node(&label).map_err(map_err))?;
+        // create_node returns the node id; the op id is not surfaced.
+        self.emit_op("createNode", &id, None, None);
+        Ok(id)
     }
 
     #[napi]
     pub fn delete_node(&self, node: String) -> Result<String> {
-        self.with_store_mut(|store| store.delete_node(&node).map_err(map_err))
+        let op = self.with_store_mut(|store| store.delete_node(&node).map_err(map_err))?;
+        self.emit_op("deleteNode", &node, None, Some(&op));
+        Ok(op)
     }
 
     #[napi]
     pub fn set_lww(&self, node: String, key: String, value: String) -> Result<String> {
-        self.with_store_mut(|store| store.set_lww(&node, &key, &value).map_err(map_err))
+        let op = self.with_store_mut(|store| store.set_lww(&node, &key, &value).map_err(map_err))?;
+        self.emit_op("setLww", &node, Some(&key), Some(&op));
+        Ok(op)
     }
 
     #[napi]
@@ -113,37 +184,56 @@ impl Database {
 
     #[napi]
     pub fn gcounter_inc(&self, node: String, key: String, n: u32) -> Result<String> {
-        self.with_store_mut(|store| store.gcounter_inc(&node, &key, n as u64).map_err(map_err))
+        let op = self
+            .with_store_mut(|store| store.gcounter_inc(&node, &key, n as u64).map_err(map_err))?;
+        self.emit_op("gcounterInc", &node, Some(&key), Some(&op));
+        Ok(op)
     }
 
     #[napi]
     pub fn counter_inc(&self, node: String, key: String, n: u32) -> Result<String> {
-        self.with_store_mut(|store| store.counter_inc(&node, &key, n as u64).map_err(map_err))
+        let op = self
+            .with_store_mut(|store| store.counter_inc(&node, &key, n as u64).map_err(map_err))?;
+        self.emit_op("counterInc", &node, Some(&key), Some(&op));
+        Ok(op)
     }
 
     #[napi]
     pub fn counter_dec(&self, node: String, key: String, n: u32) -> Result<String> {
-        self.with_store_mut(|store| store.counter_dec(&node, &key, n as u64).map_err(map_err))
+        let op = self
+            .with_store_mut(|store| store.counter_dec(&node, &key, n as u64).map_err(map_err))?;
+        self.emit_op("counterDec", &node, Some(&key), Some(&op));
+        Ok(op)
     }
 
     #[napi]
     pub fn set_add(&self, node: String, key: String, value: String) -> Result<String> {
-        self.with_store_mut(|store| store.set_add(&node, &key, &value).map_err(map_err))
+        let op =
+            self.with_store_mut(|store| store.set_add(&node, &key, &value).map_err(map_err))?;
+        self.emit_op("setAdd", &node, Some(&key), Some(&op));
+        Ok(op)
     }
 
     #[napi]
     pub fn set_remove(&self, node: String, key: String, value: String) -> Result<String> {
-        self.with_store_mut(|store| store.set_remove(&node, &key, &value).map_err(map_err))
+        let op =
+            self.with_store_mut(|store| store.set_remove(&node, &key, &value).map_err(map_err))?;
+        self.emit_op("setRemove", &node, Some(&key), Some(&op));
+        Ok(op)
     }
 
     #[napi]
     pub fn flag_enable(&self, node: String, key: String) -> Result<String> {
-        self.with_store_mut(|store| store.flag_enable(&node, &key).map_err(map_err))
+        let op = self.with_store_mut(|store| store.flag_enable(&node, &key).map_err(map_err))?;
+        self.emit_op("flagEnable", &node, Some(&key), Some(&op));
+        Ok(op)
     }
 
     #[napi]
     pub fn flag_disable(&self, node: String, key: String) -> Result<String> {
-        self.with_store_mut(|store| store.flag_disable(&node, &key).map_err(map_err))
+        let op = self.with_store_mut(|store| store.flag_disable(&node, &key).map_err(map_err))?;
+        self.emit_op("flagDisable", &node, Some(&key), Some(&op));
+        Ok(op)
     }
 
     /// List nodes as JSON array of `{ id, label, deleted }`.
@@ -172,7 +262,9 @@ impl Database {
 
     #[napi]
     pub fn replay(&self) -> Result<()> {
-        self.with_store_mut(|store| store.replay_all().map_err(map_err))
+        self.with_store_mut(|store| store.replay_all().map_err(map_err))?;
+        self.emit(serde_json::json!({ "kind": "replay" }));
+        Ok(())
     }
 
     /// Export all ops as a JSON bundle string (format 1).
@@ -193,5 +285,6 @@ impl Database {
             let (accepted, skipped) = store.import_bundle(&bundle).map_err(map_err)?;
             Ok(serde_json::json!({ "accepted": accepted, "skipped": skipped }))
         })
+        .inspect(|result| self.emit(serde_json::json!({ "kind": "import", "accepted": result["accepted"], "skipped": result["skipped"] })))
     }
 }

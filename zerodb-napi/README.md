@@ -36,10 +36,24 @@ db.close() // required before deleting the file on Windows
 | `gcounterInc`, `counterInc`/`Dec`, `setAdd`/`Remove`, `flagEnable`/`Disable` | M1 CRDT helpers |
 | `listNodes`, `inspect`, `replay` | introspection |
 | `exportJson` / `importJson` | format-1 op bundles |
+| `subscribe` / `unsubscribe` | live change callbacks; async delivery (next tick) |
+
+### Subscribe events
+
+```js
+const sub = db.subscribe((e) => console.log(e))
+// {kind:'op', method:'setLww', node, key, opId}   local mutations
+// {kind:'import', accepted, skipped}              importJson
+// {kind:'replay'}                                 replay
+db.unsubscribe(sub)
+```
+
+**Versioned-experimental:** the JSON `WireOp` bundle format, the SQLite layout,
+and these event shapes are pre-freeze and may change without notice until a
+Decision Log format freeze. Do not persist bundles across SDK versions.
 
 ## Not yet (SPEC M2 exit)
 
-- `subscribe` / live notifications  
 - O3 query + schema apply / TS→IR  
 - MVRegister, RGA, LWWMap  
 - Binding parity vector suite / E11 budgets  

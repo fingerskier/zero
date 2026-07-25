@@ -18,7 +18,7 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "test": "node --test test/m2-basic.test.mjs"
+    "test": "node --test test/"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.7.3"
