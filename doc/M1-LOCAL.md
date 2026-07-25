@@ -14,10 +14,10 @@ This document exists so plan/ review notes do not have to restate settled implem
 |----------------------------|----------------------------------------|
 | SQLite oplog + materialized nodes/props | WAL layer-2 crash injection / groups (E4, [WAL.md](WAL.md)) |
 | Ed25519-signed ops; PeerId = BLAKE3(device pk) | AUTH membership / genesis control plane ([AUTH.md](AUTH.md) → M3b) |
-| CRDTs: LWW (string), GCounter, PNCounter, ORSet, Flag | MVRegister, RGA, edges, full H3 delete machine (E9) |
+| CRDTs: LWW (string), GCounter, PNCounter, ORSet, Flag; edges + H3 delete machine (E9) | MVRegister, RGA |
 | Export/import JSON bundles; file `sync`; TCP `serve`/`pull` (two-way session, protocol v2) | TLS; relay; Merkle wire |
 | Ingress validation before materialization | Schema apply / O3 query / TS→IR compiler |
-| Single-op atomic commit (append + materialize + HLC) | Multi-op group seal / named crash points |
+| Single-op atomic commit (append + materialize + HLC); multi-op `atomic_group`; named layer-2 crash points (E4, `tests/e4_crash_matrix.rs`) | WAL layer-1 truncate mapping (post-M1) |
 
 ---
 
@@ -67,10 +67,10 @@ These rules were accepted for the LAN dataflow slice and are enforced by tests u
 5. **Remote HLC:** receive rule with **60 s** max forward drift; overflow checked; failed ingress does not poison in-memory HLC.
 6. **Property-before-CreateNode:** remote SetProperty ops for unknown nodes are retained in the oplog and rematerialized as **shadow** property state; they MUST NOT invent a visible placeholder node. The CreateNode supplies the label regardless of arrival order, restart, or `replay`. Local mutation against an unknown node is rejected.
 7. **`replay`:** atomically wipe and rebuild `nodes`/`props`/`edges` from the oplog only (no orphan materialization).
-8. **CreateNode + Tombstone (set-derived):** node presence requires at least one CreateNode; `deleted` is true if **any** Tombstone for that node exists in the op set. Arrival order (including tombstone-before-create) MUST NOT change the normalized projection. Orphan tombstones leave no node row. Covered by `zerodb-storage/tests/r0_stabilize.rs`.
+8. **CreateNode + Tombstone (set-derived):** node presence requires at least one CreateNode; `deleted` is true if **any** Tombstone for that node exists in the op set. Arrival order (including tombstone-before-create) MUST NOT change the normalized projection. Orphan tombstones leave no node row. Covered by `zerodb-storage/tests/r0_stabilize.rs`. **Edges are set-derived the same way** (E9/H3): a kind-4 Tombstone with body `{ edge, tombstone: true }` deletes the edge order-independently; orphan edge tombstones leave no edge row until the CreateEdge arrives. Edge **visibility** stays derived on read: visible iff the edge is not tombstoned AND both endpoints exist and are not deleted — node delete emits **no cascade ops**, late edges to dead endpoints are hidden, and re-creation under a new id resurrects nothing. Properties of tombstoned/hidden entities remain in the oplog but are excluded from materialized visibility and query. Covered by `zerodb-storage/tests/e9_delete_machine.rs`.
 9. **Fail-closed `init`:** `LocalStore::init` refuses when `seed`/`ds` meta or any ops/nodes already exist — no silent re-key of identity while retaining old-ds ops. There is no automatic destructive reset in this slice.
 
-Open gaps (not closed by the above): CRDT type pin under concurrent mixed types, causal `deps` buffering, WAL named crash-injection matrix (partial: `atomic_group` exists), full H3 edge-tombstone/prop model, M0 contract amendments (R0.2).
+Open gaps (not closed by the above): CRDT type pin under concurrent mixed types, causal `deps` buffering, M0 contract amendments (R0.2). (Closed since: layer-2 named crash-injection matrix — `e4_crash_matrix`; H3 edge tombstone + derived visibility — `e9_delete_machine`.)
 
 ---
 
@@ -80,9 +80,10 @@ Open gaps (not closed by the above): CRDT type pin under concurrent mixed types,
 |------|---------|--------|
 | 1 | CreateNode | body: `node` (16 B hex), `label` |
 | 3 | SetProperty | body: `node`, `path`, `crdt`, payload fields |
-| 4 | Tombstone (node) | body: `node`, `tombstone: true` — hides props locally; **not** full H3/E9 |
+| 2 | CreateEdge | body: `edge`, `label`, `src`, `dst` (16 B hex ids) — set-derived with edge tombstones |
+| 4 | Tombstone (entity ref) | body: exactly one of `node` / `edge` (16 B hex), plus `tombstone: true`. Set-derived delete; node tombstone hides props and (derived) incident edges; edge tombstone deletes only the edge (H3/E9) |
 
-`grp` is always absent. Edges (kind 2) are not implemented.
+`grp` is present on `atomic_group` members (16 B hex GroupId), absent otherwise.
 
 Wire transport uses a JSON `WireOp` / `ExportBundle { format: 1, datastore_id, ops }` for file and TCP exchange. Signatures bind the KERNEL CBOR envelope derived from the JSON body — dual representation is experimental and may change.
 
@@ -112,8 +113,8 @@ Smoke: `powershell -File scripts/test-mvp.ps1`.
 |---------------|--------------------|-----------|
 | E1 restart/replay | done (`e1_e2_acceptance`, `e1_restart_replay`, `e1_kill_clock`) | — (kill-not-shutdown + 1h clock-rollback covered by `tests/e1_kill_clock.rs`) |
 | E2 model conflicts | kernel vectors + happy-path multi-peer smokes | store-level equal-ts / equivocation |
-| E4 groups/crash | `atomic_group` + atomic mid-batch rollback | fine-grained WAL named crash points (append/sync/apply) optional |
-| E9 delete | node tombstone set-derived + edge derived visibility | no cascade edge ops; late edges hidden; no edge tombstone props |
+| E4 groups/crash | done — `atomic_group` + named layer-2 crash matrix: 5 failpoints (`before-txn`, `after-op-insert`, `before-hlc-persist`, `after-hlc-persist`, `before-commit`) × 3 commit paths (`commit_local`, `atomic_group`, `import_bundle`) in `tests/e4_crash_matrix.rs`, mapped to WAL.md §3 points | — |
+| E9 delete | done — set-derived node **and edge** tombstones, derived visibility, no cascade ops, late-edge + permutation + replay identity + query exclusion in `tests/e9_delete_machine.rs` | edge properties (kind 3 on edges) remain out of this slice |
 | Schema/query CLI | `schema-apply`, `query`, edges | interactive repl optional; full CBOR SchemaEpoch later |
 | Format freeze | `storage_format_version=1` written | Decision Log freeze still required |
 

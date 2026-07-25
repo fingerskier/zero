@@ -89,7 +89,18 @@ pub trait BackendTxn {
     fn prop_list(&self, entity: &str) -> Result<Vec<(String, String)>, StoreError>;
 
     // edges
-    fn edge_upsert(&self, id: &str, label: &str, src: &str, dst: &str) -> Result<(), StoreError>;
+    /// Write the full derived edge projection (including its set-derived
+    /// `deleted` flag — any edge Tombstone in the op set deletes, order-free).
+    fn edge_upsert(
+        &self,
+        id: &str,
+        label: &str,
+        src: &str,
+        dst: &str,
+        deleted: bool,
+    ) -> Result<(), StoreError>;
+    /// Remove an edge row entirely (orphan tombstone: no CreateEdge in the op set).
+    fn edge_delete(&self, id: &str) -> Result<(), StoreError>;
     fn edge_list(&self) -> Result<Vec<EdgeRow>, StoreError>;
     /// Visible edges only (both endpoints live; edge not deleted), ordered by id.
     fn edge_list_visible(&self) -> Result<Vec<(String, String, String, String)>, StoreError>;

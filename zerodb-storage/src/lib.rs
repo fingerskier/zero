@@ -262,6 +262,13 @@ impl<B: StoreBackend> LocalStore<B> {
         self.clock = f;
     }
 
+    /// Test hook (E4 crash matrix): mutable backend access so tests can arm
+    /// named failpoints (`SqliteBackend::set_failpoint`).
+    #[doc(hidden)]
+    pub fn backend_mut(&mut self) -> &mut B {
+        &mut self.backend
+    }
+
     fn next_local_ts(&self) -> Result<OpTs, StoreError> {
         let wall = (self.clock)();
         let p = wall.max(self.hlc_p);
@@ -343,9 +350,26 @@ impl<B: StoreBackend> LocalStore<B> {
             "dst": dst_hex,
         });
         self.commit_local(KIND_CREATE_EDGE, body, body_json, |tx, _| {
-            tx.edge_upsert(&edge_hex, label, src_hex, dst_hex)
+            rematerialize_edge(tx, &edge_hex)
         })?;
         Ok(edge_hex)
+    }
+
+    /// Delete an edge with a set-derived edge Tombstone (kind 4, body
+    /// `{ edge, tombstone: true }` — KERNEL kind 4 takes a node *or* edge
+    /// entity ref; no new op kind). Any edge tombstone in the op set deletes
+    /// the edge, independent of arrival order; orphan edge tombstones (no
+    /// CreateEdge yet) leave no edge row until the create arrives.
+    pub fn delete_edge(&mut self, edge_hex: &str) -> Result<String, StoreError> {
+        let edge = decode_node(edge_hex)?;
+        let body = Cbor::Map(vec![
+            ("edge".into(), Cbor::Bytes(edge)),
+            ("tombstone".into(), Cbor::Bool(true)),
+        ]);
+        let body_json = serde_json::json!({ "edge": edge_hex, "tombstone": true });
+        self.commit_local(KIND_TOMBSTONE, body, body_json, |tx, _| {
+            rematerialize_edge(tx, edge_hex)
+        })
     }
 
     /// Visible edges only (both endpoints live and not deleted; edge not deleted).
@@ -767,6 +791,7 @@ impl<B: StoreBackend> LocalStore<B> {
             tx.wipe_materialized()?;
             let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
             let mut node_ids: BTreeSet<String> = BTreeSet::new();
+            let mut edge_ids: BTreeSet<String> = BTreeSet::new();
             for row in tx.op_scan()? {
                 if (row.physical_ms, row.logical) > (max_p, max_l) {
                     max_p = row.physical_ms;
@@ -779,13 +804,14 @@ impl<B: StoreBackend> LocalStore<B> {
                         if let Some(node) = body["node"].as_str() {
                             node_ids.insert(node.to_string());
                         }
+                        if let Some(edge) = body["edge"].as_str() {
+                            edge_ids.insert(edge.to_string());
+                        }
                     }
                     KIND_CREATE_EDGE => {
-                        let edge = body["edge"].as_str().unwrap_or("");
-                        let label = body["label"].as_str().unwrap_or("Edge");
-                        let src = body["src"].as_str().unwrap_or("");
-                        let dst = body["dst"].as_str().unwrap_or("");
-                        tx.edge_upsert(edge, label, src, dst)?;
+                        if let Some(edge) = body["edge"].as_str() {
+                            edge_ids.insert(edge.to_string());
+                        }
                     }
                     KIND_SET_PROPERTY => {
                         if let (Some(n), Some(p)) = (body["node"].as_str(), body["path"].as_str()) {
@@ -797,6 +823,9 @@ impl<B: StoreBackend> LocalStore<B> {
             }
             for node in node_ids {
                 rematerialize_node(tx, &node)?;
+            }
+            for edge in edge_ids {
+                rematerialize_edge(tx, &edge)?;
             }
             for (n, p) in pairs {
                 rematerialize_prop(tx, &n, &p)?;
@@ -1170,20 +1199,18 @@ fn apply_wire(
             let edge = wire.body["edge"]
                 .as_str()
                 .ok_or_else(|| StoreError::Invalid("body.edge".into()))?;
-            let label = wire.body["label"].as_str().unwrap_or("Edge");
-            let src = wire.body["src"]
-                .as_str()
-                .ok_or_else(|| StoreError::Invalid("body.src".into()))?;
-            let dst = wire.body["dst"]
-                .as_str()
-                .ok_or_else(|| StoreError::Invalid("body.dst".into()))?;
-            tx.edge_upsert(edge, label, src, dst)?;
+            rematerialize_edge(tx, edge)?;
         }
         KIND_TOMBSTONE => {
-            let node = wire.body["node"]
-                .as_str()
-                .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
-            rematerialize_node(tx, node)?;
+            // Entity ref: node xor edge (validated in validate_wire_body).
+            if let Some(edge) = wire.body["edge"].as_str() {
+                rematerialize_edge(tx, edge)?;
+            } else {
+                let node = wire.body["node"]
+                    .as_str()
+                    .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
+                rematerialize_node(tx, node)?;
+            }
         }
         KIND_SET_PROPERTY => {
             let node = wire.body["node"]
@@ -1365,11 +1392,22 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
             decode_node(edge)?;
         }
         KIND_TOMBSTONE => {
-            let node = object
-                .get("node")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
-            decode_node(node)?;
+            // Entity ref: exactly one of node / edge (KERNEL kind 4).
+            let node = object.get("node").and_then(serde_json::Value::as_str);
+            let edge = object.get("edge").and_then(serde_json::Value::as_str);
+            match (node, edge) {
+                (Some(node), None) => {
+                    decode_node(node)?;
+                }
+                (None, Some(edge)) => {
+                    decode_node(edge)?;
+                }
+                _ => {
+                    return Err(StoreError::Invalid(
+                        "tombstone body requires exactly one of node/edge".into(),
+                    ));
+                }
+            }
             if object
                 .get("tombstone")
                 .is_some_and(|value| value.as_bool() != Some(true))
@@ -1519,6 +1557,44 @@ fn rematerialize_node(tx: &dyn BackendTxn, node: &str) -> Result<(), StoreError>
     match label {
         None => tx.node_delete(node),
         Some(label) => tx.node_upsert(node, &label, tombstoned),
+    }
+}
+
+/// Rebuild a single edge projection from CreateEdge + edge Tombstone ops.
+///
+/// Set-derived like nodes (H3 / I-16): presence requires at least one
+/// CreateEdge; `deleted` is true if any edge Tombstone exists, independent of
+/// arrival order. Orphan edge tombstones leave no edge row. Visibility remains
+/// derived on read: visible iff not deleted AND both endpoints exist and are
+/// not deleted (no cascade ops on node delete).
+fn rematerialize_edge(tx: &dyn BackendTxn, edge: &str) -> Result<(), StoreError> {
+    let mut created: Option<(String, String, String)> = None;
+    let mut tombstoned = false;
+    for row in tx.op_scan()? {
+        if row.kind != KIND_CREATE_EDGE && row.kind != KIND_TOMBSTONE {
+            continue;
+        }
+        let body: serde_json::Value =
+            serde_json::from_str(&row.body_json).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        if body.get("edge").and_then(|v| v.as_str()) != Some(edge) {
+            continue;
+        }
+        match row.kind {
+            KIND_CREATE_EDGE => {
+                let label = body.get("label").and_then(|v| v.as_str()).unwrap_or("Edge");
+                let src = body.get("src").and_then(|v| v.as_str()).unwrap_or("");
+                let dst = body.get("dst").and_then(|v| v.as_str()).unwrap_or("");
+                created = Some((label.to_string(), src.to_string(), dst.to_string()));
+            }
+            KIND_TOMBSTONE => {
+                tombstoned = true;
+            }
+            _ => {}
+        }
+    }
+    match created {
+        None => tx.edge_delete(edge),
+        Some((label, src, dst)) => tx.edge_upsert(edge, &label, &src, &dst, tombstoned),
     }
 }
 

@@ -234,10 +234,15 @@ impl BackendTxn for MemoryBackend {
             .collect())
     }
 
-    fn edge_upsert(&self, id: &str, label: &str, src: &str, dst: &str) -> Result<(), StoreError> {
-        let mut inner = self.inner.borrow_mut();
-        let deleted = inner.edges.get(id).map(|e| e.deleted).unwrap_or(false);
-        inner.edges.insert(
+    fn edge_upsert(
+        &self,
+        id: &str,
+        label: &str,
+        src: &str,
+        dst: &str,
+        deleted: bool,
+    ) -> Result<(), StoreError> {
+        self.inner.borrow_mut().edges.insert(
             id.into(),
             MemEdge {
                 label: label.into(),
@@ -246,6 +251,10 @@ impl BackendTxn for MemoryBackend {
                 deleted,
             },
         );
+        Ok(())
+    }
+    fn edge_delete(&self, id: &str) -> Result<(), StoreError> {
+        self.inner.borrow_mut().edges.remove(id);
         Ok(())
     }
     fn edge_list(&self) -> Result<Vec<EdgeRow>, StoreError> {

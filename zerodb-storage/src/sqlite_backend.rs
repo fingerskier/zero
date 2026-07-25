@@ -13,14 +13,45 @@ fn sql_err(e: rusqlite::Error) -> StoreError {
 
 pub struct SqliteBackend {
     conn: Connection,
+    /// Armed E4 crash-injection point (test-only; a plain Option check at a
+    /// handful of named commit-pipeline stages — zero cost when unarmed).
+    failpoint: std::cell::RefCell<Option<String>>,
 }
 
 impl SqliteBackend {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         let conn = Connection::open(path).map_err(sql_err)?;
         migrate(&conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            failpoint: std::cell::RefCell::new(None),
+        })
     }
+
+    /// Test hook (E4 crash matrix): arm a named failpoint, or clear with `None`.
+    ///
+    /// When the armed point is reached inside a `with_txn` commit pipeline the
+    /// backend returns an injected error at exactly that point; the open
+    /// `rusqlite::Transaction` is dropped, which is a ROLLBACK — the same
+    /// durable outcome as a process death before `COMMIT`. Named points
+    /// (mapping to WAL.md §3 layer-1 crash points documented in
+    /// `tests/e4_crash_matrix.rs`):
+    /// `before-txn`, `after-op-insert`, `before-hlc-persist`,
+    /// `after-hlc-persist`, `before-commit`.
+    #[doc(hidden)]
+    pub fn set_failpoint(&mut self, name: Option<&str>) {
+        *self.failpoint.borrow_mut() = name.map(str::to_owned);
+    }
+}
+
+fn failpoint_check(
+    armed: &std::cell::RefCell<Option<String>>,
+    point: &str,
+) -> Result<(), StoreError> {
+    if armed.borrow().as_deref() == Some(point) {
+        return Err(StoreError::Invalid(format!("failpoint: {point}")));
+    }
+    Ok(())
 }
 
 fn migrate(conn: &Connection) -> Result<(), StoreError> {
@@ -76,7 +107,10 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
-struct SqliteTxn<'a>(&'a Connection);
+struct SqliteTxn<'a> {
+    conn: &'a Connection,
+    failpoint: &'a std::cell::RefCell<Option<String>>,
+}
 
 impl BackendTxn for SqliteBackend {
     fn meta_get(&self, k: &str) -> Result<Option<Vec<u8>>, StoreError> {
@@ -151,8 +185,18 @@ impl BackendTxn for SqliteBackend {
     fn prop_list(&self, entity: &str) -> Result<Vec<(String, String)>, StoreError> {
         prop_list(&self.conn, entity)
     }
-    fn edge_upsert(&self, id: &str, label: &str, src: &str, dst: &str) -> Result<(), StoreError> {
-        edge_upsert(&self.conn, id, label, src, dst)
+    fn edge_upsert(
+        &self,
+        id: &str,
+        label: &str,
+        src: &str,
+        dst: &str,
+        deleted: bool,
+    ) -> Result<(), StoreError> {
+        edge_upsert(&self.conn, id, label, src, dst, deleted)
+    }
+    fn edge_delete(&self, id: &str) -> Result<(), StoreError> {
+        edge_delete(&self.conn, id)
     }
     fn edge_list(&self) -> Result<Vec<EdgeRow>, StoreError> {
         edge_list(&self.conn)
@@ -167,58 +211,70 @@ impl BackendTxn for SqliteBackend {
 
 impl BackendTxn for SqliteTxn<'_> {
     fn meta_get(&self, k: &str) -> Result<Option<Vec<u8>>, StoreError> {
-        meta_get(self.0, k)
+        meta_get(self.conn, k)
     }
     fn meta_set(&self, k: &str, v: &[u8]) -> Result<(), StoreError> {
-        meta_set(self.0, k, v)
+        // E4 failpoints around HLC durability: hlc_p is the first HLC meta
+        // write in every commit path (materialization already staged);
+        // hlc_l is the last (HLC fully staged, commit still pending).
+        if k == "hlc_p" {
+            failpoint_check(self.failpoint, "before-hlc-persist")?;
+        }
+        meta_set(self.conn, k, v)?;
+        if k == "hlc_l" {
+            failpoint_check(self.failpoint, "after-hlc-persist")?;
+        }
+        Ok(())
     }
     fn op_insert(&self, rec: &OpRecord) -> Result<(), StoreError> {
-        op_insert(self.0, rec)
+        op_insert(self.conn, rec)?;
+        // E4 failpoint: op appended in-transaction, nothing else staged yet.
+        failpoint_check(self.failpoint, "after-op-insert")
     }
     fn op_exists(&self, id: &[u8; 32]) -> Result<bool, StoreError> {
-        op_exists(self.0, id)
+        op_exists(self.conn, id)
     }
     fn op_count(&self) -> Result<u64, StoreError> {
-        op_count(self.0)
+        op_count(self.conn)
     }
     fn op_ids(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        op_ids(self.0)
+        op_ids(self.conn)
     }
     fn op_wires(&self) -> Result<Vec<String>, StoreError> {
-        op_wires(self.0)
+        op_wires(self.conn)
     }
     fn op_wire_by_id(&self, id: &[u8; 32]) -> Result<Option<String>, StoreError> {
-        op_wire_by_id(self.0, id)
+        op_wire_by_id(self.conn, id)
     }
     fn op_scan(&self) -> Result<Vec<OpScanRow>, StoreError> {
-        op_scan(self.0)
+        op_scan(self.conn)
     }
     fn op_scan_node_kinds(&self) -> Result<Vec<(u64, String)>, StoreError> {
-        op_scan_node_kinds(self.0)
+        op_scan_node_kinds(self.conn)
     }
     fn op_scan_props(&self) -> Result<Vec<PropOpRow>, StoreError> {
-        op_scan_props(self.0)
+        op_scan_props(self.conn)
     }
     fn op_max_hlc(&self) -> Result<Option<(u64, u16)>, StoreError> {
-        op_max_hlc(self.0)
+        op_max_hlc(self.conn)
     }
     fn node_upsert(&self, id: &str, label: &str, deleted: bool) -> Result<(), StoreError> {
-        node_upsert(self.0, id, label, deleted)
+        node_upsert(self.conn, id, label, deleted)
     }
     fn node_insert_ignore(&self, id: &str, label: &str) -> Result<(), StoreError> {
-        node_insert_ignore(self.0, id, label)
+        node_insert_ignore(self.conn, id, label)
     }
     fn node_delete(&self, id: &str) -> Result<(), StoreError> {
-        node_delete(self.0, id)
+        node_delete(self.conn, id)
     }
     fn node_deleted_state(&self, id: &str) -> Result<Option<bool>, StoreError> {
-        node_deleted_state(self.0, id)
+        node_deleted_state(self.conn, id)
     }
     fn node_list(&self) -> Result<Vec<(String, String, bool)>, StoreError> {
-        node_list(self.0)
+        node_list(self.conn)
     }
     fn node_count(&self) -> Result<u64, StoreError> {
-        node_count(self.0)
+        node_count(self.conn)
     }
     fn prop_upsert(
         &self,
@@ -227,28 +283,38 @@ impl BackendTxn for SqliteTxn<'_> {
         crdt: &str,
         value_json: &str,
     ) -> Result<(), StoreError> {
-        prop_upsert(self.0, entity, path, crdt, value_json)
+        prop_upsert(self.conn, entity, path, crdt, value_json)
     }
     fn prop_delete(&self, entity: &str, path: &str) -> Result<(), StoreError> {
-        prop_delete(self.0, entity, path)
+        prop_delete(self.conn, entity, path)
     }
     fn prop_get(&self, entity: &str, path: &str) -> Result<Option<String>, StoreError> {
-        prop_get(self.0, entity, path)
+        prop_get(self.conn, entity, path)
     }
     fn prop_list(&self, entity: &str) -> Result<Vec<(String, String)>, StoreError> {
-        prop_list(self.0, entity)
+        prop_list(self.conn, entity)
     }
-    fn edge_upsert(&self, id: &str, label: &str, src: &str, dst: &str) -> Result<(), StoreError> {
-        edge_upsert(self.0, id, label, src, dst)
+    fn edge_upsert(
+        &self,
+        id: &str,
+        label: &str,
+        src: &str,
+        dst: &str,
+        deleted: bool,
+    ) -> Result<(), StoreError> {
+        edge_upsert(self.conn, id, label, src, dst, deleted)
+    }
+    fn edge_delete(&self, id: &str) -> Result<(), StoreError> {
+        edge_delete(self.conn, id)
     }
     fn edge_list(&self) -> Result<Vec<EdgeRow>, StoreError> {
-        edge_list(self.0)
+        edge_list(self.conn)
     }
     fn edge_list_visible(&self) -> Result<Vec<(String, String, String, String)>, StoreError> {
-        edge_list_visible(self.0)
+        edge_list_visible(self.conn)
     }
     fn wipe_materialized(&self) -> Result<(), StoreError> {
-        wipe_materialized(self.0)
+        wipe_materialized(self.conn)
     }
 }
 
@@ -257,8 +323,15 @@ impl StoreBackend for SqliteBackend {
         &mut self,
         f: &mut dyn FnMut(&dyn BackendTxn) -> Result<(), StoreError>,
     ) -> Result<(), StoreError> {
+        failpoint_check(&self.failpoint, "before-txn")?;
         let tx = self.conn.transaction().map_err(sql_err)?;
-        f(&SqliteTxn(&tx))?;
+        f(&SqliteTxn {
+            conn: &tx,
+            failpoint: &self.failpoint,
+        })?;
+        // E4 failpoint: full pipeline staged; dropping `tx` here rolls back,
+        // matching a process death at the instant before COMMIT.
+        failpoint_check(&self.failpoint, "before-commit")?;
         tx.commit().map_err(sql_err)?;
         Ok(())
     }
@@ -556,13 +629,21 @@ fn edge_upsert(
     label: &str,
     src: &str,
     dst: &str,
+    deleted: bool,
 ) -> Result<(), StoreError> {
     conn.execute(
-        "INSERT INTO edges (id, label, src, dst, deleted) VALUES (?1,?2,?3,?4,0)
-         ON CONFLICT(id) DO UPDATE SET label=excluded.label, src=excluded.src, dst=excluded.dst",
-        params![id, label, src, dst],
+        "INSERT INTO edges (id, label, src, dst, deleted) VALUES (?1,?2,?3,?4,?5)
+         ON CONFLICT(id) DO UPDATE SET label=excluded.label, src=excluded.src,
+           dst=excluded.dst, deleted=excluded.deleted",
+        params![id, label, src, dst, if deleted { 1i64 } else { 0 }],
     )
     .map_err(sql_err)?;
+    Ok(())
+}
+
+fn edge_delete(conn: &Connection, id: &str) -> Result<(), StoreError> {
+    conn.execute("DELETE FROM edges WHERE id = ?1", params![id])
+        .map_err(sql_err)?;
     Ok(())
 }
 
