@@ -251,6 +251,13 @@ impl Database {
         })
     }
 
+    /// Run an O3 minimal query (`MATCH/WHERE/RETURN/ORDER BY/LIMIT`).
+    /// Returns a JSON array of row objects keyed by return item (e.g. `"t.title"`).
+    #[napi]
+    pub fn query(&self, q: String) -> Result<serde_json::Value> {
+        self.with_store(|store| store.query(&q).map_err(map_err))
+    }
+
     /// Full inspect report as JSON (path is reported as the given string).
     #[napi]
     pub fn inspect(&self, path: String) -> Result<serde_json::Value> {

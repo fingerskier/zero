@@ -37,6 +37,7 @@ db.close() // required before deleting the file on Windows
 | `listNodes`, `inspect`, `replay` | introspection |
 | `exportJson` / `importJson` | format-1 op bundles |
 | `subscribe` / `unsubscribe` | live change callbacks; async delivery (next tick) |
+| `query` | O3 minimal `MATCH/WHERE/RETURN/ORDER BY/LIMIT`; rows keyed `"t.title"` |
 
 ### Subscribe events
 
@@ -54,7 +55,7 @@ Decision Log format freeze. Do not persist bundles across SDK versions.
 
 ## Not yet (SPEC M2 exit)
 
-- O3 query + schema apply / TS→IR  
+- schema apply / TS→IR  
 - MVRegister, RGA, LWWMap  
 - Binding parity vector suite / E11 budgets  
 
