@@ -387,9 +387,10 @@ fn op_scan_node_kinds(conn: &Connection) -> Result<Vec<(u64, String)>, StoreErro
         )
         .map_err(sql_err)?;
     let rows = stmt
-        .query_map(params![KIND_CREATE_NODE as i64, KIND_TOMBSTONE as i64], |r| {
-            Ok((r.get::<_, i64>(0)? as u64, r.get::<_, String>(1)?))
-        })
+        .query_map(
+            params![KIND_CREATE_NODE as i64, KIND_TOMBSTONE as i64],
+            |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, String>(1)?)),
+        )
         .map_err(sql_err)?;
     let mut out = Vec::new();
     for row in rows {
@@ -461,9 +462,11 @@ fn node_delete(conn: &Connection, id: &str) -> Result<(), StoreError> {
 
 fn node_deleted_state(conn: &Connection, id: &str) -> Result<Option<bool>, StoreError> {
     let d: Option<i64> = conn
-        .query_row("SELECT deleted FROM nodes WHERE id = ?1", params![id], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT deleted FROM nodes WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
         .optional()
         .map_err(sql_err)?;
     Ok(d.map(|value| value != 0))

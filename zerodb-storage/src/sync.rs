@@ -13,7 +13,7 @@ use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ExportBundle, LocalStore, StoreError, WireOp};
+use crate::{ExportBundle, LocalStore, StoreBackend, StoreError, WireOp};
 
 pub const SYNC_PROTOCOL_VERSION: u32 = 2;
 const MAX_MSG_BYTES: usize = 64 * 1024 * 1024;
@@ -76,13 +76,16 @@ pub enum SyncError {
 
 /// Server side of one session: answer a connected peer, send what it lacks,
 /// then ingest the ops it offers back.
-pub fn serve<S: Read + Write>(
-    store: &mut LocalStore,
+pub fn serve<S: Read + Write, B: StoreBackend>(
+    store: &mut LocalStore<B>,
     stream: &mut S,
 ) -> Result<ServeSummary, SyncError> {
     let hello: Hello = read_msg(stream)?;
     if hello.v != SYNC_PROTOCOL_VERSION {
-        return Err(SyncError::Protocol(format!("bad hello version {}", hello.v)));
+        return Err(SyncError::Protocol(format!(
+            "bad hello version {}",
+            hello.v
+        )));
     }
     let local: BTreeSet<[u8; 32]> = store.list_op_ids()?.into_iter().collect();
     let remote: BTreeSet<[u8; 32]> = hello
@@ -126,8 +129,8 @@ pub fn serve<S: Read + Write>(
 
 /// Client side of one session: pull the server's ops, then push back the ops
 /// it asked for in `need`.
-pub fn pull<S: Read + Write>(
-    store: &mut LocalStore,
+pub fn pull<S: Read + Write, B: StoreBackend>(
+    store: &mut LocalStore<B>,
     stream: &mut S,
 ) -> Result<PullSummary, SyncError> {
     let local_ids = store

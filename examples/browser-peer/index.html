@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>zerodb browser peer (experimental M4a)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  fieldset { margin-bottom: 1rem; border: 1px solid #ccc; border-radius: 6px; }
+  input[type=text] { width: 14rem; }
+  #log { font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; background: #f5f5f5;
+         border: 1px solid #ddd; padding: 0.5rem; max-height: 14rem; overflow-y: auto; }
+  li { font-family: monospace; font-size: 0.85rem; }
+  .muted { color: #777; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<h1>zerodb browser peer</h1>
+<p class="muted">
+  Experimental: local in-browser store (wasm) persisted to IndexedDB, syncing
+  with a Node peer over WebSocket (sync protocol v2). The identity seed lives
+  in IndexedDB — any script on this origin can sign as this peer.
+</p>
+
+<fieldset>
+  <legend>identity</legend>
+  <div>peer: <code id="peer">-</code></div>
+  <div>datastore: <code id="ds">-</code></div>
+  <div>ops: <code id="ops">0</code></div>
+  <button id="reset">reset local store</button>
+</fieldset>
+
+<fieldset>
+  <legend>mutate</legend>
+  <input type="text" id="label" placeholder="node label" value="Todo" />
+  <button id="create">create node</button>
+  <div style="margin-top:0.5rem">
+    <select id="nodeSel"></select>
+    <input type="text" id="propKey" placeholder="key" value="title" />
+    <input type="text" id="propVal" placeholder="value" />
+    <button id="setProp">set lww</button>
+  </div>
+  <ul id="nodes"></ul>
+</fieldset>
+
+<fieldset>
+  <legend>sync</legend>
+  <input type="text" id="url" value="ws://127.0.0.1:9787" />
+  <button id="syncOnce">sync once</button>
+  <button id="autoSync">start auto-sync</button>
+</fieldset>
+
+<div id="log"></div>
+
+<script type="module">
+import init, { ZeroDb } from '../../zerodb-wasm/pkg/zerodb_wasm.js'
+import { syncOnce, autoSync } from './zero-sync.mjs'
+
+const $ = id => document.getElementById(id)
+const log = msg => {
+  $('log').textContent += `${new Date().toISOString().slice(11, 19)} ${msg}\n`
+  $('log').scrollTop = $('log').scrollHeight
+}
+
+// --- IndexedDB persistence: { seed, ds, bundle } under one key -------------
+const DB_NAME = 'zerodb-browser-peer'
+const idb = await new Promise((resolve, reject) => {
+  const req = indexedDB.open(DB_NAME, 1)
+  req.onupgradeneeded = () => req.result.createObjectStore('state')
+  req.onsuccess = () => resolve(req.result)
+  req.onerror = () => reject(req.error)
+})
+const idbGet = key => new Promise((resolve, reject) => {
+  const req = idb.transaction('state').objectStore('state').get(key)
+  req.onsuccess = () => resolve(req.result)
+  req.onerror = () => reject(req.error)
+})
+const idbSet = (key, value) => new Promise((resolve, reject) => {
+  const req = idb.transaction('state', 'readwrite').objectStore('state').put(value, key)
+  req.onsuccess = () => resolve()
+  req.onerror = () => reject(req.error)
+})
+
+await init()
+
+let db
+const saved = await idbGet('peer')
+if (saved) {
+  db = ZeroDb.fromSeed(saved.seed, saved.ds)
+  if (saved.bundle) {
+    const res = db.importJson(saved.bundle)
+    if (res.accepted > 0) db.replay()
+  }
+  log(`restored identity + ${db.opCount()} ops from IndexedDB`)
+} else {
+  db = new ZeroDb()
+  log('fresh identity created')
+}
+
+async function persist() {
+  await idbSet('peer', {
+    seed: db.seedHex(),
+    ds: db.datastoreId(), // re-read: first sync may adopt the peer's datastore
+    bundle: db.exportJson(),
+  })
+}
+
+function render() {
+  $('peer').textContent = db.peerId().slice(0, 16)
+  $('ds').textContent = db.datastoreId().slice(0, 16)
+  $('ops').textContent = db.opCount()
+  const nodes = db.listNodes().filter(n => !n.deleted)
+  $('nodes').innerHTML = ''
+  $('nodeSel').innerHTML = ''
+  for (const n of nodes) {
+    const title = db.getLww(n.id, 'title')
+    const li = document.createElement('li')
+    li.textContent = `${n.label} ${n.id.slice(0, 8)}${title ? ` title=${title}` : ''}`
+    $('nodes').appendChild(li)
+    const opt = document.createElement('option')
+    opt.value = n.id
+    opt.textContent = `${n.label} ${n.id.slice(0, 8)}`
+    $('nodeSel').appendChild(opt)
+  }
+}
+render()
+
+async function mutated() {
+  await persist()
+  render()
+}
+
+$('create').onclick = async () => {
+  const id = db.createNode($('label').value || 'Node')
+  log(`created ${id.slice(0, 8)}`)
+  await mutated()
+}
+$('setProp').onclick = async () => {
+  const node = $('nodeSel').value
+  if (!node) return log('no node selected')
+  db.setLww(node, $('propKey').value, $('propVal').value)
+  log(`set ${$('propKey').value} on ${node.slice(0, 8)}`)
+  await mutated()
+}
+$('reset').onclick = async () => {
+  await idbSet('peer', undefined)
+  indexedDB.deleteDatabase(DB_NAME)
+  location.reload()
+}
+
+$('syncOnce').onclick = async () => {
+  try {
+    const s = await syncOnce(db, $('url').value)
+    log(`sync: accepted=${s.accepted} sent=${s.sent} remoteAccepted=${s.remoteAccepted}`)
+    await mutated()
+  } catch (e) {
+    log(`sync error: ${e.message}`)
+  }
+}
+
+let stopAuto = null
+$('autoSync').onclick = () => {
+  if (stopAuto) {
+    stopAuto()
+    stopAuto = null
+    $('autoSync').textContent = 'start auto-sync'
+    log('auto-sync stopped')
+    return
+  }
+  stopAuto = autoSync(db, $('url').value, 2000, {
+    onSync: async s => {
+      if (s.accepted || s.sent) {
+        log(`auto-sync: accepted=${s.accepted} sent=${s.sent}`)
+        await mutated()
+      }
+    },
+    onError: e => log(`auto-sync error: ${e.message}`),
+  })
+  $('autoSync').textContent = 'stop auto-sync'
+  log('auto-sync started (2s poll)')
+}
+</script>
+</body>
+</html>

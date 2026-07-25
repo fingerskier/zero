@@ -9,14 +9,26 @@
 //! is fail-closed against re-keying an already-initialized database.
 
 mod backend;
+mod memory_backend;
+#[cfg(feature = "sqlite")]
 mod sqlite_backend;
 pub mod sync;
 
 pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
+pub use memory_backend::MemoryBackend;
+#[cfg(feature = "sqlite")]
 pub use sqlite_backend::SqliteBackend;
+
+/// Backend used when `LocalStore` is written without a type parameter.
+#[cfg(feature = "sqlite")]
+pub type DefaultBackend = SqliteBackend;
+/// Without the `sqlite` feature (e.g. wasm32) the in-memory backend is the default.
+#[cfg(not(feature = "sqlite"))]
+pub type DefaultBackend = MemoryBackend;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::{Signer, SigningKey};
@@ -119,8 +131,8 @@ pub struct InspectEdge {
     pub visible: bool,
 }
 
-pub struct LocalStore {
-    backend: SqliteBackend,
+pub struct LocalStore<B: StoreBackend = DefaultBackend> {
+    backend: B,
     signing: SigningKey,
     author: [u8; 32],
     author_pk: [u8; 32],
@@ -139,9 +151,24 @@ struct ValidatedWire {
     sig: [u8; 64],
 }
 
+#[cfg(feature = "sqlite")]
 impl LocalStore {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let backend = SqliteBackend::open(path)?;
+        Self::open_with_backend(SqliteBackend::open(path)?)
+    }
+
+    pub fn init(path: &Path) -> Result<Self, StoreError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| StoreError::Io(e.to_string()))?;
+        }
+        Self::init_with_backend(SqliteBackend::open(path)?)
+    }
+}
+
+impl<B: StoreBackend> LocalStore<B> {
+    /// Open a store over an already-populated backend (generic path; the
+    /// sqlite `open` is a thin wrapper).
+    pub fn open_with_backend(backend: B) -> Result<Self, StoreError> {
         let seed: [u8; 32] = backend
             .meta_get("seed")?
             .ok_or_else(|| {
@@ -171,17 +198,9 @@ impl LocalStore {
         })
     }
 
-    pub fn init(path: &Path) -> Result<Self, StoreError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| StoreError::Io(e.to_string()))?;
-        }
-        let backend = SqliteBackend::open(path)?;
-        // Fail closed: never re-key an already-initialized (or nonempty) database.
-        if already_initialized(&backend)? {
-            return Err(StoreError::Invalid(
-                "database already initialized — refuse re-init (no silent re-key)".into(),
-            ));
-        }
+    /// Initialize a fresh identity (random seed + derived datastore id) on an
+    /// empty backend, then open it. Fail-closed like the sqlite `init`.
+    pub fn init_with_backend(backend: B) -> Result<Self, StoreError> {
         let mut seed = [0u8; 32];
         getrandom_fill(&mut seed);
         let signing = SigningKey::from_bytes(&seed);
@@ -194,14 +213,39 @@ impl LocalStore {
         hasher.update(&author);
         hasher.update(&salt);
         let ds = *hasher.finalize().as_bytes();
-        backend.meta_set("seed", &seed)?;
-        backend.meta_set("ds", &ds)?;
-        backend.meta_set("salt", &salt)?;
+        let store = Self::init_with_backend_from_seed(backend, &seed, &ds)?;
+        store.backend.meta_set("salt", &salt)?;
+        Ok(store)
+    }
+
+    /// Initialize an empty backend with an existing identity seed + datastore
+    /// id (e.g. a browser peer restoring identity persisted client-side).
+    /// Fail-closed: refuses if the backend already carries identity or ops.
+    pub fn init_with_backend_from_seed(
+        backend: B,
+        seed: &[u8; 32],
+        ds: &[u8; 32],
+    ) -> Result<Self, StoreError> {
+        // Fail closed: never re-key an already-initialized (or nonempty) database.
+        if already_initialized(&backend)? {
+            return Err(StoreError::Invalid(
+                "database already initialized — refuse re-init (no silent re-key)".into(),
+            ));
+        }
+        backend.meta_set("seed", seed)?;
+        backend.meta_set("ds", ds)?;
         meta_set_u64(&backend, "hlc_p", 0)?;
         meta_set_u64(&backend, "hlc_l", 0)?;
         meta_set_u64(&backend, "storage_format_version", STORAGE_FORMAT_VERSION)?;
-        drop(backend);
-        Self::open(path)
+        Self::open_with_backend(backend)
+    }
+
+    /// Raw ed25519 identity seed. Handle with care: whoever holds this can
+    /// sign ops as this peer. Exposed so embedders without server-side storage
+    /// (e.g. a browser peer persisting to IndexedDB) can restore identity via
+    /// [`LocalStore::init_with_backend_from_seed`].
+    pub fn identity_seed(&self) -> [u8; 32] {
+        self.signing.to_bytes()
     }
 
     pub fn datastore_id_hex(&self) -> String {
@@ -1453,10 +1497,7 @@ fn rematerialize_node(tx: &dyn BackendTxn, node: &str) -> Result<(), StoreError>
         }
         match kind {
             KIND_CREATE_NODE => {
-                let lbl = body
-                    .get("label")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Node");
+                let lbl = body.get("label").and_then(|v| v.as_str()).unwrap_or("Node");
                 label = Some(lbl.to_string());
             }
             KIND_TOMBSTONE => {
@@ -1565,8 +1606,8 @@ fn infer_crdt_from_ops(
     path: &str,
 ) -> Result<Option<&'static str>, StoreError> {
     for row in tx.op_scan_props()? {
-        let v: serde_json::Value = serde_json::from_str(&row.body_json)
-            .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let v: serde_json::Value =
+            serde_json::from_str(&row.body_json).map_err(|e| StoreError::Invalid(e.to_string()))?;
         if v["node"].as_str() == Some(entity)
             && v["path"].as_str() == Some(path)
             && let Some(c) = v["crdt"].as_str()
@@ -1591,8 +1632,8 @@ fn load_prop_ops(
 ) -> Result<Vec<KernelOp>, StoreError> {
     let mut out = Vec::new();
     for row in b.op_scan_props()? {
-        let body: serde_json::Value = serde_json::from_str(&row.body_json)
-            .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let body: serde_json::Value =
+            serde_json::from_str(&row.body_json).map_err(|e| StoreError::Invalid(e.to_string()))?;
         if body["node"].as_str() != Some(entity) || body["path"].as_str() != Some(path) {
             continue;
         }
@@ -1713,11 +1754,18 @@ fn meta_set_u64(b: &dyn BackendTxn, k: &str, v: u64) -> Result<(), StoreError> {
     b.meta_set(k, &v.to_le_bytes())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// wasm32-unknown-unknown has no `SystemTime::now`; use JS `Date.now()`.
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> u64 {
+    js_sys::Date::now() as u64
 }
 
 fn decode32(s: &str) -> Result<[u8; 32], StoreError> {

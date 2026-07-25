@@ -5,14 +5,32 @@ publish.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "e1_writer"
+path = "src/bin/e1_writer.rs"
+required-features = ["sqlite"]
+
+[features]
+# `sqlite` is the default persistent backend; disable it (default-features =
+# false) for targets without SQLite, e.g. wasm32 (MemoryBackend only).
+default = ["sqlite"]
+sqlite = ["dep:rusqlite"]
+
 [dependencies]
 zerodb-core = { path = "../zerodb-core" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, optional = true }
 blake3.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true
 uuid.workspace = true
 getrandom.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# wasm32-unknown-unknown has no OS clock or CSPRNG: use JS Date.now() and
+# crypto.getRandomValues (getrandom "js" feature).
+js-sys = "0.3"
+getrandom = { workspace = true, features = ["js"] }
+uuid = { workspace = true, features = ["js"] }

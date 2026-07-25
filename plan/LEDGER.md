@@ -92,6 +92,7 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M3b | Security: auth, envelope, negatives (E5–E8) | open | M3a, M0d | L | internal |
 | M3c | Interop TS wire peer + release | open | M3b | M | `v0.1.0` |
 | M4a | Browser/WASM/WebRTC/React | open | M3c | L | feature |
+| M4a-browser-slice | Experimental wasm browser peer: `sqlite` feature gate + `MemoryBackend`, `zerodb-wasm` (`LocalStore<MemoryBackend>`), JS v2 sync driver + IndexedDB demo (`examples/browser-peer`) | done(memory_backend.rs 6 tests; sync-driver.test.mjs 3 tests wasm<->NAPI convergence; wasm-pack build) | rides M1/M2 experimentally (M4a proper still needs M3c) | S | experiment |
 | M4b | Migration/snapshots/upgrade (E10) | open | M3c | L | feature |
 | M5a | Operability (backup/restore, SLOs) | open | M3c | M | GA program |
 | M5b | Lifecycle safety (GC, rolling upgrade) | open | M4b, C7 | L | GA program |
