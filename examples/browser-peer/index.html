@@ -52,7 +52,11 @@
 <div id="log"></div>
 
 <script type="module">
-import init, { ZeroDb } from '../../zerodb-wasm/pkg/zerodb_wasm.js'
+// Local copy first (serving this directory), repo-root layout as fallback.
+const wasmMod = await import('./pkg/zerodb_wasm.js')
+  .catch(() => import('../../zerodb-wasm/pkg/zerodb_wasm.js'))
+const init = wasmMod.default
+const { ZeroDb } = wasmMod
 import { syncOnce, autoSync } from './zero-sync.mjs'
 
 const $ = id => document.getElementById(id)

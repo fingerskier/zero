@@ -13,7 +13,7 @@
   .conn { font-size: 0.8rem; margin: 0.6rem 0; padding: 0.4rem 0.6rem; border-radius: 6px;
     background: color-mix(in srgb, currentColor 7%, transparent); }
   form { display: flex; gap: 0.4rem; margin: 0.5rem 0; flex-wrap: wrap; }
-  input { flex: 1; min-width: 6rem; padding: 0.3rem; }
+  input, select { flex: 1; min-width: 6rem; padding: 0.3rem; }
   button { padding: 0.3rem 0.7rem; cursor: pointer; }
   ul.nodes { list-style: none; padding: 0; }
   ul.nodes li { padding: 0.35rem 0.5rem; border-radius: 5px; margin-bottom: 0.3rem;
@@ -34,7 +34,7 @@
 
 <section class="pane" id="pane"><div class="meta"></div>
   <form data-act="create"><input name="label" placeholder="label (e.g. Todo)" required><button>create node</button></form>
-  <form data-act="set"><input name="node" placeholder="node id" required><input name="key" placeholder="key" required><input name="value" placeholder="value" required><button>set</button></form>
+  <form data-act="set"><select name="node" required></select><input name="key" placeholder="key" required><input name="value" placeholder="value" required><button>set</button></form>
   <ul class="nodes"></ul>
 </section>
 
@@ -72,6 +72,16 @@ async function refresh() {
   const s = await api('/api/state')
   connLine(s)
   $('.meta').textContent = `peer ${s.peerId.slice(0, 16)}… · ds ${s.datastoreId.slice(0, 16)}… · ${s.ops} ops`
+  const sel = $('select[name="node"]')
+  const prev = sel.value
+  sel.innerHTML = ''
+  for (const n of s.nodes.filter((n) => !n.deleted)) {
+    const opt = document.createElement('option')
+    opt.value = n.id
+    opt.textContent = `${n.label} (${n.id.slice(0, 8)}…)`
+    sel.appendChild(opt)
+  }
+  if (prev) sel.value = prev
   const ul = $('.nodes')
   ul.innerHTML = ''
   for (const n of s.nodes) {

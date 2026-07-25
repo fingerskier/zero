@@ -25,8 +25,12 @@ with a Node peer over the existing WebSocket sync protocol v2.
 
    ```sh
    cd zerodb-wasm
-   npx wasm-pack build --target web
+   npx wasm-pack build --target web --out-dir ../examples/browser-peer/pkg
    ```
+
+   (`--out-dir` drops the pkg beside the page so the page can be served
+   standalone; without it the page falls back to `../../zerodb-wasm/pkg/`,
+   which only resolves when you serve the repo root.)
 
 2. Start a Node peer with a WS sync listener (from `examples/webapp`):
 
@@ -34,11 +38,12 @@ with a Node peer over the existing WebSocket sync protocol v2.
    node examples/webapp/server.mjs   # WS sync on ws://127.0.0.1:9787
    ```
 
-3. Serve the repo root statically and open the page — the wasm module must be
-   served with the `application/wasm` MIME type, which both of these do:
+3. Serve the page statically — the wasm module must be served with the
+   `application/wasm` MIME type, which both of these do:
 
    ```sh
-   npx serve .          # then open http://localhost:3000/examples/browser-peer/
+   npx serve examples/browser-peer    # http://localhost:3000
+   # or from the repo root: npx serve .  → /examples/browser-peer/
    # or: python -m http.server 8000
    ```
 
