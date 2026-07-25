@@ -146,9 +146,9 @@ impl Database {
 
     #[napi]
     pub fn create_node(&self, label: String) -> Result<String> {
-        let id = self.with_store_mut(|store| store.create_node(&label).map_err(map_err))?;
-        // create_node returns the node id; the op id is not surfaced.
-        self.emit_op("createNode", &id, None, None);
+        let (id, op) =
+            self.with_store_mut(|store| store.create_node_with_op(&label).map_err(map_err))?;
+        self.emit_op("createNode", &id, None, Some(&op));
         Ok(id)
     }
 

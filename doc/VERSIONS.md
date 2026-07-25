@@ -17,7 +17,7 @@
 | `storage_format_version` | zerodb-storage (M1) | never | never |
 | `relay_protocol_version` | RELAY-SPEC | never | HELLO/WELCOME |
 
-Document versions (`0.x-draft`) are **not** wire versions. Wire `protocol_version: 1` maps to RELAY-SPEC 0.2 + this registry snapshot at composite M0 freeze.
+Document versions (`0.x-draft`) are **not** wire versions. Wire `protocol_version: 1` will map to RELAY-SPEC 0.2 + this registry snapshot at freeze; all formats are draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.
 
 ## 2. Compatibility window (v0.1)
 
@@ -43,4 +43,4 @@ Registry `identifier_encodings` is normative for lengths; KERNEL §2 for derivat
 
 ---
 
-*Freeze of these constants is composite M0 (or an explicit Decision Log exception).*
+*These constants are draft-1, unfrozen: freeze only via an explicit Decision Log entry naming a versioned profile.*

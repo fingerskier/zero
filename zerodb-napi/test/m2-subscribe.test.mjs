@@ -55,6 +55,8 @@ test('subscribe receives local mutation events', async () => {
     assert.equal(events[0].kind, 'op')
     assert.equal(events[0].method, 'createNode')
     assert.equal(events[0].node, node)
+    assert.equal(typeof events[0].opId, 'string')
+    assert.equal(events[0].opId.length, 64)
     assert.equal(events[1].method, 'setLww')
     assert.equal(events[1].key, 'title')
     assert.equal(typeof events[1].opId, 'string')

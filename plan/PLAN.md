@@ -56,7 +56,7 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 ## 5. Immediate next actions (ordered)
 
-1. **M1 exit pass** — remainders largely implemented (E4 atomic rollback, E9 edges/H3, schema pin, O3 query, minimal TS→IR). Formal Decision Log exit + optional freeze when ready.
+1. **M1 exit pass** — prototype slices landed (E4 atomic rollback, E9 edges/H3 partial, schema pin, O3 query, minimal TS→IR); R0.1 store safety done. Exit stays **blocked** until E1 kill/clock-rollback + E4 crash-matrix evidence and the SPEC §10 checklist are ticked; freeze is a separate Decision Log act.
 2. **M2 continue** — wire NAPI to query/schema/edges; subscribe; parity vectors; extra CRDTs.
 3. **Format freeze** only via Decision Log if retaining local DBs.
 4. **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.

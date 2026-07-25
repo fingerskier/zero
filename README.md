@@ -2,7 +2,7 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** **Composite M0 closed**. **M1** experimental local core substantially complete (E1/E2/E4/E9, schema pin, O3 query, TS→IR trail); formal `v0.1.0-local` exit + freeze still open. **M2** `@zerodb/node` scaffolded. Conformance **103** vectors CI-blocking.
+**Status:** **Composite M0 closed** (contract model). **M1** experimental local core: prototype slices of E1/E2/E4/E9, schema pin, O3 query, TS→IR; formal `v0.1.0-local` exit open (SPEC §10 checkboxes unticked). **M2** `@zerodb/node` with CRUD/subscribe/query; storage behind a backend trait (browser path). Conformance **103** vectors CI-blocking. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
 
 
 ## Documents

@@ -228,6 +228,11 @@ impl LocalStore {
     }
 
     pub fn create_node(&mut self, label: &str) -> Result<String, StoreError> {
+        self.create_node_with_op(label).map(|(node, _)| node)
+    }
+
+    /// Create a node, returning `(node_hex, op_id_hex)`.
+    pub fn create_node_with_op(&mut self, label: &str) -> Result<(String, String), StoreError> {
         let node = Uuid::now_v7();
         let node_bytes = *node.as_bytes();
         let node_hex = hex::encode(node_bytes);
@@ -236,10 +241,10 @@ impl LocalStore {
             ("node".into(), Cbor::Bytes(node_bytes.to_vec())),
         ]);
         let body_json = serde_json::json!({ "label": label, "node": node_hex });
-        self.commit_local(KIND_CREATE_NODE, body, body_json, |tx, _| {
+        let op = self.commit_local(KIND_CREATE_NODE, body, body_json, |tx, _| {
             rematerialize_node(tx, &node_hex)
         })?;
-        Ok(node_hex)
+        Ok((node_hex, op))
     }
 
     pub fn delete_node(&mut self, node_hex: &str) -> Result<String, StoreError> {
