@@ -56,12 +56,13 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M1-e1 | Full E1 (restart, replay, larger load, HLC mono) | done(`e1_e2_acceptance` fifty-todo + HLC mono) | M | 50-todo restart/import/replay; post-restart ts > pre max | G-09 |
 | M1-e2-store | Store-level equal-ts / equivocation suite | done(`e1_e2_acceptance` e2_*) | S | same-author exclude + cross-peer total order | G-09 |
 | M1-e4 | Groups + WAL layer-2 crash injection | done(`atomic_group` + `commit_wires_atomic` rollback) | L | multi-op group + mid-batch signature fail rolls back prefix (`e4_groups`, `m1_remainders`) | G-03 |
-| M1-e9 | H3 derived visibility + edges + late-edge E9 | done(create_edge + derived hide) | L | edges table; delete hides edges without cascade; late edge invisible (`m1_remainders`) | G-04 |
+| M1-e9 | H3 derived visibility + edges + late-edge E9 | partial(set-derived node tombstone + edges) | L | edges + derived hide (`m1_remainders`); create/tombstone order-independent (`r0_stabilize`); edge tombstone props still open | G-04 / G20-02 |
 | M1-schema | Schema apply / IR load; type pin; `ep` | done(JSON pin + CLI) | M | `apply_schema_json` + pin reject; `schema-apply` CLI; full CBOR IR/ep still draft | G-06/08 |
 | M1-query | O3 minimal query + repl | done(eval + CLI) | M | `LocalStore::query` + `zerodb query`; no interactive repl yet | G-08 |
 | M1-tsir | TS→IR compiler (≤ M1, O2) | done(minimal tool) | M | `tools/ts-to-ir` authoring JSON → pin IR; full CBOR SchemaId later | G-14 |
 | M1-fmtver | `storage_format_version` meta + freeze discipline | done(meta v1 + backfill; freeze still open) | S | meta written at init/open; freeze still needs Decision Log | G-07 |
-| M1-exit | Close M1 when exit criteria met | open | — | Checklist largely met at experimental layer; Decision Log freeze + formal exit pass remaining | — |
+| M1-fix-init | Fail-closed init (no silent re-key) | done(`r0_stabilize` init tests) | S | re-init of empty-initialized and nonempty DB errors; identity+ops preserved | G20-03 |
+| M1-exit | Close M1 when exit criteria met | open | — | R0.1 store safety landed; formal exit still needs R0.2 contracts, E1/E4 evidence honesty, SPEC checklist | — |
 
 ---
 

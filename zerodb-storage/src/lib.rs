@@ -3,7 +3,9 @@
 //! SQLite: oplog + materialized props + nodes. Each accepted op commits
 //! append + rematerialize + HLC in one transaction. Property state is rebuilt
 //! from the full op set for that (entity, path) so multi-peer CRDT merges stay
-//! consistent with the KERNEL replica rules.
+//! consistent with the KERNEL replica rules. Node create/tombstone state is
+//! likewise set-derived (order-independent). `init` is fail-closed against
+//! re-keying an already-initialized database.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -163,6 +165,12 @@ impl LocalStore {
         }
         let conn = Connection::open(path)?;
         migrate(&conn)?;
+        // Fail closed: never re-key an already-initialized (or nonempty) database.
+        if already_initialized(&conn)? {
+            return Err(StoreError::Invalid(
+                "database already initialized — refuse re-init (no silent re-key)".into(),
+            ));
+        }
         let mut seed = [0u8; 32];
         getrandom_fill(&mut seed);
         let signing = SigningKey::from_bytes(&seed);
@@ -223,12 +231,7 @@ impl LocalStore {
         ]);
         let body_json = serde_json::json!({ "label": label, "node": node_hex });
         self.commit_local(KIND_CREATE_NODE, body, body_json, |tx, _| {
-            tx.execute(
-                "INSERT INTO nodes (id, label, deleted) VALUES (?1, ?2, 0)
-                 ON CONFLICT(id) DO UPDATE SET label = excluded.label",
-                params![node_hex, label],
-            )?;
-            Ok(())
+            rematerialize_node(tx, &node_hex)
         })?;
         Ok(node_hex)
     }
@@ -241,12 +244,9 @@ impl LocalStore {
         ]);
         let body_json = serde_json::json!({ "node": node_hex, "tombstone": true });
         self.commit_local(KIND_TOMBSTONE, body, body_json, |tx, _| {
-            tx.execute(
-                "UPDATE nodes SET deleted = 1 WHERE id = ?1",
-                params![node_hex],
-            )?;
+            // Set-derived: any tombstone in the op set deletes after create, regardless of order.
             // H3 derived visibility: do not emit cascade edge tombstones.
-            Ok(())
+            rematerialize_node(tx, node_hex)
         })
     }
 
@@ -782,13 +782,15 @@ impl LocalStore {
         Ok((accepted, skipped))
     }
 
-    /// Rebuild all property materialization from oplog (E1 fresh-replay).
+    /// Rebuild all materialization from the oplog (E1 fresh-replay).
+    /// Nodes are set-derived from CreateNode + Tombstone ops (order-independent).
     pub fn replay_all(&mut self) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM props", [])?;
         tx.execute("DELETE FROM nodes", [])?;
         tx.execute("DELETE FROM edges", [])?;
         let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut node_ids: BTreeSet<String> = BTreeSet::new();
         let mut max_p: u64 = 0;
         let mut max_l: u16 = 0;
         {
@@ -815,14 +817,10 @@ impl LocalStore {
                 let body: serde_json::Value = serde_json::from_str(&body_s)
                     .map_err(|e| StoreError::Invalid(e.to_string()))?;
                 match kind as u64 {
-                    KIND_CREATE_NODE => {
-                        let node = body["node"].as_str().unwrap_or("");
-                        let label = body["label"].as_str().unwrap_or("Node");
-                        tx.execute(
-                            "INSERT INTO nodes (id, label, deleted) VALUES (?1,?2,0)
-                             ON CONFLICT(id) DO UPDATE SET label = excluded.label",
-                            params![node, label],
-                        )?;
+                    KIND_CREATE_NODE | KIND_TOMBSTONE => {
+                        if let Some(node) = body["node"].as_str() {
+                            node_ids.insert(node.to_string());
+                        }
                     }
                     KIND_CREATE_EDGE => {
                         let edge = body["edge"].as_str().unwrap_or("");
@@ -835,14 +833,6 @@ impl LocalStore {
                             params![edge, label, src, dst],
                         )?;
                     }
-                    KIND_TOMBSTONE => {
-                        if let Some(node) = body["node"].as_str() {
-                            tx.execute(
-                                "UPDATE nodes SET deleted = 1 WHERE id = ?1",
-                                params![node],
-                            )?;
-                        }
-                    }
                     KIND_SET_PROPERTY => {
                         if let (Some(n), Some(p)) = (body["node"].as_str(), body["path"].as_str()) {
                             pairs.insert((n.to_string(), p.to_string()));
@@ -851,6 +841,9 @@ impl LocalStore {
                     _ => {}
                 }
             }
+        }
+        for node in node_ids {
+            rematerialize_node(&tx, &node)?;
         }
         for (n, p) in pairs {
             rematerialize_prop(&tx, &n, &p)?;
@@ -1228,12 +1221,7 @@ fn apply_wire(
             let node = wire.body["node"]
                 .as_str()
                 .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
-            let label = wire.body["label"].as_str().unwrap_or("Node");
-            tx.execute(
-                "INSERT INTO nodes (id, label, deleted) VALUES (?1,?2,0)
-                 ON CONFLICT(id) DO UPDATE SET label = excluded.label",
-                params![node, label],
-            )?;
+            rematerialize_node(tx, node)?;
         }
         KIND_CREATE_EDGE => {
             let edge = wire.body["edge"]
@@ -1256,7 +1244,7 @@ fn apply_wire(
             let node = wire.body["node"]
                 .as_str()
                 .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
-            tx.execute("UPDATE nodes SET deleted = 1 WHERE id = ?1", params![node])?;
+            rematerialize_node(tx, node)?;
         }
         KIND_SET_PROPERTY => {
             let node = wire.body["node"]
@@ -1595,6 +1583,81 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
     if !has_deleted {
         let _ =
             conn.execute_batch("ALTER TABLE nodes ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;");
+    }
+    Ok(())
+}
+
+/// True when the DB already has identity meta and/or durable ops — `init` must refuse.
+fn already_initialized(conn: &Connection) -> Result<bool, StoreError> {
+    if meta_get(conn, "seed")?.is_some() {
+        return Ok(true);
+    }
+    if meta_get(conn, "ds")?.is_some() {
+        return Ok(true);
+    }
+    let ops: i64 = conn.query_row("SELECT COUNT(*) FROM ops", [], |r| r.get(0))?;
+    if ops > 0 {
+        return Ok(true);
+    }
+    let nodes: i64 = conn.query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get(0))?;
+    Ok(nodes > 0)
+}
+
+/// Rebuild a single node projection from CreateNode + Tombstone ops in the oplog.
+///
+/// Set-derived (SEC / I-1 / I-16): presence requires at least one CreateNode;
+/// `deleted` is true if any Tombstone exists for the node, independent of arrival order.
+/// Orphan tombstones (no create) leave no node row.
+fn rematerialize_node(
+    tx: &rusqlite::Transaction<'_>,
+    node: &str,
+) -> Result<(), StoreError> {
+    let mut label: Option<String> = None;
+    let mut tombstoned = false;
+    {
+        let mut stmt = tx.prepare(
+            "SELECT kind, body_json FROM ops
+             WHERE kind IN (?1, ?2)
+             ORDER BY physical_ms, logical, id",
+        )?;
+        let rows = stmt.query_map(params![KIND_CREATE_NODE as i64, KIND_TOMBSTONE as i64], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (kind, body_s) = row?;
+            let body: serde_json::Value = serde_json::from_str(&body_s)
+                .map_err(|e| StoreError::Invalid(e.to_string()))?;
+            let body_node = body.get("node").and_then(|v| v.as_str());
+            if body_node != Some(node) {
+                continue;
+            }
+            match kind as u64 {
+                KIND_CREATE_NODE => {
+                    let lbl = body
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Node");
+                    label = Some(lbl.to_string());
+                }
+                KIND_TOMBSTONE => {
+                    tombstoned = true;
+                }
+                _ => {}
+            }
+        }
+    }
+    match label {
+        None => {
+            tx.execute("DELETE FROM nodes WHERE id = ?1", params![node])?;
+        }
+        Some(label) => {
+            let deleted = if tombstoned { 1i64 } else { 0 };
+            tx.execute(
+                "INSERT INTO nodes (id, label, deleted) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET label = excluded.label, deleted = excluded.deleted",
+                params![node, label, deleted],
+            )?;
+        }
     }
     Ok(())
 }

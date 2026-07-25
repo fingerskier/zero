@@ -66,9 +66,11 @@ These rules were accepted for the LAN dataflow slice and are enforced by tests u
 4. **Dedup** by OpId; duplicates count as skipped, not errors.
 5. **Remote HLC:** receive rule with **60 s** max forward drift; overflow checked; failed ingress does not poison in-memory HLC.
 6. **Property-before-CreateNode:** remote SetProperty ops for unknown nodes are retained in the oplog and rematerialized as **shadow** property state; they MUST NOT invent a visible placeholder node. The CreateNode supplies the label regardless of arrival order, restart, or `replay`. Local mutation against an unknown node is rejected.
-7. **`replay`:** atomically wipe and rebuild `nodes`/`props` from the oplog only (no orphan materialization).
+7. **`replay`:** atomically wipe and rebuild `nodes`/`props`/`edges` from the oplog only (no orphan materialization).
+8. **CreateNode + Tombstone (set-derived):** node presence requires at least one CreateNode; `deleted` is true if **any** Tombstone for that node exists in the op set. Arrival order (including tombstone-before-create) MUST NOT change the normalized projection. Orphan tombstones leave no node row. Covered by `zerodb-storage/tests/r0_stabilize.rs`.
+9. **Fail-closed `init`:** `LocalStore::init` refuses when `seed`/`ds` meta or any ops/nodes already exist — no silent re-key of identity while retaining old-ds ops. There is no automatic destructive reset in this slice.
 
-Open gaps (not closed by the above): CRDT type pin under concurrent mixed types, causal `deps` buffering, WAL named crash-injection matrix (partial: `atomic_group` exists).
+Open gaps (not closed by the above): CRDT type pin under concurrent mixed types, causal `deps` buffering, WAL named crash-injection matrix (partial: `atomic_group` exists), full H3 edge-tombstone/prop model, M0 contract amendments (R0.2).
 
 ---
 
@@ -109,7 +111,7 @@ Smoke: `powershell -File scripts/test-mvp.ps1`.
 | E1 restart/replay | partial (open/replay tests; not full exemplar) | clock-rollback, larger load, kill-not-shutdown |
 | E2 model conflicts | kernel vectors + happy-path multi-peer smokes | store-level equal-ts / equivocation |
 | E4 groups/crash | `atomic_group` + atomic mid-batch rollback | fine-grained WAL named crash points (append/sync/apply) optional |
-| E9 delete | node tombstone + edge derived visibility | no cascade edge ops; late edges hidden |
+| E9 delete | node tombstone set-derived + edge derived visibility | no cascade edge ops; late edges hidden; no edge tombstone props |
 | Schema/query CLI | `schema-apply`, `query`, edges | interactive repl optional; full CBOR SchemaEpoch later |
 | Format freeze | `storage_format_version=1` written | Decision Log freeze still required |
 
