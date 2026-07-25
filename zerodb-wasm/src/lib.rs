@@ -223,7 +223,16 @@ impl ZeroDb {
             .map_err(err)?
             .into_iter()
             .map(|(id, label, deleted)| {
-                serde_json::json!({ "id": id, "label": label, "deleted": deleted })
+                let props: serde_json::Map<String, serde_json::Value> = if deleted {
+                    serde_json::Map::new()
+                } else {
+                    self.store
+                        .list_props(&id)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect()
+                };
+                serde_json::json!({ "id": id, "label": label, "deleted": deleted, "props": props })
             })
             .collect();
         to_js(&serde_json::Value::Array(arr))

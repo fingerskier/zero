@@ -579,16 +579,26 @@ impl<B: StoreBackend> LocalStore<B> {
         Ok(self.backend.node_deleted_state(node_hex)?.unwrap_or(false))
     }
 
+    /// Materialized properties of one node (empty when the node is deleted).
+    pub fn list_props(
+        &self,
+        node_hex: &str,
+    ) -> Result<Vec<(String, serde_json::Value)>, StoreError> {
+        let mut props = Vec::new();
+        for (p, vj) in self.backend.prop_list(node_hex)? {
+            if let Ok(v) = serde_json::from_str(&vj) {
+                props.push((p, v));
+            }
+        }
+        Ok(props)
+    }
+
     pub fn inspect(&self, path: &Path) -> Result<InspectReport, StoreError> {
         let mut nodes = Vec::new();
         for (id, label, deleted) in self.list_nodes()? {
             let mut props = BTreeMap::new();
             if !deleted {
-                for (p, vj) in self.backend.prop_list(&id)? {
-                    if let Ok(v) = serde_json::from_str(&vj) {
-                        props.insert(p, v);
-                    }
-                }
+                props.extend(self.list_props(&id)?);
             }
             nodes.push(InspectNode {
                 id,

@@ -166,9 +166,12 @@ function render() {
   $('nodes').innerHTML = ''
   $('nodeSel').innerHTML = ''
   for (const n of nodes) {
-    const title = db.getLww(n.id, 'title')
+    const props = Object.entries(n.props || {})
+      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+      .join(' · ')
     const li = document.createElement('li')
-    li.textContent = `${n.label} ${n.id.slice(0, 8)}${title ? ` title=${title}` : ''}`
+    li.textContent = `${n.label} ${n.id.slice(0, 8)}${props ? ` — ${props}` : ''}`
+    li.title = 'Materialized property values for this node (derived from the oplog)'
     $('nodes').appendChild(li)
     const opt = document.createElement('option')
     opt.value = n.id
