@@ -22,34 +22,34 @@
 </p>
 
 <fieldset>
-  <legend>identity</legend>
-  <div>peer: <code id="peer">-</code></div>
-  <div>datastore: <code id="ds">-</code></div>
-  <div>ops: <code id="ops">0</code></div>
-  <button id="reset">reset local store</button>
+  <legend title="Who this browser store is: every operation it writes is Ed25519-signed by this identity">identity</legend>
+  <div title="PeerId — BLAKE3 hash of this store's Ed25519 public key; identifies this device/author in every op">peer: <code id="peer">-</code></div>
+  <div title="Datastore id — identity of the shared database. A fresh (empty) store adopts the peer's datastore id on first sync; two stores only sync if these match">datastore: <code id="ds">-</code></div>
+  <div title="Number of operations in the local append-only oplog (the source of truth; visible state is derived from it)">ops: <code id="ops">0</code></div>
+  <button id="reset" title="Delete the IndexedDB copy (identity seed + data) and mint a fresh identity — this store becomes a brand-new empty peer">reset local store</button>
 </fieldset>
 
 <fieldset>
-  <legend>mutate</legend>
-  <input type="text" id="label" placeholder="node label" value="Todo" />
-  <button id="create">create node</button>
+  <legend title="Local writes — each one becomes a signed operation in the oplog, then syncs to peers">mutate</legend>
+  <input type="text" id="label" placeholder="node label" value="Todo" title="Label for the new graph node (its type/tag, e.g. Todo)" />
+  <button id="create" title="Create a new node in the local store (CreateNode operation)">create node</button>
   <div style="margin-top:0.5rem">
-    <select id="nodeSel"></select>
-    <input type="text" id="propKey" placeholder="key" value="title" />
-    <input type="text" id="propVal" placeholder="value" />
-    <button id="setProp">set lww</button>
+    <select id="nodeSel" title="Which existing node to set the property on"></select>
+    <input type="text" id="propKey" placeholder="key" value="title" title="Property name to set on the node" />
+    <input type="text" id="propVal" placeholder="value" title="Property value (string)" />
+    <button id="setProp" title="Set the property as a last-writer-wins register — concurrent writes resolve by hybrid-logical-clock timestamp">set lww</button>
   </div>
-  <ul id="nodes"></ul>
+  <ul id="nodes" title="Materialized view of the local store: nodes with their current property values"></ul>
 </fieldset>
 
 <fieldset>
-  <legend>sync</legend>
-  <input type="text" id="url" value="ws://127.0.0.1:9787" />
-  <button id="syncOnce">sync once</button>
-  <button id="autoSync">start auto-sync</button>
+  <legend title="Exchange operations with a Node peer over WebSocket (sync protocol v2, two-way)">sync</legend>
+  <input type="text" id="url" value="ws://127.0.0.1:9787" title="WebSocket URL of the peer to sync with (e.g. the examples/webapp server's WS_PORT). Plaintext and unauthenticated — trusted/local use only" />
+  <button id="syncOnce" title="One two-way session: send op ids, receive ops we lack, send ops the peer lacks — both sides converge">sync once</button>
+  <button id="autoSync" title="Repeat 'sync once' on an interval (poll-based) so edits on either side keep converging">start auto-sync</button>
 </fieldset>
 
-<div id="log"></div>
+<div id="log" title="Event log: local ops, sync sessions (accepted = ops received, sent = ops pushed), and errors"></div>
 
 <script type="module">
 // Local copy first (serving this directory), repo-root layout as fallback.

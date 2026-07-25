@@ -30,15 +30,15 @@
 <body>
 <h1>ZeroDB peer — one store, auto-converging</h1>
 
-<div class="conn" id="conn">connecting…</div>
+<div class="conn" id="conn" title="Connection status: the WebSocket address this server's store listens on for peers, the upstream peer it auto-syncs with (if ZERO_PEER is set), and the result of the last sync session">connecting…</div>
 
-<section class="pane" id="pane"><div class="meta"></div>
-  <form data-act="create"><input name="label" placeholder="label (e.g. Todo)" required><button>create node</button></form>
-  <form data-act="set"><select name="node" required></select><input name="key" placeholder="key" required><input name="value" placeholder="value" required><button>set</button></form>
-  <ul class="nodes"></ul>
+<section class="pane" id="pane"><div class="meta" title="This server's identity: peer = BLAKE3 of its Ed25519 public key (signs every op) · ds = datastore id (peers only sync when it matches) · ops = length of the append-only oplog"></div>
+  <form data-act="create"><input name="label" placeholder="label (e.g. Todo)" required title="Label for the new graph node (its type/tag)"><button title="Create a new node in this server's store (a signed CreateNode operation)">create node</button></form>
+  <form data-act="set"><select name="node" required title="Which existing node to set the property on"></select><input name="key" placeholder="key" required title="Property name to set"><input name="value" placeholder="value" required title="Property value (stored as a last-writer-wins register; concurrent writes resolve by timestamp)"><button title="Write the property to the local store; it syncs to peers automatically">set</button></form>
+  <ul class="nodes" title="Materialized view of the store: nodes with their current property values (derived from the oplog)"></ul>
 </section>
 
-<div class="log" id="log"></div>
+<div class="log" id="log" title="Live event stream: local ops, sync sessions (serve = a peer connected to us, connect = we dialed the upstream peer; accepted = ops received, sent = ops pushed), and errors"></div>
 
 <script>
 const $ = (sel, el = document) => el.querySelector(sel)
@@ -89,8 +89,8 @@ async function refresh() {
     if (n.deleted) li.className = 'deleted'
     const props = Object.entries(n.props || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' · ')
     li.innerHTML = `<b>${n.label}</b> <span class="props">${props}</span>
-      <div class="nid">${n.id} <button data-copy="${n.id}">copy id</button>
-      <button data-del="${n.id}">delete</button></div>`
+      <div class="nid">${n.id} <button data-copy="${n.id}" title="Copy this node's 16-byte id to the clipboard">copy id</button>
+      <button data-del="${n.id}" title="Tombstone this node (a delete operation — the node is hidden everywhere but the history stays in the oplog)">delete</button></div>`
     ul.appendChild(li)
   }
 }
