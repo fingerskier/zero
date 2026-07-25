@@ -8,6 +8,17 @@ export declare class Database {
   static open(path: string): Database
   /** Release the SQLite connection (required before deleting the file on Windows). */
   close(): void
+  /**
+   * Register a change callback. Returns a subscription id for `unsubscribe`.
+   *
+   * Events (JSON): `{kind:'op', method, node, key?, opId}` for local
+   * mutations, `{kind:'import', accepted, skipped}`, `{kind:'replay'}`.
+   * Delivery is asynchronous (next event-loop tick). Experimental surface;
+   * wire/event shapes are versioned-experimental and may change pre-freeze.
+   */
+  subscribe(callback: (arg: any) => void): number
+  /** Remove a subscription; unknown ids are a no-op. */
+  unsubscribe(id: number): void
   datastoreId(): string
   peerId(): string
   opCount(): number
@@ -26,6 +37,11 @@ export declare class Database {
   flagDisable(node: string, key: string): string
   /** List nodes as JSON array of `{ id, label, deleted }`. */
   listNodes(): any
+  /**
+   * Run an O3 minimal query (`MATCH/WHERE/RETURN/ORDER BY/LIMIT`).
+   * Returns a JSON array of row objects keyed by return item (e.g. `"t.title"`).
+   */
+  query(q: string): any
   /** Full inspect report as JSON (path is reported as the given string). */
   inspect(path: string): any
   replay(): void
