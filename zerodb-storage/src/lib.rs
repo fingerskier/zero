@@ -1,18 +1,24 @@
 //! Local durable store for the M1 MVP slice.
 //!
-//! SQLite: oplog + materialized props + nodes. Each accepted op commits
-//! append + rematerialize + HLC in one transaction. Property state is rebuilt
-//! from the full op set for that (entity, path) so multi-peer CRDT merges stay
-//! consistent with the KERNEL replica rules. Node create/tombstone state is
-//! likewise set-derived (order-independent). `init` is fail-closed against
-//! re-keying an already-initialized database.
+//! Persistence (oplog + materialized props/nodes/edges + meta KV) lives behind
+//! the [`StoreBackend`] trait; [`SqliteBackend`] is the default implementation.
+//! Each accepted op commits append + rematerialize + HLC in one transaction.
+//! Property state is rebuilt from the full op set for that (entity, path) so
+//! multi-peer CRDT merges stay consistent with the KERNEL replica rules. Node
+//! create/tombstone state is likewise set-derived (order-independent). `init`
+//! is fail-closed against re-keying an already-initialized database.
+
+mod backend;
+mod sqlite_backend;
+
+pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
+pub use sqlite_backend::SqliteBackend;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::{Signer, SigningKey};
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -25,10 +31,10 @@ use zerodb_core::query::parse as parse_query;
 use zerodb_core::queryeval::{self, GEdge, GNode, Graph, QValue};
 use zerodb_core::sign::{DOMAIN_OP_SIG, verify_op};
 
-const KIND_CREATE_NODE: u64 = 1;
-const KIND_CREATE_EDGE: u64 = 2;
-const KIND_SET_PROPERTY: u64 = 3;
-const KIND_TOMBSTONE: u64 = 4;
+pub(crate) const KIND_CREATE_NODE: u64 = 1;
+pub(crate) const KIND_CREATE_EDGE: u64 = 2;
+pub(crate) const KIND_SET_PROPERTY: u64 = 3;
+pub(crate) const KIND_TOMBSTONE: u64 = 4;
 const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
 /// Experimental local SQLite layout version (KERNEL `storage_format_version`).
 const STORAGE_FORMAT_VERSION: u64 = 1;
@@ -36,7 +42,7 @@ const STORAGE_FORMAT_VERSION: u64 = 1;
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("sqlite: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+    Sqlite(String),
     #[error("io: {0}")]
     Io(String),
     #[error("cbor: {0}")]
@@ -113,7 +119,7 @@ pub struct InspectEdge {
 }
 
 pub struct LocalStore {
-    conn: Connection,
+    backend: SqliteBackend,
     signing: SigningKey,
     author: [u8; 32],
     author_pk: [u8; 32],
@@ -131,9 +137,9 @@ struct ValidatedWire {
 
 impl LocalStore {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let conn = Connection::open(path)?;
-        migrate(&conn)?;
-        let seed: [u8; 32] = meta_get(&conn, "seed")?
+        let backend = SqliteBackend::open(path)?;
+        let seed: [u8; 32] = backend
+            .meta_get("seed")?
             .ok_or_else(|| {
                 StoreError::Invalid("database not initialized — run `zerodb init`".into())
             })?
@@ -142,14 +148,15 @@ impl LocalStore {
         let signing = SigningKey::from_bytes(&seed);
         let author_pk = signing.verifying_key().to_bytes();
         let author = *blake3::hash(&author_pk).as_bytes();
-        let ds: [u8; 32] = meta_get(&conn, "ds")?
+        let ds: [u8; 32] = backend
+            .meta_get("ds")?
             .ok_or_else(|| StoreError::Invalid("missing ds".into()))?
             .try_into()
             .map_err(|_| StoreError::Invalid("ds length".into()))?;
-        ensure_storage_format_version(&conn)?;
-        let (hlc_p, hlc_l) = recover_hlc_from_oplog(&conn)?;
+        ensure_storage_format_version(&backend)?;
+        let (hlc_p, hlc_l) = recover_hlc_from_oplog(&backend)?;
         Ok(Self {
-            conn,
+            backend,
             signing,
             author,
             author_pk,
@@ -163,10 +170,9 @@ impl LocalStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| StoreError::Io(e.to_string()))?;
         }
-        let conn = Connection::open(path)?;
-        migrate(&conn)?;
+        let backend = SqliteBackend::open(path)?;
         // Fail closed: never re-key an already-initialized (or nonempty) database.
-        if already_initialized(&conn)? {
+        if already_initialized(&backend)? {
             return Err(StoreError::Invalid(
                 "database already initialized — refuse re-init (no silent re-key)".into(),
             ));
@@ -183,13 +189,13 @@ impl LocalStore {
         hasher.update(&author);
         hasher.update(&salt);
         let ds = *hasher.finalize().as_bytes();
-        meta_set(&conn, "seed", &seed)?;
-        meta_set(&conn, "ds", &ds)?;
-        meta_set(&conn, "salt", &salt)?;
-        meta_set_u64(&conn, "hlc_p", 0)?;
-        meta_set_u64(&conn, "hlc_l", 0)?;
-        meta_set_u64(&conn, "storage_format_version", STORAGE_FORMAT_VERSION)?;
-        drop(conn);
+        backend.meta_set("seed", &seed)?;
+        backend.meta_set("ds", &ds)?;
+        backend.meta_set("salt", &salt)?;
+        meta_set_u64(&backend, "hlc_p", 0)?;
+        meta_set_u64(&backend, "hlc_l", 0)?;
+        meta_set_u64(&backend, "storage_format_version", STORAGE_FORMAT_VERSION)?;
+        drop(backend);
         Self::open(path)
     }
 
@@ -276,38 +282,14 @@ impl LocalStore {
             "dst": dst_hex,
         });
         self.commit_local(KIND_CREATE_EDGE, body, body_json, |tx, _| {
-            tx.execute(
-                "INSERT INTO edges (id, label, src, dst, deleted) VALUES (?1,?2,?3,?4,0)
-                 ON CONFLICT(id) DO UPDATE SET label=excluded.label, src=excluded.src, dst=excluded.dst",
-                params![edge_hex, label, src_hex, dst_hex],
-            )?;
-            Ok(())
+            tx.edge_upsert(&edge_hex, label, src_hex, dst_hex)
         })?;
         Ok(edge_hex)
     }
 
     /// Visible edges only (both endpoints live and not deleted; edge not deleted).
     pub fn list_edges_visible(&self) -> Result<Vec<(String, String, String, String)>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT e.id, e.label, e.src, e.dst FROM edges e
-             JOIN nodes s ON s.id = e.src AND s.deleted = 0
-             JOIN nodes d ON d.id = e.dst AND d.deleted = 0
-             WHERE e.deleted = 0
-             ORDER BY e.id",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-            ))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
+        self.backend.edge_list_visible()
     }
 
     /// Apply a simplified JSON schema pin: `{ "nodes": { "Todo": { "props": { "title": "lww" }}} }`.
@@ -334,12 +316,14 @@ impl LocalStore {
                 let _ = path;
             }
         }
-        meta_set(&self.conn, "schema_json", schema_json.as_bytes())?;
-        Ok(())
+        self.backend.meta_set("schema_json", schema_json.as_bytes())
     }
 
     pub fn schema_json(&self) -> Result<Option<String>, StoreError> {
-        Ok(meta_get(&self.conn, "schema_json")?.map(|b| String::from_utf8_lossy(&b).into_owned()))
+        Ok(self
+            .backend
+            .meta_get("schema_json")?
+            .map(|b| String::from_utf8_lossy(&b).into_owned()))
     }
 
     /// O3 minimal query over visible graph materialization.
@@ -377,14 +361,7 @@ impl LocalStore {
                 continue;
             }
             let mut props = BTreeMap::new();
-            let mut stmt = self
-                .conn
-                .prepare("SELECT path, value_json FROM props WHERE entity = ?1 ORDER BY path")?;
-            let rows = stmt.query_map(params![id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?;
-            for row in rows {
-                let (p, vj) = row?;
+            for (p, vj) in self.backend.prop_list(&id)? {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&vj) {
                     props.insert(p, json_to_qvalue(&v));
                 }
@@ -491,7 +468,7 @@ impl LocalStore {
         extra: serde_json::Value,
     ) -> Result<String, StoreError> {
         let _ = decode_node(node_hex)?;
-        match self.node_deleted_state(node_hex)? {
+        match self.backend.node_deleted_state(node_hex)? {
             None => return Err(StoreError::NotFound(format!("node {node_hex}"))),
             Some(true) => return Err(StoreError::Invalid("node is deleted".into())),
             Some(false) => {}
@@ -509,10 +486,7 @@ impl LocalStore {
         let node_s = node_hex.to_string();
         let path_s = path.to_string();
         self.commit_local(KIND_SET_PROPERTY, body, body_json, move |tx, _| {
-            tx.execute(
-                "INSERT OR IGNORE INTO nodes (id, label, deleted) VALUES (?1, ?2, 0)",
-                params![node_s, "Node"],
-            )?;
+            tx.node_insert_ignore(&node_s, "Node")?;
             rematerialize_prop(tx, &node_s, &path_s)?;
             Ok(())
         })
@@ -523,15 +497,10 @@ impl LocalStore {
         node_hex: &str,
         path: &str,
     ) -> Result<Option<serde_json::Value>, StoreError> {
-        if self.node_deleted_state(node_hex)? != Some(false) {
+        if self.backend.node_deleted_state(node_hex)? != Some(false) {
             return Ok(None);
         }
-        let mut stmt = self
-            .conn
-            .prepare("SELECT value_json FROM props WHERE entity = ?1 AND path = ?2")?;
-        let v: Option<String> = stmt
-            .query_row(params![node_hex, path], |r| r.get(0))
-            .optional()?;
+        let v = self.backend.prop_get(node_hex, path)?;
         Ok(v.and_then(|j| serde_json::from_str(&j).ok()))
     }
 
@@ -542,37 +511,11 @@ impl LocalStore {
     }
 
     pub fn list_nodes(&self) -> Result<Vec<(String, String, bool)>, StoreError> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, label, deleted FROM nodes ORDER BY id")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)? != 0,
-            ))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
+        self.backend.node_list()
     }
 
     pub fn is_deleted(&self, node_hex: &str) -> Result<bool, StoreError> {
-        Ok(self.node_deleted_state(node_hex)?.unwrap_or(false))
-    }
-
-    fn node_deleted_state(&self, node_hex: &str) -> Result<Option<bool>, StoreError> {
-        let d: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT deleted FROM nodes WHERE id = ?1",
-                params![node_hex],
-                |r| r.get(0),
-            )
-            .optional()?;
-        Ok(d.map(|value| value != 0))
+        Ok(self.backend.node_deleted_state(node_hex)?.unwrap_or(false))
     }
 
     pub fn inspect(&self, path: &Path) -> Result<InspectReport, StoreError> {
@@ -580,14 +523,7 @@ impl LocalStore {
         for (id, label, deleted) in self.list_nodes()? {
             let mut props = BTreeMap::new();
             if !deleted {
-                let mut stmt = self.conn.prepare(
-                    "SELECT path, value_json FROM props WHERE entity = ?1 ORDER BY path",
-                )?;
-                let rows = stmt.query_map(params![id], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-                })?;
-                for row in rows {
-                    let (p, vj) = row?;
+                for (p, vj) in self.backend.prop_list(&id)? {
                     if let Ok(v) = serde_json::from_str(&vj) {
                         props.insert(p, v);
                     }
@@ -601,33 +537,18 @@ impl LocalStore {
             });
         }
         let mut edges = Vec::new();
-        {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT id, label, src, dst, deleted FROM edges ORDER BY id")?;
-            let rows = stmt.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, i64>(4)? != 0,
-                ))
-            })?;
-            for row in rows {
-                let (id, label, src, dst, deleted) = row?;
-                let visible = !deleted
-                    && self.node_deleted_state(&src)? == Some(false)
-                    && self.node_deleted_state(&dst)? == Some(false);
-                edges.push(InspectEdge {
-                    id,
-                    label,
-                    src,
-                    dst,
-                    deleted,
-                    visible,
-                });
-            }
+        for row in self.backend.edge_list()? {
+            let visible = !row.deleted
+                && self.backend.node_deleted_state(&row.src)? == Some(false)
+                && self.backend.node_deleted_state(&row.dst)? == Some(false);
+            edges.push(InspectEdge {
+                id: row.id,
+                label: row.label,
+                src: row.src,
+                dst: row.dst,
+                deleted: row.deleted,
+                visible,
+            });
         }
         Ok(InspectReport {
             path: path.display().to_string(),
@@ -668,18 +589,13 @@ impl LocalStore {
     }
 
     pub fn op_count(&self) -> Result<u64, StoreError> {
-        let n: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM ops", [], |r| r.get(0))?;
-        Ok(n as u64)
+        self.backend.op_count()
     }
 
     pub fn list_op_ids(&self) -> Result<Vec<[u8; 32]>, StoreError> {
-        let mut stmt = self.conn.prepare("SELECT id FROM ops")?;
-        let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
         let mut out = Vec::new();
-        for row in rows {
-            let arr: [u8; 32] = row?
+        for id in self.backend.op_ids()? {
+            let arr: [u8; 32] = id
                 .try_into()
                 .map_err(|_| StoreError::Invalid("op id length".into()))?;
             out.push(arr);
@@ -689,13 +605,9 @@ impl LocalStore {
     }
 
     pub fn export_all(&self) -> Result<ExportBundle, StoreError> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT wire_json FROM ops ORDER BY physical_ms, logical, id")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut ops = Vec::new();
-        for row in rows {
-            ops.push(serde_json::from_str(&row?).map_err(|e| StoreError::Invalid(e.to_string()))?);
+        for wire in self.backend.op_wires()? {
+            ops.push(serde_json::from_str(&wire).map_err(|e| StoreError::Invalid(e.to_string()))?);
         }
         Ok(ExportBundle {
             format: 1,
@@ -707,15 +619,7 @@ impl LocalStore {
     pub fn export_ops_by_id(&self, ids: &[[u8; 32]]) -> Result<Vec<WireOp>, StoreError> {
         let mut out = Vec::new();
         for id in ids {
-            let wire: Option<String> = self
-                .conn
-                .query_row(
-                    "SELECT wire_json FROM ops WHERE id = ?1",
-                    params![id.as_slice()],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if let Some(s) = wire {
+            if let Some(s) = self.backend.op_wire_by_id(id)? {
                 out.push(serde_json::from_str(&s).map_err(|e| StoreError::Invalid(e.to_string()))?);
             }
         }
@@ -758,23 +662,24 @@ impl LocalStore {
         let mut next_hlc_l = self.hlc_l;
         let mut accepted = 0u32;
         let mut skipped = 0u32;
-        let tx = self.conn.transaction()?;
-        if adopting {
-            meta_set(&tx, "ds", &candidate_ds)?;
-        }
-        for (op, validated) in bundle.ops.iter().zip(&validated) {
-            if wire_exists(&tx, &validated.id)? {
-                skipped += 1;
-                continue;
+        self.backend.with_txn(&mut |tx| {
+            if adopting {
+                tx.meta_set("ds", &candidate_ds)?;
             }
-            (next_hlc_p, next_hlc_l) =
-                next_remote_hlc(next_hlc_p, next_hlc_l, op.ts.p, op.ts.l, now_ms())?;
-            apply_wire(&tx, op, validated)?;
-            accepted += 1;
-        }
-        meta_set_u64(&tx, "hlc_p", next_hlc_p)?;
-        meta_set_u64(&tx, "hlc_l", next_hlc_l as u64)?;
-        tx.commit()?;
+            for (op, validated) in bundle.ops.iter().zip(&validated) {
+                if tx.op_exists(&validated.id)? {
+                    skipped += 1;
+                    continue;
+                }
+                (next_hlc_p, next_hlc_l) =
+                    next_remote_hlc(next_hlc_p, next_hlc_l, op.ts.p, op.ts.l, now_ms())?;
+                apply_wire(tx, op, validated)?;
+                accepted += 1;
+            }
+            meta_set_u64(tx, "hlc_p", next_hlc_p)?;
+            meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
+            Ok(())
+        })?;
 
         self.ds = candidate_ds;
         self.hlc_p = next_hlc_p;
@@ -785,38 +690,20 @@ impl LocalStore {
     /// Rebuild all materialization from the oplog (E1 fresh-replay).
     /// Nodes are set-derived from CreateNode + Tombstone ops (order-independent).
     pub fn replay_all(&mut self) -> Result<(), StoreError> {
-        let tx = self.conn.transaction()?;
-        tx.execute("DELETE FROM props", [])?;
-        tx.execute("DELETE FROM nodes", [])?;
-        tx.execute("DELETE FROM edges", [])?;
-        let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
-        let mut node_ids: BTreeSet<String> = BTreeSet::new();
         let mut max_p: u64 = 0;
         let mut max_l: u16 = 0;
-        {
-            let mut stmt = tx.prepare(
-                "SELECT kind, body_json, physical_ms, logical FROM ops
-                 ORDER BY physical_ms, logical, id",
-            )?;
-            let rows = stmt.query_map([], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?,
-                ))
-            })?;
-            for row in rows {
-                let (kind, body_s, physical_ms, logical) = row?;
-                let p = physical_ms as u64;
-                let l = logical as u16;
-                if (p, l) > (max_p, max_l) {
-                    max_p = p;
-                    max_l = l;
+        self.backend.with_txn(&mut |tx| {
+            tx.wipe_materialized()?;
+            let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
+            let mut node_ids: BTreeSet<String> = BTreeSet::new();
+            for row in tx.op_scan()? {
+                if (row.physical_ms, row.logical) > (max_p, max_l) {
+                    max_p = row.physical_ms;
+                    max_l = row.logical;
                 }
-                let body: serde_json::Value = serde_json::from_str(&body_s)
+                let body: serde_json::Value = serde_json::from_str(&row.body_json)
                     .map_err(|e| StoreError::Invalid(e.to_string()))?;
-                match kind as u64 {
+                match row.kind {
                     KIND_CREATE_NODE | KIND_TOMBSTONE => {
                         if let Some(node) = body["node"].as_str() {
                             node_ids.insert(node.to_string());
@@ -827,11 +714,7 @@ impl LocalStore {
                         let label = body["label"].as_str().unwrap_or("Edge");
                         let src = body["src"].as_str().unwrap_or("");
                         let dst = body["dst"].as_str().unwrap_or("");
-                        tx.execute(
-                            "INSERT INTO edges (id, label, src, dst, deleted) VALUES (?1,?2,?3,?4,0)
-                             ON CONFLICT(id) DO UPDATE SET label=excluded.label, src=excluded.src, dst=excluded.dst",
-                            params![edge, label, src, dst],
-                        )?;
+                        tx.edge_upsert(edge, label, src, dst)?;
                     }
                     KIND_SET_PROPERTY => {
                         if let (Some(n), Some(p)) = (body["node"].as_str(), body["path"].as_str()) {
@@ -841,16 +724,16 @@ impl LocalStore {
                     _ => {}
                 }
             }
-        }
-        for node in node_ids {
-            rematerialize_node(&tx, &node)?;
-        }
-        for (n, p) in pairs {
-            rematerialize_prop(&tx, &n, &p)?;
-        }
-        meta_set_u64(&tx, "hlc_p", max_p)?;
-        meta_set_u64(&tx, "hlc_l", max_l as u64)?;
-        tx.commit()?;
+            for node in node_ids {
+                rematerialize_node(tx, &node)?;
+            }
+            for (n, p) in pairs {
+                rematerialize_prop(tx, &n, &p)?;
+            }
+            meta_set_u64(tx, "hlc_p", max_p)?;
+            meta_set_u64(tx, "hlc_l", max_l as u64)?;
+            Ok(())
+        })?;
         self.hlc_p = max_p;
         self.hlc_l = max_l;
         Ok(())
@@ -858,17 +741,18 @@ impl LocalStore {
 
     pub fn ingest_wire(&mut self, wire: &WireOp) -> Result<bool, StoreError> {
         let validated = validate_wire_for_ds(wire, &self.ds)?;
-        if wire_exists(&self.conn, &validated.id)? {
+        if self.backend.op_exists(&validated.id)? {
             return Ok(false);
         }
 
         let (next_hlc_p, next_hlc_l) =
             next_remote_hlc(self.hlc_p, self.hlc_l, wire.ts.p, wire.ts.l, now_ms())?;
-        let tx = self.conn.transaction()?;
-        apply_wire(&tx, wire, &validated)?;
-        meta_set_u64(&tx, "hlc_p", next_hlc_p)?;
-        meta_set_u64(&tx, "hlc_l", next_hlc_l as u64)?;
-        tx.commit()?;
+        self.backend.with_txn(&mut |tx| {
+            apply_wire(tx, wire, &validated)?;
+            meta_set_u64(tx, "hlc_p", next_hlc_p)?;
+            meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
+            Ok(())
+        })?;
 
         self.hlc_p = next_hlc_p;
         self.hlc_l = next_hlc_l;
@@ -881,7 +765,7 @@ impl LocalStore {
         path: &str,
         value: &str,
     ) -> Result<Vec<String>, StoreError> {
-        let ops = load_prop_ops(&self.conn, node, path)?;
+        let ops = load_prop_ops(&self.backend, node, path)?;
         let target = Value::Text(value.into());
         let live: BTreeSet<Vec<u8>> = {
             let mut add_dots: BTreeMap<Vec<u8>, Value> = BTreeMap::new();
@@ -909,7 +793,7 @@ impl LocalStore {
     }
 
     fn flag_dots(&self, node: &str, path: &str) -> Result<Vec<String>, StoreError> {
-        let ops = load_prop_ops(&self.conn, node, path)?;
+        let ops = load_prop_ops(&self.backend, node, path)?;
         let mut enables: BTreeSet<Vec<u8>> = BTreeSet::new();
         let mut tombs: BTreeSet<Vec<u8>> = BTreeSet::new();
         for op in &ops {
@@ -932,7 +816,7 @@ impl LocalStore {
             .collect())
     }
 
-    /// Run multiple local mutations in one SQLite transaction sharing a GroupId (M1-e4 / I-13).
+    /// Run multiple local mutations in one backend transaction sharing a GroupId (M1-e4 / I-13).
     /// On any error from `f`, nothing is persisted.
     pub fn atomic_group<F, T>(&mut self, f: F) -> Result<T, StoreError>
     where
@@ -956,7 +840,7 @@ impl LocalStore {
         Ok(out)
     }
 
-    /// Apply a batch of already-signed wires in one SQLite transaction (E4 layer 2).
+    /// Apply a batch of already-signed wires in one backend transaction (E4 layer 2).
     /// On any validation/apply failure the whole batch is rolled back.
     pub fn commit_wires_atomic(&mut self, wires: &[WireOp]) -> Result<(), StoreError> {
         if wires.is_empty() {
@@ -964,18 +848,20 @@ impl LocalStore {
         }
         let mut next_p = self.hlc_p;
         let mut next_l = self.hlc_l;
-        let tx = self.conn.transaction()?;
-        for wire in wires {
-            let validated = validate_wire_for_ds(wire, &self.ds)?;
-            if wire_exists(&tx, &validated.id)? {
-                return Err(StoreError::Duplicate);
+        let ds = self.ds;
+        self.backend.with_txn(&mut |tx| {
+            for wire in wires {
+                let validated = validate_wire_for_ds(wire, &ds)?;
+                if tx.op_exists(&validated.id)? {
+                    return Err(StoreError::Duplicate);
+                }
+                (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, now_ms())?;
+                apply_wire(tx, wire, &validated)?;
             }
-            (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, now_ms())?;
-            apply_wire(&tx, wire, &validated)?;
-        }
-        meta_set_u64(&tx, "hlc_p", next_p)?;
-        meta_set_u64(&tx, "hlc_l", next_l as u64)?;
-        tx.commit()?;
+            meta_set_u64(tx, "hlc_p", next_p)?;
+            meta_set_u64(tx, "hlc_l", next_l as u64)?;
+            Ok(())
+        })?;
         self.hlc_p = next_p;
         self.hlc_l = next_l;
         Ok(())
@@ -989,7 +875,7 @@ impl LocalStore {
         materialize: F,
     ) -> Result<String, StoreError>
     where
-        F: FnOnce(&rusqlite::Transaction<'_>, &WireOp) -> Result<(), StoreError>,
+        F: FnOnce(&dyn BackendTxn, &WireOp) -> Result<(), StoreError>,
     {
         let ts = self.next_local_ts()?;
         let env = OpEnvelope {
@@ -1027,27 +913,28 @@ impl LocalStore {
         };
         let wire_json =
             serde_json::to_string(&wire).map_err(|e| StoreError::Invalid(e.to_string()))?;
-        let tx = self.conn.transaction()?;
-        // Insert op first so rematerialize sees the new op in the set.
-        tx.execute(
-            "INSERT INTO ops (id, author, author_pk, physical_ms, logical, kind, body_json, sig, wire_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![
-                id.as_slice(),
-                self.author.as_slice(),
-                self.author_pk.as_slice(),
-                ts.physical_ms as i64,
-                ts.logical as i64,
-                kind as i64,
-                body_json.to_string(),
-                sig.as_slice(),
-                wire_json,
-            ],
-        )?;
-        materialize(&tx, &wire)?;
-        meta_set_u64(&tx, "hlc_p", ts.physical_ms)?;
-        meta_set_u64(&tx, "hlc_l", ts.logical as u64)?;
-        tx.commit()?;
+        let rec = OpRecord {
+            id,
+            author: self.author,
+            author_pk: self.author_pk,
+            physical_ms: ts.physical_ms,
+            logical: ts.logical,
+            kind,
+            body_json: body_json.to_string(),
+            sig,
+            wire_json,
+        };
+        let mut materialize = Some(materialize);
+        self.backend.with_txn(&mut |tx| {
+            // Insert op first so rematerialize sees the new op in the set.
+            tx.op_insert(&rec)?;
+            (materialize
+                .take()
+                .expect("commit_local transaction closure runs once"))(tx, &wire)?;
+            meta_set_u64(tx, "hlc_p", ts.physical_ms)?;
+            meta_set_u64(tx, "hlc_l", ts.logical as u64)?;
+            Ok(())
+        })?;
         self.hlc_p = ts.physical_ms;
         self.hlc_l = ts.logical;
         Ok(hex::encode(id))
@@ -1182,39 +1069,24 @@ impl GroupBuilder {
     }
 }
 
-fn wire_exists(conn: &Connection, id: &[u8; 32]) -> Result<bool, StoreError> {
-    Ok(conn
-        .query_row(
-            "SELECT 1 FROM ops WHERE id = ?1",
-            params![id.as_slice()],
-            |_| Ok(true),
-        )
-        .optional()?
-        .unwrap_or(false))
-}
-
 fn apply_wire(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &dyn BackendTxn,
     wire: &WireOp,
     validated: &ValidatedWire,
 ) -> Result<(), StoreError> {
     let body_json = wire.body.to_string();
     let wire_json = serde_json::to_string(wire).map_err(|e| StoreError::Invalid(e.to_string()))?;
-    tx.execute(
-        "INSERT INTO ops (id, author, author_pk, physical_ms, logical, kind, body_json, sig, wire_json)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-        params![
-            validated.id.as_slice(),
-            validated.author.as_slice(),
-            validated.author_pk.as_slice(),
-            wire.ts.p as i64,
-            wire.ts.l as i64,
-            wire.kind as i64,
-            body_json,
-            validated.sig.as_slice(),
-            wire_json,
-        ],
-    )?;
+    tx.op_insert(&OpRecord {
+        id: validated.id,
+        author: validated.author,
+        author_pk: validated.author_pk,
+        physical_ms: wire.ts.p,
+        logical: wire.ts.l,
+        kind: wire.kind,
+        body_json,
+        sig: validated.sig,
+        wire_json,
+    })?;
 
     match wire.kind {
         KIND_CREATE_NODE => {
@@ -1234,11 +1106,7 @@ fn apply_wire(
             let dst = wire.body["dst"]
                 .as_str()
                 .ok_or_else(|| StoreError::Invalid("body.dst".into()))?;
-            tx.execute(
-                "INSERT INTO edges (id, label, src, dst, deleted) VALUES (?1,?2,?3,?4,0)
-                 ON CONFLICT(id) DO UPDATE SET label=excluded.label, src=excluded.src, dst=excluded.dst",
-                params![edge, label, src, dst],
-            )?;
+            tx.edge_upsert(edge, label, src, dst)?;
         }
         KIND_TOMBSTONE => {
             let node = wire.body["node"]
@@ -1537,70 +1405,18 @@ fn validate_observed(value: Option<&serde_json::Value>) -> Result<(), StoreError
     Ok(())
 }
 
-fn migrate(conn: &Connection) -> Result<(), StoreError> {
-    conn.execute_batch(
-        "
-        PRAGMA journal_mode=WAL;
-        CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v BLOB NOT NULL);
-        CREATE TABLE IF NOT EXISTS ops (
-          id BLOB PRIMARY KEY,
-          author BLOB NOT NULL,
-          author_pk BLOB NOT NULL,
-          physical_ms INTEGER NOT NULL,
-          logical INTEGER NOT NULL,
-          kind INTEGER NOT NULL,
-          body_json TEXT NOT NULL,
-          sig BLOB NOT NULL,
-          wire_json TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS nodes (
-          id TEXT PRIMARY KEY,
-          label TEXT NOT NULL,
-          deleted INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS props (
-          entity TEXT NOT NULL,
-          path TEXT NOT NULL,
-          crdt TEXT NOT NULL,
-          value_json TEXT NOT NULL,
-          PRIMARY KEY (entity, path)
-        );
-        CREATE TABLE IF NOT EXISTS edges (
-          id TEXT PRIMARY KEY,
-          label TEXT NOT NULL,
-          src TEXT NOT NULL,
-          dst TEXT NOT NULL,
-          deleted INTEGER NOT NULL DEFAULT 0
-        );
-        ",
-    )?;
-    // migrate old nodes without deleted column
-    let has_deleted: bool = conn
-        .prepare("PRAGMA table_info(nodes)")?
-        .query_map([], |r| r.get::<_, String>(1))?
-        .filter_map(|x| x.ok())
-        .any(|c| c == "deleted");
-    if !has_deleted {
-        let _ =
-            conn.execute_batch("ALTER TABLE nodes ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;");
-    }
-    Ok(())
-}
-
 /// True when the DB already has identity meta and/or durable ops — `init` must refuse.
-fn already_initialized(conn: &Connection) -> Result<bool, StoreError> {
-    if meta_get(conn, "seed")?.is_some() {
+fn already_initialized(b: &dyn BackendTxn) -> Result<bool, StoreError> {
+    if b.meta_get("seed")?.is_some() {
         return Ok(true);
     }
-    if meta_get(conn, "ds")?.is_some() {
+    if b.meta_get("ds")?.is_some() {
         return Ok(true);
     }
-    let ops: i64 = conn.query_row("SELECT COUNT(*) FROM ops", [], |r| r.get(0))?;
-    if ops > 0 {
+    if b.op_count()? > 0 {
         return Ok(true);
     }
-    let nodes: i64 = conn.query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get(0))?;
-    Ok(nodes > 0)
+    Ok(b.node_count()? > 0)
 }
 
 /// Rebuild a single node projection from CreateNode + Tombstone ops in the oplog.
@@ -1608,72 +1424,40 @@ fn already_initialized(conn: &Connection) -> Result<bool, StoreError> {
 /// Set-derived (SEC / I-1 / I-16): presence requires at least one CreateNode;
 /// `deleted` is true if any Tombstone exists for the node, independent of arrival order.
 /// Orphan tombstones (no create) leave no node row.
-fn rematerialize_node(
-    tx: &rusqlite::Transaction<'_>,
-    node: &str,
-) -> Result<(), StoreError> {
+fn rematerialize_node(tx: &dyn BackendTxn, node: &str) -> Result<(), StoreError> {
     let mut label: Option<String> = None;
     let mut tombstoned = false;
-    {
-        let mut stmt = tx.prepare(
-            "SELECT kind, body_json FROM ops
-             WHERE kind IN (?1, ?2)
-             ORDER BY physical_ms, logical, id",
-        )?;
-        let rows = stmt.query_map(params![KIND_CREATE_NODE as i64, KIND_TOMBSTONE as i64], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-        })?;
-        for row in rows {
-            let (kind, body_s) = row?;
-            let body: serde_json::Value = serde_json::from_str(&body_s)
-                .map_err(|e| StoreError::Invalid(e.to_string()))?;
-            let body_node = body.get("node").and_then(|v| v.as_str());
-            if body_node != Some(node) {
-                continue;
+    for (kind, body_s) in tx.op_scan_node_kinds()? {
+        let body: serde_json::Value =
+            serde_json::from_str(&body_s).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let body_node = body.get("node").and_then(|v| v.as_str());
+        if body_node != Some(node) {
+            continue;
+        }
+        match kind {
+            KIND_CREATE_NODE => {
+                let lbl = body
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Node");
+                label = Some(lbl.to_string());
             }
-            match kind as u64 {
-                KIND_CREATE_NODE => {
-                    let lbl = body
-                        .get("label")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Node");
-                    label = Some(lbl.to_string());
-                }
-                KIND_TOMBSTONE => {
-                    tombstoned = true;
-                }
-                _ => {}
+            KIND_TOMBSTONE => {
+                tombstoned = true;
             }
+            _ => {}
         }
     }
     match label {
-        None => {
-            tx.execute("DELETE FROM nodes WHERE id = ?1", params![node])?;
-        }
-        Some(label) => {
-            let deleted = if tombstoned { 1i64 } else { 0 };
-            tx.execute(
-                "INSERT INTO nodes (id, label, deleted) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(id) DO UPDATE SET label = excluded.label, deleted = excluded.deleted",
-                params![node, label, deleted],
-            )?;
-        }
+        None => tx.node_delete(node),
+        Some(label) => tx.node_upsert(node, &label, tombstoned),
     }
-    Ok(())
 }
 
-fn rematerialize_prop(
-    tx: &rusqlite::Transaction<'_>,
-    entity: &str,
-    path: &str,
-) -> Result<(), StoreError> {
+fn rematerialize_prop(tx: &dyn BackendTxn, entity: &str, path: &str) -> Result<(), StoreError> {
     let ops = load_prop_ops(tx, entity, path)?;
     if ops.is_empty() {
-        tx.execute(
-            "DELETE FROM props WHERE entity = ?1 AND path = ?2",
-            params![entity, path],
-        )?;
-        return Ok(());
+        return tx.prop_delete(entity, path);
     }
     // Determine crdt from first op
     let crdt = match &ops[0].payload {
@@ -1684,7 +1468,7 @@ fn rematerialize_prop(
         Payload::FlagEnable | Payload::FlagDisable { .. } => "flag",
     };
     // Refine counter type from body_json stored ops if needed
-    let crdt = infer_crdt_from_tx(tx, entity, path)?.unwrap_or(crdt);
+    let crdt = infer_crdt_from_ops(tx, entity, path)?.unwrap_or(crdt);
 
     let value_json = match crdt {
         "lww" => {
@@ -1755,26 +1539,17 @@ fn rematerialize_prop(
         other => return Err(StoreError::Invalid(format!("unknown crdt {other}"))),
     };
 
-    tx.execute(
-        "INSERT INTO props (entity, path, crdt, value_json) VALUES (?1,?2,?3,?4)
-         ON CONFLICT(entity, path) DO UPDATE SET crdt=excluded.crdt, value_json=excluded.value_json",
-        params![entity, path, crdt, value_json],
-    )?;
-    Ok(())
+    tx.prop_upsert(entity, path, crdt, &value_json)
 }
 
-fn infer_crdt_from_tx(
-    tx: &rusqlite::Transaction<'_>,
+fn infer_crdt_from_ops(
+    tx: &dyn BackendTxn,
     entity: &str,
     path: &str,
 ) -> Result<Option<&'static str>, StoreError> {
-    let mut stmt =
-        tx.prepare("SELECT body_json FROM ops WHERE kind = 3 ORDER BY physical_ms, logical, id")?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-    for row in rows {
-        let s = row?;
-        let v: serde_json::Value =
-            serde_json::from_str(&s).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    for row in tx.op_scan_props()? {
+        let v: serde_json::Value = serde_json::from_str(&row.body_json)
+            .map_err(|e| StoreError::Invalid(e.to_string()))?;
         if v["node"].as_str() == Some(entity)
             && v["path"].as_str() == Some(path)
             && let Some(c) = v["crdt"].as_str()
@@ -1792,34 +1567,24 @@ fn infer_crdt_from_tx(
     Ok(None)
 }
 
-fn load_prop_ops(conn: &Connection, entity: &str, path: &str) -> Result<Vec<KernelOp>, StoreError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, author, physical_ms, logical, body_json FROM ops
-         WHERE kind = 3 ORDER BY physical_ms, logical, id",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, Vec<u8>>(0)?,
-            r.get::<_, Vec<u8>>(1)?,
-            r.get::<_, i64>(2)?,
-            r.get::<_, i64>(3)?,
-            r.get::<_, String>(4)?,
-        ))
-    })?;
+fn load_prop_ops(
+    b: &dyn BackendTxn,
+    entity: &str,
+    path: &str,
+) -> Result<Vec<KernelOp>, StoreError> {
     let mut out = Vec::new();
-    for row in rows {
-        let (id, author, p, l, body_s) = row?;
-        let body: serde_json::Value =
-            serde_json::from_str(&body_s).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    for row in b.op_scan_props()? {
+        let body: serde_json::Value = serde_json::from_str(&row.body_json)
+            .map_err(|e| StoreError::Invalid(e.to_string()))?;
         if body["node"].as_str() != Some(entity) || body["path"].as_str() != Some(path) {
             continue;
         }
         let payload = body_to_payload(&body)?;
         out.push(KernelOp {
-            op_id: id,
-            author,
-            physical_ms: p as u64,
-            logical: l as u16,
+            op_id: row.id,
+            author: row.author,
+            physical_ms: row.physical_ms,
+            logical: row.logical,
             payload,
         });
     }
@@ -1918,31 +1683,17 @@ fn json_to_cbor_body(v: &serde_json::Value) -> Result<Cbor, StoreError> {
     Ok(Cbor::Map(entries))
 }
 
-fn meta_get(conn: &Connection, k: &str) -> Result<Option<Vec<u8>>, StoreError> {
-    conn.query_row("SELECT v FROM meta WHERE k = ?1", params![k], |r| r.get(0))
-        .optional()
-        .map_err(Into::into)
-}
-
-fn meta_set(conn: &Connection, k: &str, v: &[u8]) -> Result<(), StoreError> {
-    conn.execute(
-        "INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
-        params![k, v],
-    )?;
-    Ok(())
-}
-
-fn meta_get_u64(conn: &Connection, k: &str) -> Result<Option<u64>, StoreError> {
-    Ok(meta_get(conn, k)?.map(|b| {
+fn meta_get_u64(b: &dyn BackendTxn, k: &str) -> Result<Option<u64>, StoreError> {
+    Ok(b.meta_get(k)?.map(|v| {
         let mut arr = [0u8; 8];
-        let n = b.len().min(8);
-        arr[..n].copy_from_slice(&b[..n]);
+        let n = v.len().min(8);
+        arr[..n].copy_from_slice(&v[..n]);
         u64::from_le_bytes(arr)
     }))
 }
 
-fn meta_set_u64(conn: &Connection, k: &str, v: u64) -> Result<(), StoreError> {
-    meta_set(conn, k, &v.to_le_bytes())
+fn meta_set_u64(b: &dyn BackendTxn, k: &str, v: u64) -> Result<(), StoreError> {
+    b.meta_set(k, &v.to_le_bytes())
 }
 
 fn now_ms() -> u64 {
@@ -2005,36 +1756,28 @@ fn qvalue_to_json(v: &QValue) -> serde_json::Value {
 }
 
 /// Durable HLC high-water = max over oplog timestamps; rewrite meta if stale (DQ-7).
-fn recover_hlc_from_oplog(conn: &Connection) -> Result<(u64, u16), StoreError> {
-    let max: Option<(u64, u16)> = conn
-        .query_row(
-            "SELECT physical_ms, logical FROM ops
-             ORDER BY physical_ms DESC, logical DESC LIMIT 1",
-            [],
-            |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u16)),
-        )
-        .optional()?;
-    let (max_p, max_l) = max.unwrap_or((0, 0));
-    let meta_p = meta_get_u64(conn, "hlc_p")?.unwrap_or(0);
-    let meta_l = meta_get_u64(conn, "hlc_l")?.unwrap_or(0) as u16;
+fn recover_hlc_from_oplog(b: &dyn BackendTxn) -> Result<(u64, u16), StoreError> {
+    let (max_p, max_l) = b.op_max_hlc()?.unwrap_or((0, 0));
+    let meta_p = meta_get_u64(b, "hlc_p")?.unwrap_or(0);
+    let meta_l = meta_get_u64(b, "hlc_l")?.unwrap_or(0) as u16;
     let (p, l) = if (max_p, max_l) > (meta_p, meta_l) {
         (max_p, max_l)
     } else {
         (meta_p, meta_l)
     };
     if (p, l) != (meta_p, meta_l) {
-        meta_set_u64(conn, "hlc_p", p)?;
-        meta_set_u64(conn, "hlc_l", l as u64)?;
+        meta_set_u64(b, "hlc_p", p)?;
+        meta_set_u64(b, "hlc_l", l as u64)?;
     }
     Ok((p, l))
 }
 
-fn ensure_storage_format_version(conn: &Connection) -> Result<(), StoreError> {
-    match meta_get_u64(conn, "storage_format_version")? {
+fn ensure_storage_format_version(b: &dyn BackendTxn) -> Result<(), StoreError> {
+    match meta_get_u64(b, "storage_format_version")? {
         Some(v) if v == STORAGE_FORMAT_VERSION => Ok(()),
         Some(v) => Err(StoreError::Invalid(format!(
             "unsupported storage_format_version {v} (expected {STORAGE_FORMAT_VERSION})"
         ))),
-        None => meta_set_u64(conn, "storage_format_version", STORAGE_FORMAT_VERSION),
+        None => meta_set_u64(b, "storage_format_version", STORAGE_FORMAT_VERSION),
     }
 }
