@@ -605,11 +605,9 @@ pub fn authorize(
         if revoked.contains(&g.id) {
             continue;
         }
-        if let Some(exp) = g.expiry {
-            if candidate.ts_physical_ms >= exp {
-                saw_expired = true;
-                continue;
-            }
+        if g.expiry.is_some_and(|exp| candidate.ts_physical_ms >= exp) {
+            saw_expired = true;
+            continue;
         }
         if !g.scopes.contains(&need) {
             if need == SCOPE_ADMIN && g.scopes.contains(&SCOPE_WRITE) {
@@ -706,7 +704,7 @@ mod tests {
         let id2 = datastore_id_from_genesis(&env).unwrap();
         assert_eq!(id1, id2);
 
-        let mut body2 = body.clone();
+        let mut body2 = body;
         body2.salt[0] ^= 1;
         let env2 = genesis_envelope(
             author,
@@ -1310,7 +1308,7 @@ mod tests {
             sig: [0u8; 64],
         };
         let tok = sign_admission_token(&device_seed, tok).unwrap();
-        verify_admission_token(&tok, &[grant.clone()]).unwrap();
+        verify_admission_token(&tok, std::slice::from_ref(&grant)).unwrap();
         let pre_body = hex(&admission_token_preimage_body(&tok).unwrap());
 
         let cert_json = |c: &DeviceCert| {

@@ -127,6 +127,9 @@ pub struct LocalStore {
     ds: [u8; 32],
     hlc_p: u64,
     hlc_l: u16,
+    /// Wall-clock source for local HLC ticks. Defaults to system time;
+    /// tests may override via `set_test_clock` to simulate clock rollback.
+    clock: fn() -> u64,
 }
 
 struct ValidatedWire {
@@ -164,6 +167,7 @@ impl LocalStore {
             ds,
             hlc_p,
             hlc_l,
+            clock: now_ms,
         })
     }
 
@@ -207,8 +211,15 @@ impl LocalStore {
         hex::encode(self.author)
     }
 
+    /// Test hook: override the wall-clock source used for local HLC ticks.
+    /// Used by E1 acceptance tests to simulate wall-clock rollback across restart.
+    #[doc(hidden)]
+    pub fn set_test_clock(&mut self, f: fn() -> u64) {
+        self.clock = f;
+    }
+
     fn next_local_ts(&self) -> Result<OpTs, StoreError> {
-        let wall = now_ms();
+        let wall = (self.clock)();
         let p = wall.max(self.hlc_p);
         let (p, l) = if p == self.hlc_p {
             match self.hlc_l.checked_add(1) {

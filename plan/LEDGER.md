@@ -53,7 +53,7 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M1-fix-rng | OS CSPRNG for seed/salt (`getrandom`) | done(`m1_wave1` seed test) | S | seed fill uses OS RNG; unit test | G-01 |
 | M1-fix-hlc | HLC on open/replay from durable oplog (DQ-7 backend) | done(`m1_wave1` HLC tests) | S | open/replay rewrite meta from oplog max | G-02 |
 | M1-fix-serve | Fail-closed serve defaults (loopback / unsafe flag) | done(`serve_bind` tests) | S | refuse non-loopback without `--allow-insecure-lan` | G-05 |
-| M1-e1 | Full E1 (restart, replay, larger load, HLC mono) | partial(`e1_e2_acceptance`; kill + clock-rollback in current package) | M | 50-todo restart/import/replay done; kill-not-shutdown + 1h clock-rollback still required | G-09 / G20-05a |
+| M1-e1 | Full E1 (restart, replay, larger load, HLC mono) | done(`e1_e2_acceptance` + `e1_kill_clock`) | M | 50-todo restart/import/replay; `tests/e1_kill_clock.rs` adds repeated hard-kill mid-write (child process, replay/state/sig re-verify each iteration) + 1h wall-clock rollback HLC monotonicity via `set_test_clock` hook | G-09 / G20-05a |
 | M1-e2-store | Store-level equal-ts / equivocation suite | done(`e1_e2_acceptance` e2_*) | S | same-author exclude + cross-peer total order | G-09 |
 | M1-e4 | Groups + WAL layer-2 crash injection | done(`atomic_group` + `commit_wires_atomic` rollback) | L | multi-op group + mid-batch signature fail rolls back prefix (`e4_groups`, `m1_remainders`) | G-03 |
 | M1-e9 | H3 derived visibility + edges + late-edge E9 | partial(set-derived node tombstone + edges) | L | edges + derived hide (`m1_remainders`); create/tombstone order-independent (`r0_stabilize`); edge tombstone props still open | G-04 / G20-02 |
@@ -82,8 +82,8 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M2-query | O3 query via NAPI | done (experimental) | `test/m2-query.test.mjs` (2): match/where/return + parse reject |
 | M2-ws-sync | `serve`/`connectPeer` WebSocket sync (protocol v2 two-way) | done (experimental) | `test/m2-sync.test.mjs` (3): converge both ways, stop/close, bad urls |
 | M2-autosync | `autoConnect`/`disconnect` background re-sync (dirty flag + interval poll + backoff) | done (experimental) | `test/m2-autosync.test.mjs` (2): auto-converge both ways, disconnect stops, sync-error retry, clean close; `examples/webapp` two-process demo |
-| M2-lan-hardening | sync session timeout + non-loopback serve behind unsafe flag | open (current package) | — |
-| M2-ci | clean-checkout CI: NAPI build + JS suites; parity vectors for 5 shipped CRDTs | open (current package) | — |
+| M2-lan-hardening | sync session timeout + non-loopback serve behind unsafe flag | done | 30s socket timeouts on NAPI serve/connect/autoConnect sockets; per-connection serve threads (store lock only after WS handshake); `serve(port, allowInsecureLan?)` binds 0.0.0.0 only with explicit flag (CLI unchanged); tests: loopback-default, LAN bind, stalled-raw-socket recovery in zerodb-napi/test/m2-sync.test.mjs — 21/21 npm test green |
+| M2-ci | clean-checkout CI: NAPI build + JS suites; parity vectors for 5 shipped CRDTs | done-pending-first-CI-run | `ci.yml`: napi job (ubuntu+windows, `npm ci` + `napi build --platform --release --target <host>` + `npm test`), rust job now `--locked` + clippy `-D warnings` (5 pre-existing lints fixed in zerodb-core), ts-to-ir job; `test\m2-parity.test.mjs` (5): LWW/GCounter/PNCounter/ORSet/EWFlag single-store + cross-peer convergence via exportJson/importJson both ways; local: 21/21 napi tests, clippy clean, workspace tests green; actual GH Actions run not yet observed |
 | M2-schema | schema apply / TS→IR pipeline (O2) | open | blocked(M1-schema/tsir) |
 | M2-crdts | MVRegister + resolve, RGA, LWWMap | open | kernel + binding |
 | M2-parity | binding parity vectors vs core fixtures | open | — |

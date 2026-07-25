@@ -120,6 +120,132 @@ test('stopServe stops the listener; close stops serving too', async () => {
   }
 })
 
+test('serve default binds loopback only', async () => {
+  const path = tempDb('sync-loopback')
+  let db
+  try {
+    db = Database.init(path)
+    db.createNode('Todo')
+    const port = db.serve(0)
+    // Loopback connect works.
+    const other = Database.init(tempDb('sync-loopback-b'))
+    try {
+      const summary = other.connectPeer(`ws://127.0.0.1:${port}`)
+      assert.ok(summary.accepted >= 1)
+    } finally {
+      other.close()
+    }
+    // Default bind must not be reachable via a non-loopback local address.
+    const { networkInterfaces } = await import('node:os')
+    const lanAddr = Object.values(networkInterfaces())
+      .flat()
+      .find((i) => i && i.family === 'IPv4' && !i.internal)?.address
+    if (lanAddr) {
+      const net = await import('node:net')
+      await assert.rejects(
+        new Promise((resolve, reject) => {
+          const sock = net.connect({ host: lanAddr, port, timeout: 2000 })
+          sock.on('connect', () => {
+            sock.destroy()
+            resolve()
+          })
+          sock.on('timeout', () => {
+            sock.destroy()
+            reject(new Error('timeout'))
+          })
+          sock.on('error', reject)
+        })
+      )
+    }
+    db.stopServe()
+  } finally {
+    cleanup(path, db)
+  }
+})
+
+test('serve with allowInsecureLan=true binds all interfaces', async () => {
+  const path = tempDb('sync-lan')
+  let db
+  try {
+    db = Database.init(path)
+    db.createNode('Todo')
+    const port = db.serve(0, true)
+    assert.ok(port > 0)
+    // Reachable via a non-loopback local address when one exists.
+    const { networkInterfaces } = await import('node:os')
+    const lanAddr = Object.values(networkInterfaces())
+      .flat()
+      .find((i) => i && i.family === 'IPv4' && !i.internal)?.address
+    if (lanAddr) {
+      const net = await import('node:net')
+      await new Promise((resolve, reject) => {
+        const sock = net.connect({ host: lanAddr, port, timeout: 5000 })
+        sock.on('connect', () => {
+          sock.destroy()
+          resolve()
+        })
+        sock.on('timeout', () => {
+          sock.destroy()
+          reject(new Error('timeout'))
+        })
+        sock.on('error', reject)
+      })
+    }
+    // Loopback still works too.
+    const other = Database.init(tempDb('sync-lan-b'))
+    try {
+      const summary = other.connectPeer(`ws://127.0.0.1:${port}`)
+      assert.ok(summary.accepted >= 1)
+    } finally {
+      other.close()
+    }
+    db.stopServe()
+  } finally {
+    cleanup(path, db)
+  }
+})
+
+test('stalled raw connection (no WS handshake) does not block the server', async () => {
+  const path = tempDb('sync-stall')
+  const pathB = tempDb('sync-stall-b')
+  let db
+  let dbB
+  let rawSock
+  try {
+    db = Database.init(path)
+    const node = db.createNode('Todo')
+    db.setLww(node, 'title', 'milk')
+    const port = db.serve(0)
+
+    // Open a raw TCP connection and never speak WebSocket.
+    const net = await import('node:net')
+    rawSock = await new Promise((resolve, reject) => {
+      const s = net.connect({ host: '127.0.0.1', port })
+      s.on('connect', () => resolve(s))
+      s.on('error', reject)
+    })
+
+    // While the raw socket sits stalled, a normal sync session must still
+    // succeed (serve holds no store lock until after the WS handshake, and
+    // each connection is served on its own thread).
+    dbB = Database.init(pathB)
+    const summary = dbB.connectPeer(`ws://127.0.0.1:${port}`)
+    assert.ok(summary.accepted >= 2)
+    dbB.replay()
+    assert.equal(dbB.getLww(node, 'title'), 'milk')
+
+    db.stopServe()
+  } finally {
+    try {
+      rawSock?.destroy()
+    } catch {
+      /* ignore */
+    }
+    cleanup(path, db)
+    cleanup(pathB, dbB)
+  }
+})
+
 test('connectPeer rejects bad urls and unreachable peers', () => {
   const path = tempDb('sync-bad')
   let db

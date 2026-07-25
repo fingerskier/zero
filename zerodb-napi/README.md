@@ -38,6 +38,30 @@ db.close() // required before deleting the file on Windows
 | `exportJson` / `importJson` | format-1 op bundles |
 | `subscribe` / `unsubscribe` | live change callbacks; async delivery (next tick) |
 | `query` | O3 minimal `MATCH/WHERE/RETURN/ORDER BY/LIMIT`; rows keyed `"t.title"` |
+| `serve(port, allowInsecureLan?)` / `stopServe` | WebSocket sync listener (see Sync) |
+| `connectPeer(url)` | one two-way sync session against `ws://host:port` |
+| `autoConnect(url, intervalMs)` / `disconnect` | background live sync with retry/backoff |
+
+### Sync
+
+```js
+const port = dbA.serve(0)               // loopback only; 0 = OS-assigned port
+const s = dbB.connectPeer(`ws://127.0.0.1:${port}`)
+// { accepted, skipped, sent, remoteAccepted, remoteSkipped }
+dbA.stopServe()
+```
+
+- `serve(port)` binds `127.0.0.1` only. `serve(port, true)`
+  (`allowInsecureLan`) binds `0.0.0.0` — the wire is **plaintext and
+  unauthenticated**: anyone on the network can read and write the store.
+  Only enable on trusted LANs (mirrors the CLI `--allow-insecure-lan`).
+- All sync sockets carry 30s read/write timeouts; a stalled peer surfaces
+  as a sync error (`{kind:'sync', error}` serve event or a thrown/
+  `sync-error` on the connect side) instead of a hang. Sessions are atomic
+  (`import_bundle`), so a timed-out session never leaves partial state.
+- Each incoming connection is served on its own thread; the store lock is
+  taken only after the WebSocket handshake, so a stalled pre-handshake
+  peer never blocks the accept loop or the store.
 
 ### Subscribe events
 

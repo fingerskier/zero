@@ -108,7 +108,7 @@ Smoke: `powershell -File scripts/test-mvp.ps1`.
 
 | Exit artifact | Experimental slice | Remaining |
 |---------------|--------------------|-----------|
-| E1 restart/replay | partial (open/replay tests; not full exemplar) | clock-rollback, larger load, kill-not-shutdown |
+| E1 restart/replay | done (`e1_e2_acceptance`, `e1_restart_replay`, `e1_kill_clock`) | — (kill-not-shutdown + 1h clock-rollback covered by `tests/e1_kill_clock.rs`) |
 | E2 model conflicts | kernel vectors + happy-path multi-peer smokes | store-level equal-ts / equivocation |
 | E4 groups/crash | `atomic_group` + atomic mid-batch rollback | fine-grained WAL named crash points (append/sync/apply) optional |
 | E9 delete | node tombstone set-derived + edge derived visibility | no cascade edge ops; late edges hidden; no edge tombstone props |

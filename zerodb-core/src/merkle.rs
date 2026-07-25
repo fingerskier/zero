@@ -433,7 +433,7 @@ mod tests {
     #[ignore]
     fn write_transcript_vectors() {
         use std::fs;
-        use std::path::PathBuf;
+        use std::path::{Path, PathBuf};
 
         fn msg_json(m: &MerkleMsg) -> String {
             match m {
@@ -510,7 +510,7 @@ mod tests {
         }
 
         fn write_vec(
-            dir: &PathBuf,
+            dir: &Path,
             name: &str,
             id: &str,
             desc: &str,

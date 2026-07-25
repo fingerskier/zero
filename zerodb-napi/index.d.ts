@@ -50,12 +50,18 @@ export declare class Database {
   /** Import a JSON export bundle. Returns `{ accepted, skipped }`. */
   importJson(json: string): any
   /**
-   * Start a loopback-only WebSocket sync listener (`ws://127.0.0.1:port`).
-   * Port 0 asks the OS for a free port; the actual port is returned. Each
-   * incoming connection runs one serve session and emits a
+   * Start a WebSocket sync listener. By default binds loopback only
+   * (`ws://127.0.0.1:port`). Pass `allowInsecureLan: true` to bind
+   * `0.0.0.0` (all interfaces) — the wire is **plaintext and
+   * unauthenticated**; anyone on the network can read and write the
+   * store, so only enable this on trusted LANs (mirrors the CLI's
+   * `--allow-insecure-lan`). Port 0 asks the OS for a free port; the
+   * actual port is returned. Each incoming connection runs one serve
+   * session on its own thread (30s socket timeouts; a stalled peer
+   * never blocks the accept loop or the store) and emits a
    * `{kind:'sync', role:'serve', ...}` event.
    */
-  serve(port: number): number
+  serve(port: number, allowInsecureLan?: boolean | undefined | null): number
   /** Stop the sync listener started by `serve`; no-op if not serving. */
   stopServe(): void
   /**

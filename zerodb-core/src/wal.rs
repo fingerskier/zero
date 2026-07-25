@@ -111,10 +111,8 @@ impl WalState {
             if !self.applied.contains(&rec.op_id) {
                 return Err(WalError::TruncateUnsafe);
             }
-            if let Some(g) = rec.group {
-                if !self.sealed.contains(&g) {
-                    return Err(WalError::TruncateUnsafe);
-                }
+            if rec.group.is_some_and(|g| !self.sealed.contains(&g)) {
+                return Err(WalError::TruncateUnsafe);
             }
         }
         self.wal.drain(..up_to_index);

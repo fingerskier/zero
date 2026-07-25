@@ -1,6 +1,5 @@
 //! Stage 2 sync: one pull session converges BOTH peers (server<->client).
 
-use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::thread;

@@ -14,11 +14,33 @@ use std::time::{Duration, Instant};
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
+use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 use zerodb_storage::{LocalStore, sync};
 
 fn map_err(e: impl ToString) -> Error {
     Error::from_reason(e.to_string())
+}
+
+/// Per-session socket timeout: a slow or stalled peer surfaces as a sync
+/// error instead of hanging the session thread forever.
+const SYNC_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn set_stream_timeouts(stream: &TcpStream) -> io::Result<()> {
+    stream.set_read_timeout(Some(SYNC_TIMEOUT))?;
+    stream.set_write_timeout(Some(SYNC_TIMEOUT))
+}
+
+/// Connect a client WebSocket with read/write timeouts on the underlying
+/// TCP stream so a stalled server cannot hang the session.
+fn connect_ws(
+    url: &str,
+) -> std::result::Result<WebSocket<MaybeTlsStream<TcpStream>>, String> {
+    let (ws, _resp) = tungstenite::connect(url).map_err(|e| e.to_string())?;
+    if let MaybeTlsStream::Plain(stream) = ws.get_ref() {
+        set_stream_timeouts(stream).map_err(|e| e.to_string())?;
+    }
+    Ok(ws)
 }
 
 type Subscriber = ThreadsafeFunction<serde_json::Value, (), serde_json::Value, Status, false, true>;
@@ -106,7 +128,7 @@ fn connect_session(
     inner: &SharedStore,
     url: &str,
 ) -> std::result::Result<sync::PullSummary, String> {
-    let (ws, _resp) = tungstenite::connect(url).map_err(|e| e.to_string())?;
+    let ws = connect_ws(url)?;
     let mut io = WsIo::new(ws);
     let mut guard = inner.lock().map_err(|e| e.to_string())?;
     let store = guard.as_mut().ok_or("database is closed")?;
@@ -126,13 +148,19 @@ fn emit_to(subs: &SharedSubs, event: serde_json::Value) {
 }
 
 /// One accepted connection: WS handshake, then a sync serve session while
-/// holding the store lock (held per session only, not while accepting).
+/// holding the store lock (held per session only — NOT while accepting and
+/// NOT during the handshake, so a stalled pre-handshake peer never blocks
+/// the store). Socket read/write timeouts (30s) bound both the handshake
+/// and the session; a timeout surfaces as a `{kind:'sync', error}` event.
 fn serve_connection(stream: TcpStream, inner: &SharedStore, subs: &SharedSubs) {
     let peer_addr = stream
         .peer_addr()
         .map(|a| a.to_string())
         .unwrap_or_default();
     let _ = stream.set_nonblocking(false);
+    if set_stream_timeouts(&stream).is_err() {
+        return;
+    }
     let Ok(ws) = tungstenite::accept(stream) else {
         return;
     };
@@ -483,17 +511,28 @@ impl Database {
         .inspect(|result| self.emit(serde_json::json!({ "kind": "import", "accepted": result["accepted"], "skipped": result["skipped"] })))
     }
 
-    /// Start a loopback-only WebSocket sync listener (`ws://127.0.0.1:port`).
-    /// Port 0 asks the OS for a free port; the actual port is returned. Each
-    /// incoming connection runs one serve session and emits a
+    /// Start a WebSocket sync listener. By default binds loopback only
+    /// (`ws://127.0.0.1:port`). Pass `allowInsecureLan: true` to bind
+    /// `0.0.0.0` (all interfaces) — the wire is **plaintext and
+    /// unauthenticated**; anyone on the network can read and write the
+    /// store, so only enable this on trusted LANs (mirrors the CLI's
+    /// `--allow-insecure-lan`). Port 0 asks the OS for a free port; the
+    /// actual port is returned. Each incoming connection runs one serve
+    /// session on its own thread (30s socket timeouts; a stalled peer
+    /// never blocks the accept loop or the store) and emits a
     /// `{kind:'sync', role:'serve', ...}` event.
     #[napi]
-    pub fn serve(&self, port: u32) -> Result<u32> {
+    pub fn serve(&self, port: u32, allow_insecure_lan: Option<bool>) -> Result<u32> {
         let mut server = self.server.lock().map_err(|e| map_err(e.to_string()))?;
         if server.is_some() {
             return Err(Error::from_reason("already serving"));
         }
-        let listener = TcpListener::bind(("127.0.0.1", port as u16)).map_err(map_err)?;
+        let host = if allow_insecure_lan.unwrap_or(false) {
+            "0.0.0.0"
+        } else {
+            "127.0.0.1"
+        };
+        let listener = TcpListener::bind((host, port as u16)).map_err(map_err)?;
         let actual = listener.local_addr().map_err(map_err)?.port();
         listener.set_nonblocking(true).map_err(map_err)?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -503,7 +542,15 @@ impl Database {
         let join = std::thread::spawn(move || {
             while !stop_flag.load(Ordering::SeqCst) {
                 match listener.accept() {
-                    Ok((stream, _)) => serve_connection(stream, &inner, &subs),
+                    Ok((stream, _)) => {
+                        // Per-connection thread: a peer that stalls (e.g.
+                        // never completes the WS handshake) must not block
+                        // accepting further connections. The store mutex
+                        // still serializes actual sync sessions.
+                        let inner = inner.clone();
+                        let subs = subs.clone();
+                        std::thread::spawn(move || serve_connection(stream, &inner, &subs));
+                    }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));
                     }
@@ -526,7 +573,7 @@ impl Database {
     /// remoteSkipped }` and emits a `{kind:'sync', role:'connect', ...}` event.
     #[napi]
     pub fn connect_peer(&self, url: String) -> Result<serde_json::Value> {
-        let (ws, _resp) = tungstenite::connect(&url).map_err(map_err)?;
+        let ws = connect_ws(&url).map_err(map_err)?;
         let mut io = WsIo::new(ws);
         let summary = self.with_store_mut(|store| sync::pull(store, &mut io).map_err(map_err))?;
         let result = serde_json::json!({
