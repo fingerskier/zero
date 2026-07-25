@@ -69,11 +69,11 @@ fn pull_rejects_unsupported_hello_ok_version_before_reading_ops() {
             .set_write_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         let hello = read_frame(&mut stream);
-        assert_eq!(hello["v"], 1);
+        assert_eq!(hello["v"], 2);
         write_frame(
             &mut stream,
             &json!({
-                "v": 2,
+                "v": 3,
                 "datastore_id": server_datastore_id,
                 "peer": "11".repeat(32),
                 "need": [],
@@ -96,7 +96,7 @@ fn pull_rejects_unsupported_hello_ok_version_before_reading_ops() {
     server.join().unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "pull accepted HelloOk v2");
+    assert!(!output.status.success(), "pull accepted HelloOk v3");
     assert!(
         stderr.contains("hello version"),
         "pull failed for the wrong reason: {stderr}",

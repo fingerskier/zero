@@ -214,7 +214,8 @@ try {
   $bootstrapB = Get-NormalizedInspect $b
 
   # Concurrent writes on both peers cover every currently exposed property
-  # CRDT. Pull is one-way, so the server/client roles are then reversed.
+  # CRDT. Pull is a two-way session: one pull converges both peers, so the
+  # reversed pull afterwards must be a no-op.
   Invoke-ZeroText @("set", "--path", $a, "--node", $node, "--key", "title", "--value", "from-a") | Out-Null
   Invoke-ZeroText @("inc", "--path", $a, "--node", $node, "--key", "score", "--n", "4") | Out-Null
   Invoke-ZeroText @("inc", "--path", $a, "--node", $node, "--key", "views", "--n", "3", "--kind", "g") | Out-Null
@@ -236,7 +237,7 @@ try {
 
   $server = Start-ZeroServer -Database $a -Port 17703
   try {
-    $bFromA = Invoke-Pull -Database $b -Port 17703 -Accepted 5
+    $bFromA = Invoke-Pull -Database $b -Port 17703 -Accepted 0
   } finally {
     Stop-ZeroServer $server
   }
@@ -282,8 +283,8 @@ try {
   }
 
   # Both peers have observed the complete 16-op state. Remove the seed tag and
-  # disable every currently live flag dot, exchange the two causal operations,
-  # and prove another pair of pulls is idempotent.
+  # disable every currently live flag dot, exchange both causal operations in a
+  # single two-way pull, and prove another pair of pulls is idempotent.
   Invoke-ZeroText @("set-remove", "--path", $a, "--node", $node, "--key", "tags", "--value", "base") | Out-Null
   Invoke-ZeroText @("flag-off", "--path", $b, "--node", $node, "--key", "done") | Out-Null
 
@@ -296,7 +297,7 @@ try {
 
   $server = Start-ZeroServer -Database $a -Port 17707
   try {
-    $cleanupB = Invoke-Pull -Database $b -Port 17707 -Accepted 1
+    $cleanupB = Invoke-Pull -Database $b -Port 17707 -Accepted 0
   } finally {
     Stop-ZeroServer $server
   }

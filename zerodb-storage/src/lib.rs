@@ -10,6 +10,7 @@
 
 mod backend;
 mod sqlite_backend;
+pub mod sync;
 
 pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
 pub use sqlite_backend::SqliteBackend;

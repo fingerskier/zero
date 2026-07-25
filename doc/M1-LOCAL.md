@@ -15,7 +15,7 @@ This document exists so plan/ review notes do not have to restate settled implem
 | SQLite oplog + materialized nodes/props | WAL layer-2 crash injection / groups (E4, [WAL.md](WAL.md)) |
 | Ed25519-signed ops; PeerId = BLAKE3(device pk) | AUTH membership / genesis control plane ([AUTH.md](AUTH.md) → M3b) |
 | CRDTs: LWW (string), GCounter, PNCounter, ORSet, Flag | MVRegister, RGA, edges, full H3 delete machine (E9) |
-| Export/import JSON bundles; file `sync`; TCP `serve`/`pull` | Bidirectional session; TLS; relay; Merkle wire |
+| Export/import JSON bundles; file `sync`; TCP `serve`/`pull` (two-way session, protocol v2) | TLS; relay; Merkle wire |
 | Ingress validation before materialization | Schema apply / O3 query / TS→IR compiler |
 | Single-op atomic commit (append + materialize + HLC) | Multi-op group seal / named crash points |
 
@@ -96,9 +96,9 @@ Wire transport uses a JSON `WireOp` / `ExportBundle { format: 1, datastore_id, o
 | `create-node`, `delete-node`, `set`, `get`, `inc`/`dec`, set/flag helpers | local writes |
 | `replay` | full rematerialization from oplog |
 | `export` / `import` / `sync --peer` | file multi-process exchange |
-| `serve --listen` / `pull --from` | one-way TCP set-diff of OpIds; non-loopback needs `--allow-insecure-lan` |
+| `serve --listen` / `pull --from` | two-way TCP set-diff of OpIds; non-loopback needs `--allow-insecure-lan` |
 
-`pull` is **server → client only**. `HelloOk.need` is computed by the server but unused by the client; reverse roles for two-way convergence. Transport is **plaintext**, unauthenticated — trusted private LAN / disposable DBs only. See [M1-LAN-TEST.md](M1-LAN-TEST.md).
+`pull` is a **two-way session** (protocol v2, `zerodb_storage::sync`): the server sends the ops the client lacks, then the client sends back the ops listed in `HelloOk.need` and waits for the server's `OpsAck`; the server ingests them through the same prevalidated `import_bundle` path (§4 rules hold: signature/OpId/ds checks, atomic txn, dedup, empty-adoption only from a nonempty remote). One session converges both peers. The session logic is transport-generic (`Read + Write`); the CLI only opens sockets. Transport is **plaintext**, unauthenticated — trusted private LAN / disposable DBs only. See [M1-LAN-TEST.md](M1-LAN-TEST.md).
 
 Smoke: `powershell -File scripts/test-mvp.ps1`.
 

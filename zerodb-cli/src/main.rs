@@ -3,14 +3,12 @@
 //! Multi-process: `export` / `import` or `sync --peer <other.db>`
 //! Multi-machine: `serve` + `pull --from host:port`
 
-use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
-use zerodb_storage::{ExportBundle, LocalStore, WireOp};
+use zerodb_storage::{sync, ExportBundle, LocalStore};
 
 #[derive(Parser)]
 #[command(
@@ -195,27 +193,6 @@ enum Cmd {
         #[arg(long)]
         from: String,
     },
-}
-
-#[derive(Serialize, Deserialize)]
-struct Hello {
-    v: u32,
-    datastore_id: String,
-    peer: String,
-    op_ids: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct HelloOk {
-    v: u32,
-    datastore_id: String,
-    peer: String,
-    need: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct OpsMsg {
-    ops: Vec<WireOp>,
 }
 
 fn main() {
@@ -455,33 +432,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let mut stream = TcpStream::connect(&from)?;
             stream.set_read_timeout(Some(Duration::from_secs(30)))?;
             stream.set_write_timeout(Some(Duration::from_secs(30)))?;
-            let local_ids = store
-                .list_op_ids()?
-                .into_iter()
-                .map(hex::encode)
-                .collect::<Vec<_>>();
-            write_msg(
-                &mut stream,
-                &Hello {
-                    v: 1,
-                    datastore_id: store.datastore_id_hex(),
-                    peer: store.author_hex(),
-                    op_ids: local_ids,
-                },
-            )?;
-            let hello_ok: HelloOk = read_msg(&mut stream)?;
-            if hello_ok.v != 1 {
-                return Err(format!("bad hello version {}", hello_ok.v).into());
-            }
-            let ops_msg: OpsMsg = read_msg(&mut stream)?;
-            let bundle = ExportBundle {
-                format: 1,
-                datastore_id: hello_ok.datastore_id,
-                ops: ops_msg.ops,
-            };
-            let (a, s) = store.import_bundle(&bundle)?;
+            let summary = sync::pull(&mut store, &mut stream)?;
             println!(
-                "pull from {from}: accepted={a} skipped={s}; local ops={}",
+                "pull from {from}: accepted={} skipped={} sent={} remote_accepted={}; local ops={}",
+                summary.accepted,
+                summary.skipped,
+                summary.sent,
+                summary.remote_accepted,
                 store.op_count()?
             );
         }
@@ -514,60 +471,14 @@ fn assert_serve_bind_allowed(
 fn handle_peer(path: &Path, mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
-    let store = LocalStore::open(path)?;
-    let hello: Hello = read_msg(&mut stream)?;
-    if hello.v != 1 {
-        return Err("bad hello version".into());
-    }
-    let local: std::collections::BTreeSet<[u8; 32]> = store.list_op_ids()?.into_iter().collect();
-    let remote: std::collections::BTreeSet<[u8; 32]> = hello
-        .op_ids
-        .iter()
-        .filter_map(|h| hex::decode(h).ok()?.try_into().ok())
-        .collect();
-    let missing: Vec<[u8; 32]> = local.difference(&remote).copied().collect();
-    let need: Vec<String> = remote.difference(&local).map(hex::encode).collect();
-    write_msg(
-        &mut stream,
-        &HelloOk {
-            v: 1,
-            datastore_id: store.datastore_id_hex(),
-            peer: store.author_hex(),
-            need,
-        },
-    )?;
-    let ops = store.export_ops_by_id(&missing)?;
-    write_msg(&mut stream, &OpsMsg { ops })?;
+    let mut store = LocalStore::open(path)?;
+    let summary = sync::serve(&mut store, &mut stream)?;
     println!(
-        "served peer {} — sent {} ops",
-        &hello.peer[..8.min(hello.peer.len())],
-        missing.len()
+        "served peer {} — sent {} ops, accepted {} skipped {}",
+        &summary.peer[..8.min(summary.peer.len())],
+        summary.sent,
+        summary.accepted,
+        summary.skipped
     );
     Ok(())
-}
-
-fn write_msg<T: Serialize>(
-    stream: &mut TcpStream,
-    msg: &T,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = serde_json::to_vec(msg)?;
-    let len = (bytes.len() as u32).to_be_bytes();
-    stream.write_all(&len)?;
-    stream.write_all(&bytes)?;
-    stream.flush()?;
-    Ok(())
-}
-
-fn read_msg<T: for<'de> Deserialize<'de>>(
-    stream: &mut TcpStream,
-) -> Result<T, Box<dyn std::error::Error>> {
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf)?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 64 * 1024 * 1024 {
-        return Err("message too large".into());
-    }
-    let mut buf = vec![0u8; len];
-    stream.read_exact(&mut buf)?;
-    Ok(serde_json::from_slice(&buf)?)
 }
