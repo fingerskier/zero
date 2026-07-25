@@ -36,7 +36,9 @@ function openOrInit(path) {
 }
 
 const db = openOrInit(dbPath)
-const actualWsPort = db.serve(wsPort)
+// ZERO_LAN=1 binds the sync listener on 0.0.0.0 — plaintext/unauthenticated,
+// trusted private LAN only.
+const actualWsPort = db.serve(wsPort, process.env.ZERO_LAN === '1')
 if (peerUrl) db.autoConnect(peerUrl, 1000)
 
 // SSE clients
