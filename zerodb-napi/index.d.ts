@@ -60,8 +60,11 @@ export declare class Database {
    * session on its own thread (30s socket timeouts; a stalled peer
    * never blocks the accept loop or the store) and emits a
    * `{kind:'sync', role:'serve', ...}` event.
+   * `push` (default true) advertises the v2 push capability: clients that
+   * request it get a persistent session that streams new local ops as they
+   * land. Pass `push: false` to behave like an old one-shot-only server.
    */
-  serve(port: number, allowInsecureLan?: boolean | undefined | null): number
+  serve(port: number, allowInsecureLan?: boolean | undefined | null, push?: boolean | undefined | null): number
   /** Stop the sync listener started by `serve`; no-op if not serving. */
   stopServe(): void
   /**
@@ -78,9 +81,11 @@ export declare class Database {
    * retryInMs}` and retry with capped exponential backoff (1s..30s).
    * Returns a connection id for `disconnect`; `close()` stops all.
    *
-   * Stage-5 upgrade path: true push (server notifies clients of new remote
-   * ops over a persistent session) needs protocol v3; until then the dirty
-   * flag + interval poll approximates live sync with no wire changes.
+   * Each attempt requests the v2 push capability. If the server acks,
+   * the session stays open: new ops stream both ways immediately (dirty
+   * flag and interval are then only the reconnect pacing). If the server
+   * is push-unaware (old peer), the one-shot session runs and the dirty
+   * flag + interval poll approximates live sync exactly as before.
    */
   autoConnect(url: string, intervalMs: number): number
   /** Stop an `autoConnect` background connection; unknown ids are a no-op. */

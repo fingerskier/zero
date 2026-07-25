@@ -100,6 +100,8 @@ Wire transport uses a JSON `WireOp` / `ExportBundle { format: 1, datastore_id, o
 
 `pull` is a **two-way session** (protocol v2, `zerodb_storage::sync`): the server sends the ops the client lacks, then the client sends back the ops listed in `HelloOk.need` and waits for the server's `OpsAck`; the server ingests them through the same prevalidated `import_bundle` path (§4 rules hold: signature/OpId/ds checks, atomic txn, dedup, empty-adoption only from a nonempty remote). One session converges both peers. The session logic is transport-generic (`Read + Write`); the CLI only opens sockets. Transport is **plaintext**, unauthenticated — trusted private LAN / disposable DBs only. See [M1-LAN-TEST.md](M1-LAN-TEST.md).
 
+**Push capability (still protocol v2 — no version bump):** a client may set `push: true` in its Hello; a push-capable server acks with `push: true` in HelloOk. Both fields are `serde(default)` and unknown fields are ignored, so old↔new peers interoperate: either side omitting or declining the flag yields the plain one-shot session above. When both opt in, the session **stays open** after the OpsAck: either side sends further `OpsMsg` frames whenever new local ops land (each answered by an `OpsAck`), tracking the peer's op set from the initial exchange onward so only missing ops are sent. The wire is unchanged JSON `WireOp` frames — the canonical-CBOR wire remains reserved for protocol v3 per the 2026-07-25 Decision Log entry. Implemented in `zerodb_storage::sync::{serve_push, pull_push}` (store locked only per exchange, never across waits); consumed by the NAPI `serve`/`autoConnect` and the browser JS driver's `connectPush`. The CLI `serve`/`pull` remain one-shot.
+
 Smoke: `powershell -File scripts/test-mvp.ps1`.
 
 ---

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use zerodb_storage::{sync, ExportBundle, LocalStore};
+use zerodb_storage::{ExportBundle, LocalStore, sync};
 
 #[derive(Parser)]
 #[command(

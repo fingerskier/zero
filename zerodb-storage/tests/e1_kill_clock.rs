@@ -114,7 +114,10 @@ fn e1_kill_mid_write_survives_and_replays() {
             "iter {iter}: fresh replay projection differs from survivor state"
         );
     }
-    assert!(prev_ops > 3, "kill loop never produced meaningful op volume");
+    assert!(
+        prev_ops > 3,
+        "kill loop never produced meaningful op volume"
+    );
 }
 
 // --- clock rollback -------------------------------------------------------

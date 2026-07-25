@@ -14,7 +14,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
-import { syncOnce, FrameReader, encodeFrame } from '../zero-sync.mjs'
+import { syncOnce, connectPush, FrameReader, encodeFrame } from '../zero-sync.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const pkgDir = path.join(here, '..', '..', '..', 'zerodb-wasm', 'pkg')
@@ -95,6 +95,71 @@ test('wasm peer converges two-way with a NAPI serve peer', async () => {
   } finally {
     db.close()
   }
+})
+
+test('wasm peer receives a pushed op from a NAPI server without re-syncing', async () => {
+  const db = Database.init(tmpDb('push-server'))
+  const port = db.serve(0)
+  const url = `ws://127.0.0.1:${port}`
+  let handle
+  try {
+    const node = db.createNode('Todo')
+    db.setLww(node, 'title', 'initial')
+
+    const web = new ZeroDb()
+    handle = await connectPush(web, url)
+    assert.equal(handle.push, true, 'NAPI server should ack push')
+    assert.equal(handle.summary.accepted, 2)
+    assert.equal(web.getLww(node, 'title'), 'initial')
+
+    // Server mutates; the wasm peer converges with no new session.
+    db.setLww(node, 'title', 'pushed')
+    const deadline = Date.now() + 5000
+    while (web.getLww(node, 'title') !== 'pushed') {
+      assert.ok(Date.now() < deadline, 'timeout waiting for pushed op')
+      await new Promise(r => setTimeout(r, 25))
+    }
+
+    // Local wasm mutation streams back over the same session (onChange push).
+    web.setLww(node, 'from_web', 'yes')
+    const back = Date.now() + 5000
+    while (db.getLww(node, 'from_web') !== 'yes') {
+      assert.ok(Date.now() < back, 'timeout waiting for client push')
+      await new Promise(r => setTimeout(r, 25))
+    }
+    assert.equal(db.opCount(), web.opCount())
+  } finally {
+    handle?.close()
+    db.close()
+  }
+})
+
+test('onChange fires for local ops and importJson, offChange stops it', () => {
+  const a = new ZeroDb()
+  const events = []
+  const sub = a.onChange(e => events.push(e))
+  const node = a.createNode('Todo')
+  a.setLww(node, 'title', 'x')
+  assert.equal(events.length, 2)
+  assert.equal(events[0].kind, 'op')
+  assert.equal(events[0].method, 'createNode')
+  assert.equal(events[0].node, node)
+  assert.ok(events[0].opId)
+  assert.equal(events[1].method, 'setLww')
+  assert.equal(events[1].key, 'title')
+
+  const b = new ZeroDb()
+  const bEvents = []
+  b.onChange(e => bEvents.push(e))
+  const res = b.importJson(a.exportJson())
+  assert.equal(res.accepted, 2)
+  b.replay()
+  assert.deepEqual(bEvents.map(e => e.kind), ['import', 'replay'])
+  assert.equal(bEvents[0].accepted, 2)
+
+  a.offChange(sub)
+  a.setLww(node, 'title', 'y')
+  assert.equal(events.length, 2, 'offChange stops delivery')
 })
 
 test('identity round-trip: seed + bundle restore the same peer', async () => {

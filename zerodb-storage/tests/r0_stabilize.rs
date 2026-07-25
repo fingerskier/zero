@@ -27,16 +27,18 @@ fn normalized_nodes(store: &LocalStore, path: &Path) -> Value {
     let report = store.inspect(path).unwrap();
     let mut nodes = report.nodes;
     nodes.sort_by(|a, b| a.id.cmp(&b.id));
-    serde_json::json!(nodes
-        .into_iter()
-        .map(|n| {
-            serde_json::json!({
-                "id": n.id,
-                "label": n.label,
-                "deleted": n.deleted,
+    serde_json::json!(
+        nodes
+            .into_iter()
+            .map(|n| {
+                serde_json::json!({
+                    "id": n.id,
+                    "label": n.label,
+                    "deleted": n.deleted,
+                })
             })
-        })
-        .collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    )
 }
 
 fn order_create_first(mut bundle: ExportBundle) -> ExportBundle {
@@ -217,5 +219,8 @@ fn create_tombstone_permutations_converge_and_survive_replay() {
         expected,
         "replay must preserve set-derived deleted state (tombstone-first path)"
     );
-    assert_eq!(normalized_nodes(&a, &dest_ct), normalized_nodes(&b, &dest_tc));
+    assert_eq!(
+        normalized_nodes(&a, &dest_ct),
+        normalized_nodes(&b, &dest_tc)
+    );
 }

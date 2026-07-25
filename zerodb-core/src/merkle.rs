@@ -509,14 +509,7 @@ mod tests {
             )
         }
 
-        fn write_vec(
-            dir: &Path,
-            name: &str,
-            id: &str,
-            desc: &str,
-            a: &[MerkleOp],
-            b: &[MerkleOp],
-        ) {
+        fn write_vec(dir: &Path, name: &str, id: &str, desc: &str, a: &[MerkleOp], b: &[MerkleOp]) {
             let t = sync_transcript(a, b);
             let final_root = match t.last() {
                 Some(MerkleMsg::Converged { root }) => root.clone(),

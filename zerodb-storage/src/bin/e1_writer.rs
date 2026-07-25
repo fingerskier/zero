@@ -16,7 +16,9 @@ fn main() {
             .set_lww(&node, "title", &format!("v{i}"))
             .expect("set_lww");
         store.counter_inc(&node, "count", 1).expect("counter_inc");
-        store.set_add(&node, "tags", &format!("t{i}")).expect("set_add");
+        store
+            .set_add(&node, "tags", &format!("t{i}"))
+            .expect("set_add");
         i += 1;
     }
 }

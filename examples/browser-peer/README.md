@@ -10,12 +10,16 @@ with a Node peer over the existing WebSocket sync protocol v2.
   client over a `WebSocket` (browser or Node >= 22): `Hello` / `HelloOk` /
   `OpsMsg` / `OpsAck`, u32-BE length-prefixed JSON frames inside WS binary
   messages, with buffering for fragmented/coalesced frames. Exposes
-  `syncOnce(db, url)` and `autoSync(db, url, intervalMs)` (poll-only; the
-  wasm store has no change events yet).
+  `syncOnce(db, url)`, `connectPush(db, url)` (persistent v2 push session:
+  the server streams new ops as they land; local `db.onChange` events push
+  back immediately), and `autoSync(db, url, intervalMs)` (push session
+  preferred, interval poll fallback against push-unaware servers).
 - `index.html` — demo UI: create nodes, set LWW props, sync once or
-  auto-sync against a peer URL. Persists to IndexedDB: identity seed +
-  datastore id + full export bundle, restored on load via
-  `ZeroDb.fromSeed(seed, ds)` + `importJson(bundle)`.
+  auto-sync against a peer URL. Persists to IndexedDB incrementally: an
+  op-journal object store keyed by op id, appended from `db.onChange`
+  events; on load the identity is restored via `ZeroDb.fromSeed(seed, ds)`
+  and the journal is re-imported (with a compact/rewrite pass when the
+  journal drifts from the op set).
 - `test/sync-driver.test.mjs` — Node test proving two-way convergence
   between the wasm store and a NAPI `Database.serve` peer.
 
@@ -65,9 +69,11 @@ npm run build:debug`.)
 
 - **Key in IndexedDB**: the ed25519 identity seed is persisted client-side;
   any script running on the page's origin can sign as this peer.
-- **Poll-only auto-sync**: no dirty-flag or server push; `autoSync` re-syncs
-  on an interval.
-- **Memory store**: persistence is whole-bundle export to IndexedDB on each
-  change — fine at MVP scale, not incremental.
+- **Push needs a push-capable server**: `autoSync` upgrades to a persistent
+  push session only when the server acks the v2 `push` capability (NAPI
+  `serve` does by default); otherwise it falls back to interval polling.
+- **Memory store + op journal**: state still lives in wasm memory; the
+  IndexedDB op-journal is incremental but a true OPFS/sqlite-wasm backend
+  remains future work.
 - M4a formally depends on M3c; this slice rides ahead as an experiment, the
   same way M2 rides on M1.

@@ -16,6 +16,8 @@ use zerodb_storage::{ExportBundle, LocalStore, MemoryBackend, StoreError};
 #[wasm_bindgen]
 pub struct ZeroDb {
     store: LocalStore<MemoryBackend>,
+    subs: Vec<(u32, js_sys::Function)>,
+    next_sub: u32,
 }
 
 fn err(e: StoreError) -> JsError {
@@ -32,13 +34,68 @@ fn decode32(s: &str) -> Result<[u8; 32], JsError> {
         .map_err(|_| JsError::new("expected 32 bytes hex"))
 }
 
+impl ZeroDb {
+    fn wrap(store: LocalStore<MemoryBackend>) -> ZeroDb {
+        ZeroDb {
+            store,
+            subs: Vec::new(),
+            next_sub: 0,
+        }
+    }
+
+    /// Invoke every registered change callback with `event` (as a JS value).
+    /// Callbacks MUST NOT synchronously call back into this ZeroDb (the
+    /// wasm-bindgen borrow is still held) — defer with `queueMicrotask`.
+    fn notify(&self, event: serde_json::Value) {
+        if self.subs.is_empty() {
+            return;
+        }
+        let Ok(val) = js_sys::JSON::parse(&event.to_string()) else {
+            return;
+        };
+        for (_, cb) in &self.subs {
+            let _ = cb.call1(&JsValue::NULL, &val);
+        }
+    }
+
+    fn notify_op(&self, method: &str, node: &str, key: Option<&str>, op_id: &str) {
+        self.notify(serde_json::json!({
+            "kind": "op",
+            "method": method,
+            "node": node,
+            "key": key,
+            "opId": op_id,
+        }));
+    }
+}
+
 #[wasm_bindgen]
 impl ZeroDb {
     /// Fresh in-memory store with a new random identity + datastore id.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<ZeroDb, JsError> {
         let store = LocalStore::init_with_backend(MemoryBackend::new()).map_err(err)?;
-        Ok(ZeroDb { store })
+        Ok(ZeroDb::wrap(store))
+    }
+
+    /// Register a change callback, mirroring the NAPI `subscribe` shapes:
+    /// `{kind:'op', method, node, key?, opId}` after each local mutation,
+    /// `{kind:'import', accepted, skipped}` after `importJson`,
+    /// `{kind:'replay'}` after `replay`. Delivery is synchronous — the
+    /// callback must not re-enter this ZeroDb directly (use `queueMicrotask`).
+    /// Returns an id for `offChange`.
+    #[wasm_bindgen(js_name = onChange)]
+    pub fn on_change(&mut self, callback: js_sys::Function) -> u32 {
+        let id = self.next_sub;
+        self.next_sub += 1;
+        self.subs.push((id, callback));
+        id
+    }
+
+    /// Remove a change callback; unknown ids are a no-op.
+    #[wasm_bindgen(js_name = offChange)]
+    pub fn off_change(&mut self, id: u32) {
+        self.subs.retain(|(i, _)| *i != id);
     }
 
     /// Restore a persisted identity: same seed + datastore id as a previous
@@ -49,7 +106,7 @@ impl ZeroDb {
         let ds = decode32(ds_hex)?;
         let store = LocalStore::init_with_backend_from_seed(MemoryBackend::new(), &seed, &ds)
             .map_err(err)?;
-        Ok(ZeroDb { store })
+        Ok(ZeroDb::wrap(store))
     }
 
     /// Raw identity seed (hex). Whoever holds this can sign as this peer.
@@ -75,17 +132,23 @@ impl ZeroDb {
 
     #[wasm_bindgen(js_name = createNode)]
     pub fn create_node(&mut self, label: &str) -> Result<String, JsError> {
-        self.store.create_node(label).map_err(err)
+        let (id, op) = self.store.create_node_with_op(label).map_err(err)?;
+        self.notify_op("createNode", &id, None, &op);
+        Ok(id)
     }
 
     #[wasm_bindgen(js_name = deleteNode)]
     pub fn delete_node(&mut self, node: &str) -> Result<String, JsError> {
-        self.store.delete_node(node).map_err(err)
+        let op = self.store.delete_node(node).map_err(err)?;
+        self.notify_op("deleteNode", node, None, &op);
+        Ok(op)
     }
 
     #[wasm_bindgen(js_name = setLww)]
     pub fn set_lww(&mut self, node: &str, key: &str, value: &str) -> Result<String, JsError> {
-        self.store.set_lww(node, key, value).map_err(err)
+        let op = self.store.set_lww(node, key, value).map_err(err)?;
+        self.notify_op("setLww", node, Some(key), &op);
+        Ok(op)
     }
 
     #[wasm_bindgen(js_name = getLww)]
@@ -104,37 +167,51 @@ impl ZeroDb {
 
     #[wasm_bindgen(js_name = counterInc)]
     pub fn counter_inc(&mut self, node: &str, key: &str, n: u32) -> Result<String, JsError> {
-        self.store.counter_inc(node, key, n as u64).map_err(err)
+        let op = self.store.counter_inc(node, key, n as u64).map_err(err)?;
+        self.notify_op("counterInc", node, Some(key), &op);
+        Ok(op)
     }
 
     #[wasm_bindgen(js_name = counterDec)]
     pub fn counter_dec(&mut self, node: &str, key: &str, n: u32) -> Result<String, JsError> {
-        self.store.counter_dec(node, key, n as u64).map_err(err)
+        let op = self.store.counter_dec(node, key, n as u64).map_err(err)?;
+        self.notify_op("counterDec", node, Some(key), &op);
+        Ok(op)
     }
 
     #[wasm_bindgen(js_name = gcounterInc)]
     pub fn gcounter_inc(&mut self, node: &str, key: &str, n: u32) -> Result<String, JsError> {
-        self.store.gcounter_inc(node, key, n as u64).map_err(err)
+        let op = self.store.gcounter_inc(node, key, n as u64).map_err(err)?;
+        self.notify_op("gcounterInc", node, Some(key), &op);
+        Ok(op)
     }
 
     #[wasm_bindgen(js_name = setAdd)]
     pub fn set_add(&mut self, node: &str, key: &str, value: &str) -> Result<String, JsError> {
-        self.store.set_add(node, key, value).map_err(err)
+        let op = self.store.set_add(node, key, value).map_err(err)?;
+        self.notify_op("setAdd", node, Some(key), &op);
+        Ok(op)
     }
 
     #[wasm_bindgen(js_name = setRemove)]
     pub fn set_remove(&mut self, node: &str, key: &str, value: &str) -> Result<String, JsError> {
-        self.store.set_remove(node, key, value).map_err(err)
+        let op = self.store.set_remove(node, key, value).map_err(err)?;
+        self.notify_op("setRemove", node, Some(key), &op);
+        Ok(op)
     }
 
     #[wasm_bindgen(js_name = flagEnable)]
     pub fn flag_enable(&mut self, node: &str, key: &str) -> Result<String, JsError> {
-        self.store.flag_enable(node, key).map_err(err)
+        let op = self.store.flag_enable(node, key).map_err(err)?;
+        self.notify_op("flagEnable", node, Some(key), &op);
+        Ok(op)
     }
 
     #[wasm_bindgen(js_name = flagDisable)]
     pub fn flag_disable(&mut self, node: &str, key: &str) -> Result<String, JsError> {
-        self.store.flag_disable(node, key).map_err(err)
+        let op = self.store.flag_disable(node, key).map_err(err)?;
+        self.notify_op("flagDisable", node, Some(key), &op);
+        Ok(op)
     }
 
     /// Nodes as a JS array of `{ id, label, deleted }`.
@@ -158,7 +235,9 @@ impl ZeroDb {
     }
 
     pub fn replay(&mut self) -> Result<(), JsError> {
-        self.store.replay_all().map_err(err)
+        self.store.replay_all().map_err(err)?;
+        self.notify(serde_json::json!({ "kind": "replay" }));
+        Ok(())
     }
 
     /// Export all ops as a JSON bundle string (format 1).
@@ -174,6 +253,9 @@ impl ZeroDb {
         let bundle: ExportBundle =
             serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?;
         let (accepted, skipped) = self.store.import_bundle(&bundle).map_err(err)?;
+        self.notify(
+            serde_json::json!({ "kind": "import", "accepted": accepted, "skipped": skipped }),
+        );
         to_js(&serde_json::json!({ "accepted": accepted, "skipped": skipped }))
     }
 

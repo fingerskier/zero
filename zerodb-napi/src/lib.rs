@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::{self, Read as IoRead, Write as IoWrite};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -33,9 +33,7 @@ fn set_stream_timeouts(stream: &TcpStream) -> io::Result<()> {
 
 /// Connect a client WebSocket with read/write timeouts on the underlying
 /// TCP stream so a stalled server cannot hang the session.
-fn connect_ws(
-    url: &str,
-) -> std::result::Result<WebSocket<MaybeTlsStream<TcpStream>>, String> {
+fn connect_ws(url: &str) -> std::result::Result<WebSocket<MaybeTlsStream<TcpStream>>, String> {
     let (ws, _resp) = tungstenite::connect(url).map_err(|e| e.to_string())?;
     if let MaybeTlsStream::Plain(stream) = ws.get_ref() {
         set_stream_timeouts(stream).map_err(|e| e.to_string())?;
@@ -79,6 +77,16 @@ impl<S: IoRead + IoWrite> IoRead for WsIo<S> {
                 Ok(Message::Close(_)) => return Ok(0),
                 Ok(_) => continue, // ignore text/ping/pong
                 Err(tungstenite::Error::ConnectionClosed) => return Ok(0),
+                // Preserve WouldBlock/TimedOut: the push loop treats them as
+                // "no frame yet" (tungstenite keeps partial input buffered).
+                Err(tungstenite::Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Err(e);
+                }
                 Err(e) => return Err(io::Error::other(e)),
             }
         }
@@ -122,21 +130,66 @@ fn wait_until(deadline: Instant, stop: &AtomicBool, dirty: Option<&AtomicBool>) 
     }
 }
 
-/// One client sync session against `url`: connect, two-way pull, replay if
-/// anything was accepted so materialized state stays current.
-fn connect_session(
+/// Read timeout during a persistent push session: short, because the push
+/// loop treats a timed-out read as "no frame yet" and uses it as its pacing.
+const PUSH_POLL: Duration = Duration::from_millis(150);
+
+/// One client session that requests the v2 push capability. If the server
+/// acks, this blocks inside the persistent push loop (store locked only per
+/// exchange) until the peer closes, the store closes, or `stop` is set.
+fn push_session(
     inner: &SharedStore,
     url: &str,
-) -> std::result::Result<sync::PullSummary, String> {
+    subs: &SharedSubs,
+    gen_ctr: &Arc<AtomicU64>,
+    stop: &Arc<AtomicBool>,
+) -> std::result::Result<(sync::PullSummary, bool), String> {
     let ws = connect_ws(url)?;
     let mut io = WsIo::new(ws);
-    let mut guard = inner.lock().map_err(|e| e.to_string())?;
-    let store = guard.as_mut().ok_or("database is closed")?;
-    let summary = sync::pull(store, &mut io).map_err(|e| e.to_string())?;
-    if summary.accepted > 0 {
-        store.replay_all().map_err(|e| e.to_string())?;
-    }
-    Ok(summary)
+    sync::pull_push(
+        inner,
+        &mut io,
+        &|| gen_ctr.load(Ordering::SeqCst),
+        &|| stop.load(Ordering::SeqCst),
+        |summary, push| {
+            emit_to(
+                subs,
+                serde_json::json!({
+                    "kind": "sync",
+                    "role": "connect",
+                    "url": url,
+                    "accepted": summary.accepted,
+                    "skipped": summary.skipped,
+                    "sent": summary.sent,
+                    "remoteAccepted": summary.remote_accepted,
+                    "remoteSkipped": summary.remote_skipped,
+                    "push": push,
+                }),
+            )
+        },
+        // Shorten the read timeout for the persistent phase on the socket
+        // handle tungstenite actually reads from (on Windows SO_RCVTIMEO is
+        // per handle — a try_clone'd handle would not affect this one).
+        |io| {
+            if let MaybeTlsStream::Plain(s) = io.ws.get_ref() {
+                let _ = s.set_read_timeout(Some(PUSH_POLL));
+            }
+        },
+        |tick| {
+            emit_to(
+                subs,
+                serde_json::json!({
+                    "kind": "sync",
+                    "role": "connect-push",
+                    "url": url,
+                    "sent": tick.sent,
+                    "accepted": tick.accepted,
+                    "skipped": tick.skipped,
+                }),
+            )
+        },
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn emit_to(subs: &SharedSubs, event: serde_json::Value) {
@@ -147,12 +200,23 @@ fn emit_to(subs: &SharedSubs, event: serde_json::Value) {
     }
 }
 
-/// One accepted connection: WS handshake, then a sync serve session while
-/// holding the store lock (held per session only — NOT while accepting and
-/// NOT during the handshake, so a stalled pre-handshake peer never blocks
-/// the store). Socket read/write timeouts (30s) bound both the handshake
-/// and the session; a timeout surfaces as a `{kind:'sync', error}` event.
-fn serve_connection(stream: TcpStream, inner: &SharedStore, subs: &SharedSubs) {
+/// One accepted connection: WS handshake, then a sync serve session. The
+/// store lock is taken only per exchange (never while accepting, during the
+/// handshake, or across the persistent push loop's waits, so one push peer
+/// cannot starve other sessions or local writes). Socket read/write timeouts
+/// (30s) bound the handshake and initial exchange; if the client negotiated
+/// the v2 push capability the session stays open with a short read timeout
+/// (`PUSH_POLL`) as the wake/poll pacing, pushing new local ops whenever the
+/// mutation generation counter changes. Errors surface as
+/// `{kind:'sync', error}` events.
+fn serve_connection(
+    stream: TcpStream,
+    inner: &SharedStore,
+    subs: &SharedSubs,
+    gen_ctr: &Arc<AtomicU64>,
+    stop: &Arc<AtomicBool>,
+    allow_push: bool,
+) {
     let peer_addr = stream
         .peer_addr()
         .map(|a| a.to_string())
@@ -165,26 +229,47 @@ fn serve_connection(stream: TcpStream, inner: &SharedStore, subs: &SharedSubs) {
         return;
     };
     let mut io = WsIo::new(ws);
-    let Ok(mut guard) = inner.lock() else { return };
-    let Some(store) = guard.as_mut() else { return };
-    match sync::serve(store, &mut io) {
-        Ok(summary) => {
-            if summary.accepted > 0 {
-                let _ = store.replay_all();
-            }
+    match sync::serve_push(
+        inner,
+        &mut io,
+        allow_push,
+        &|| gen_ctr.load(Ordering::SeqCst),
+        &|| stop.load(Ordering::SeqCst),
+        |summary, push| {
             emit_to(
                 subs,
                 serde_json::json!({
                     "kind": "sync",
                     "role": "serve",
                     "peer": summary.peer,
-                    "peerAddr": peer_addr,
+                    "peerAddr": peer_addr.clone(),
                     "sent": summary.sent,
                     "accepted": summary.accepted,
                     "skipped": summary.skipped,
+                    "push": push,
                 }),
             )
-        }
+        },
+        // Per-handle read timeout (see push_session note) on entering the
+        // persistent phase.
+        |io| {
+            let _ = io.ws.get_ref().set_read_timeout(Some(PUSH_POLL));
+        },
+        |tick| {
+            emit_to(
+                subs,
+                serde_json::json!({
+                    "kind": "sync",
+                    "role": "serve-push",
+                    "peerAddr": peer_addr.clone(),
+                    "sent": tick.sent,
+                    "accepted": tick.accepted,
+                    "skipped": tick.skipped,
+                }),
+            )
+        },
+    ) {
+        Ok(_) => {} // summary event already emitted after the exchange
         Err(e) => emit_to(
             subs,
             serde_json::json!({
@@ -205,6 +290,9 @@ pub struct Database {
     next_sub: Mutex<u32>,
     server: Mutex<Option<ServerHandle>>,
     dirty: Arc<AtomicBool>,
+    /// Mutation generation counter — the push-session wake signal. Bumped on
+    /// every local op, import, and replay; push loops diff op ids when it moves.
+    gen_ctr: Arc<AtomicU64>,
     conns: Mutex<HashMap<u32, ConnHandle>>,
     next_conn: Mutex<u32>,
 }
@@ -241,6 +329,7 @@ impl Database {
 
     fn emit_op(&self, method: &str, node: &str, key: Option<&str>, op_id: Option<&str>) {
         self.dirty.store(true, Ordering::SeqCst);
+        self.gen_ctr.fetch_add(1, Ordering::SeqCst);
         self.emit(serde_json::json!({
             "kind": "op",
             "method": method,
@@ -279,6 +368,7 @@ impl Database {
             next_sub: Mutex::new(0),
             server: Mutex::new(None),
             dirty: Arc::new(AtomicBool::new(false)),
+            gen_ctr: Arc::new(AtomicU64::new(0)),
             conns: Mutex::new(HashMap::new()),
             next_conn: Mutex::new(0),
         })
@@ -294,6 +384,7 @@ impl Database {
             next_sub: Mutex::new(0),
             server: Mutex::new(None),
             dirty: Arc::new(AtomicBool::new(false)),
+            gen_ctr: Arc::new(AtomicU64::new(0)),
             conns: Mutex::new(HashMap::new()),
             next_conn: Mutex::new(0),
         })
@@ -486,6 +577,7 @@ impl Database {
     #[napi]
     pub fn replay(&self) -> Result<()> {
         self.with_store_mut(|store| store.replay_all().map_err(map_err))?;
+        self.gen_ctr.fetch_add(1, Ordering::SeqCst);
         self.emit(serde_json::json!({ "kind": "replay" }));
         Ok(())
     }
@@ -508,7 +600,10 @@ impl Database {
             let (accepted, skipped) = store.import_bundle(&bundle).map_err(map_err)?;
             Ok(serde_json::json!({ "accepted": accepted, "skipped": skipped }))
         })
-        .inspect(|result| self.emit(serde_json::json!({ "kind": "import", "accepted": result["accepted"], "skipped": result["skipped"] })))
+        .inspect(|result| {
+            self.gen_ctr.fetch_add(1, Ordering::SeqCst);
+            self.emit(serde_json::json!({ "kind": "import", "accepted": result["accepted"], "skipped": result["skipped"] }))
+        })
     }
 
     /// Start a WebSocket sync listener. By default binds loopback only
@@ -521,8 +616,16 @@ impl Database {
     /// session on its own thread (30s socket timeouts; a stalled peer
     /// never blocks the accept loop or the store) and emits a
     /// `{kind:'sync', role:'serve', ...}` event.
+    /// `push` (default true) advertises the v2 push capability: clients that
+    /// request it get a persistent session that streams new local ops as they
+    /// land. Pass `push: false` to behave like an old one-shot-only server.
     #[napi]
-    pub fn serve(&self, port: u32, allow_insecure_lan: Option<bool>) -> Result<u32> {
+    pub fn serve(
+        &self,
+        port: u32,
+        allow_insecure_lan: Option<bool>,
+        push: Option<bool>,
+    ) -> Result<u32> {
         let mut server = self.server.lock().map_err(|e| map_err(e.to_string()))?;
         if server.is_some() {
             return Err(Error::from_reason("already serving"));
@@ -535,10 +638,12 @@ impl Database {
         let listener = TcpListener::bind((host, port as u16)).map_err(map_err)?;
         let actual = listener.local_addr().map_err(map_err)?.port();
         listener.set_nonblocking(true).map_err(map_err)?;
+        let allow_push = push.unwrap_or(true);
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
         let inner = self.inner.clone();
         let subs = self.subs.clone();
+        let gen_ctr = self.gen_ctr.clone();
         let join = std::thread::spawn(move || {
             while !stop_flag.load(Ordering::SeqCst) {
                 match listener.accept() {
@@ -546,10 +651,14 @@ impl Database {
                         // Per-connection thread: a peer that stalls (e.g.
                         // never completes the WS handshake) must not block
                         // accepting further connections. The store mutex
-                        // still serializes actual sync sessions.
+                        // still serializes actual sync exchanges.
                         let inner = inner.clone();
                         let subs = subs.clone();
-                        std::thread::spawn(move || serve_connection(stream, &inner, &subs));
+                        let gen_ctr = gen_ctr.clone();
+                        let stop = stop_flag.clone();
+                        std::thread::spawn(move || {
+                            serve_connection(stream, &inner, &subs, &gen_ctr, &stop, allow_push)
+                        });
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));
@@ -598,9 +707,11 @@ impl Database {
     /// retryInMs}` and retry with capped exponential backoff (1s..30s).
     /// Returns a connection id for `disconnect`; `close()` stops all.
     ///
-    /// Stage-5 upgrade path: true push (server notifies clients of new remote
-    /// ops over a persistent session) needs protocol v3; until then the dirty
-    /// flag + interval poll approximates live sync with no wire changes.
+    /// Each attempt requests the v2 push capability. If the server acks,
+    /// the session stays open: new ops stream both ways immediately (dirty
+    /// flag and interval are then only the reconnect pacing). If the server
+    /// is push-unaware (old peer), the one-shot session runs and the dirty
+    /// flag + interval poll approximates live sync exactly as before.
     #[napi]
     pub fn auto_connect(&self, url: String, interval_ms: u32) -> Result<u32> {
         let stop = Arc::new(AtomicBool::new(false));
@@ -608,28 +719,27 @@ impl Database {
         let inner = self.inner.clone();
         let subs = self.subs.clone();
         let dirty = self.dirty.clone();
+        let gen_ctr = self.gen_ctr.clone();
         let interval = Duration::from_millis(interval_ms.max(20) as u64);
         let join = std::thread::spawn(move || {
             let mut backoff = Duration::from_secs(1);
             while !stop_flag.load(Ordering::SeqCst) {
                 dirty.store(false, Ordering::SeqCst);
-                match connect_session(&inner, &url) {
-                    Ok(summary) => {
+                match push_session(&inner, &url, &subs, &gen_ctr, &stop_flag) {
+                    Ok((_summary, push)) => {
                         backoff = Duration::from_secs(1);
-                        emit_to(
-                            &subs,
-                            serde_json::json!({
-                                "kind": "sync",
-                                "role": "connect",
-                                "url": url,
-                                "accepted": summary.accepted,
-                                "skipped": summary.skipped,
-                                "sent": summary.sent,
-                                "remoteAccepted": summary.remote_accepted,
-                                "remoteSkipped": summary.remote_skipped,
-                            }),
-                        );
-                        wait_until(Instant::now() + interval, &stop_flag, Some(&dirty));
+                        // Summary event already emitted after the exchange.
+                        if push {
+                            // Persistent session ended (peer closed or store
+                            // closed); brief pause, then reconnect.
+                            wait_until(
+                                Instant::now() + interval.min(Duration::from_secs(1)),
+                                &stop_flag,
+                                None,
+                            );
+                        } else {
+                            wait_until(Instant::now() + interval, &stop_flag, Some(&dirty));
+                        }
                     }
                     Err(e) => {
                         emit_to(

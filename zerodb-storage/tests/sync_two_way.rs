@@ -6,8 +6,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
-use zerodb_storage::sync::{self, Hello, OpsMsg, SYNC_PROTOCOL_VERSION};
 use zerodb_storage::LocalStore;
+use zerodb_storage::sync::{self, Hello, OpsMsg, SYNC_PROTOCOL_VERSION};
 
 fn tmp_db(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
@@ -16,7 +16,10 @@ fn tmp_db(name: &str) -> PathBuf {
         .as_nanos();
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../target")
-        .join(format!("sync2-{name}-{}-{nonce}.sqlite", std::process::id()))
+        .join(format!(
+            "sync2-{name}-{}-{nonce}.sqlite",
+            std::process::id()
+        ))
 }
 
 fn pair() -> (TcpStream, TcpStream) {
@@ -128,6 +131,7 @@ fn tampered_client_op_rejected_without_poisoning_server() {
             datastore_id: ds.clone(),
             peer: "22".repeat(32),
             op_ids: vec![fake_id],
+            push: false,
         },
     )
     .unwrap();
