@@ -35,7 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm ci
       # Always build the native addon from source on this platform; the
       # checked-in target list is Windows-only, so pass an explicit target.
