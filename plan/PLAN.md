@@ -56,9 +56,15 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 ## 5. Immediate next actions (ordered)
 
-1. **M1 exit pass** — prototype slices landed (E4 atomic rollback, E9 edges/H3 partial, schema pin, O3 query, minimal TS→IR); R0.1 store safety done. Exit stays **blocked** until E1 kill/clock-rollback + E4 crash-matrix evidence and the SPEC §10 checklist are ticked; freeze is a separate Decision Log act.
-2. **M2 continue** — wire NAPI to query/schema/edges; subscribe; parity vectors; extra CRDTs.
-3. **Format freeze** only via Decision Log if retaining local DBs.
-4. **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.
+Current work package (adopted 2026-07-25; innate sync stages 1–4 shipped: `ce71349`, `4146f2a`, `a2b2377`):
+
+1. **Sync LAN hardening** — session timeout (a slow peer currently holds the store lock for its session) + non-loopback `serve` behind an explicit unsafe flag (mirror CLI `--allow-insecure-lan`).
+2. **CI completeness** — clean-checkout CI job building zerodb-napi and running the JS test suites; binding parity vectors for the 5 shipped CRDTs vs core fixtures.
+3. **E1 hard evidence** — kill-not-shutdown and 1-hour clock-rollback store tests (durability claims the sync path now leans on).
+4. **R0.2 wire stance** — decided (Decision Log 2026-07-25): JSON wire stays v2 experimental; canonical CBOR lands with protocol v3 (one wire migration).
+
+Deferred with triggers: M2-crdts (until an app needs MVRegister/RGA), E4 crash matrix (formal M1 exit pass), CBOR wire + server-push (protocol v3), browser wasm/OPFS peer (after this package or on demand).
+
+Then: **M1 exit pass** (SPEC §10 checklist; freeze stays a separate Decision Log act) and **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.
 
 Live rows and exit evidence: [LEDGER.md](LEDGER.md). Open review backlog: [FINDINGS.GROK.md](FINDINGS.GROK.md).
