@@ -33,7 +33,7 @@ Detailed resolved-issue audit prose lives in the [ISSUES Decision Log](../doc/IS
 
 ## M1 — Local durable core (`v0.1.0-local`)
 
-**Overall:** `in-progress` — experimental slice [M1-LOCAL.md](../doc/M1-LOCAL.md) (`1ef16d6`, `f9cc660`); **exit not closed**.
+**Overall:** `done` — exit resolved 2026-07-25 (Decision Log; tag `v0.1.0-local`, experimental format, freeze still open). Implementation notes: [M1-LOCAL.md](../doc/M1-LOCAL.md).
 
 Depends: composite M0 model (done). Release: `v0.1.0-local`.
 
@@ -62,7 +62,7 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M1-tsir | TS→IR compiler (≤ M1, O2) | done(minimal tool) | M | `tools/ts-to-ir` authoring JSON → pin IR; full CBOR SchemaId later | G-14 |
 | M1-fmtver | `storage_format_version` meta + freeze discipline | done(meta v1 + backfill; freeze still open) | S | meta written at init/open; freeze still needs Decision Log | G-07 |
 | M1-fix-init | Fail-closed init (no silent re-key) | done(`r0_stabilize` init tests) | S | re-init of empty-initialized and nonempty DB errors; identity+ops preserved | G20-03 |
-| M1-exit | Close M1 when exit criteria met | open | — | R0.1 store safety landed; formal exit still needs R0.2 contracts, E1/E4 evidence honesty, SPEC checklist | — |
+| M1-exit | Close M1 when exit criteria met | done(Decision Log 2026-07-25; tag `v0.1.0-local`) | — | SPEC §10 M1 checklist ticked with evidence (E1/E2/E4/E9 suites); scope narrowing Decision Log entry (CBOR IR + indexes + repl → M2/M3); format freeze deliberately still open | — |
 
 ---
 
@@ -85,7 +85,7 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M2-lan-hardening | sync session timeout + non-loopback serve behind unsafe flag | done | 30s socket timeouts on NAPI serve/connect/autoConnect sockets; per-connection serve threads (store lock only after WS handshake); `serve(port, allowInsecureLan?)` binds 0.0.0.0 only with explicit flag (CLI unchanged); tests: loopback-default, LAN bind, stalled-raw-socket recovery in zerodb-napi/test/m2-sync.test.mjs — 21/21 npm test green |
 | M2-push | v2 push capability: persistent sessions (server streams new ops; client pushes on dirty) negotiated via `Hello.push`/`HelloOk.push` (serde defaults — old peers fall back to one-shot; CBOR wire still reserved for v3) | done | `zerodb_storage::sync::{serve_push,pull_push}` + `tests/sync_push.rs` (3: two-way push w/o new session, plain-serve fallback, capability field compat); NAPI `serve(port, lan?, push?)` + `autoConnect` upgrade, `test/m2-push.test.mjs` (2: push latency well under interval, push-disabled server poll fallback) |
 | M2-ci | clean-checkout CI: NAPI build + JS suites; parity vectors for 5 shipped CRDTs | done-pending-first-CI-run | `ci.yml`: napi job (ubuntu+windows, `npm ci` + `napi build --platform --release --target <host>` + `npm test`), rust job now `--locked` + clippy `-D warnings` (5 pre-existing lints fixed in zerodb-core), ts-to-ir job; `test\m2-parity.test.mjs` (5): LWW/GCounter/PNCounter/ORSet/EWFlag single-store + cross-peer convergence via exportJson/importJson both ways; local: 21/21 napi tests, clippy clean, workspace tests green; actual GH Actions run not yet observed |
-| M2-schema | schema apply / TS→IR pipeline (O2) | open | blocked(M1-schema/tsir) |
+| M2-schema | schema apply / TS→IR pipeline (O2) + canonical CBOR IR/SchemaId + interactive repl (moved from M1, Decision Log 2026-07-25) | open | — |
 | M2-crdts | MVRegister + resolve, RGA, LWWMap | open | kernel + binding |
 | M2-parity | binding parity vectors vs core fixtures | open | — |
 | M2-exit | Close `v0.1.0-sdk` | blocked(above) | SPEC §10 M2 checklist |

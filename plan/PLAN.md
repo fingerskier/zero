@@ -65,6 +65,6 @@ Current work package (adopted 2026-07-25; innate sync stages 1–4 shipped: `ce7
 
 Deferred with triggers: M2-crdts (until an app needs MVRegister/RGA), E4 crash matrix (formal M1 exit pass), CBOR wire + server-push (protocol v3), browser wasm/OPFS peer (after this package or on demand).
 
-Then: **M1 exit pass** (SPEC §10 checklist; freeze stays a separate Decision Log act) and **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.
+**M1 exit: resolved 2026-07-25** (Decision Log; tag `v0.1.0-local`, experimental format; CBOR IR/indexes/repl re-scoped to M2/M3; freeze stays a separate Decision Log act). Then: **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.
 
 Live rows and exit evidence: [LEDGER.md](LEDGER.md). Open review backlog: [FINDINGS.GROK.md](FINDINGS.GROK.md).

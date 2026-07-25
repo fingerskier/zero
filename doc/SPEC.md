@@ -1013,14 +1013,14 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 **Outcome:** offline exemplar CRUD and deterministic restart/replay on a single peer (`v0.1.0-local`).
 
-- [ ] Graph entities, HLC, oplog, incremental materializer, operation groups (per M0a/M0e)
-- [ ] CRDTs: LWW, GCounter, PNCounter, ORSet, Flag
-- [ ] Deterministic delete/referential-integrity state machine (ISSUES H3) — prefer derived visibility over multi-peer cascade generation unless a single deterministic emitter is specified
-- [ ] Canonical schema IR (M0b), strict + schemaless modes, secondary indexes
-- [ ] CLI (M1 subset only): `init`, `schema apply`, `repl`, minimal query (O3), `inspect` — not the full §5.1 surface
-- [ ] Atomic oplog+state transaction and crash recovery (ISSUES C8, local half of M0e)
+- [x] Graph entities, HLC, oplog, incremental materializer, operation groups (per M0a/M0e) — `zerodb-storage` (`atomic_group`, `m1_wave1` HLC suites)
+- [x] CRDTs: LWW, GCounter, PNCounter, ORSet, Flag — store + NAPI parity (`m2-parity.test.mjs`)
+- [x] Deterministic delete/referential-integrity state machine (ISSUES H3) — **derived visibility** (no cascade ops): node/edge tombstones set-derived, edge visible iff not tombstoned and both endpoints live (`e9_delete_machine`, `r0_stabilize`)
+- [x] Schema pin (JSON) + type-pin reject; strict + schemaless modes — *canonical CBOR IR and secondary indexes re-scoped to M2/M3 (Decision Log 2026-07-25)*
+- [x] CLI (M1 subset): `init`, `schema-apply`, `query` (O3), `inspect` — *interactive `repl` re-scoped to M2 (Decision Log 2026-07-25)*
+- [x] Atomic oplog+state transaction and crash recovery (ISSUES C8, local half of M0e) — named-failpoint crash matrix at every commit boundary (`e4_crash_matrix`)
 
-**Exit gate:** property/model tests, randomized replay equivalence, crash atomicity at every commit boundary, storage contract tests, duplicate/replay tests, offline exemplar acceptance (**E1, E2 model-level, E4, E9**).
+**Exit gate:** property/model tests, randomized replay equivalence, crash atomicity at every commit boundary, storage contract tests, duplicate/replay tests, offline exemplar acceptance (**E1, E2 model-level, E4, E9**).  **Resolved 2026-07-25** (Decision Log; E1 `e1_e2_acceptance` + `e1_kill_clock` kill/clock-rollback, E2 model-level `e1_e2_acceptance` e2_*, E4 `e4_crash_matrix`, E9 `e9_delete_machine`). Format freeze remains a separate, still-open Decision Log act — `v0.1.0-local` is an experimental-format release.
 
 ### M2 — One SDK vertical (Node/NAPI + SQLite)
 
