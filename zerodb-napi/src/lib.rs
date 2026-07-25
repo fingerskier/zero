@@ -3,13 +3,19 @@
 //! Not a format freeze. API mirrors the M1 local slice for open/mutate/inspect.
 
 use std::collections::HashMap;
+use std::io::{self, Read as IoRead, Write as IoWrite};
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
-use zerodb_storage::LocalStore;
+use tungstenite::{Message, WebSocket};
+use zerodb_storage::{sync, LocalStore};
 
 fn map_err(e: impl ToString) -> Error {
     Error::from_reason(e.to_string())
@@ -18,21 +24,140 @@ fn map_err(e: impl ToString) -> Error {
 type Subscriber =
     ThreadsafeFunction<serde_json::Value, (), serde_json::Value, Status, false, true>;
 
+type SharedStore = Arc<Mutex<Option<LocalStore>>>;
+type SharedSubs = Arc<Mutex<HashMap<u32, Subscriber>>>;
+
+/// Bridge a WebSocket to `Read + Write` for the sync protocol. Incoming
+/// Binary messages are buffered for `read`; `write` sends one Binary message
+/// per call. The sync framing is length-prefixed, so message boundaries need
+/// not align with protocol frames.
+struct WsIo<S: IoRead + IoWrite> {
+    ws: WebSocket<S>,
+    buf: Vec<u8>,
+    pos: usize,
+}
+
+impl<S: IoRead + IoWrite> WsIo<S> {
+    fn new(ws: WebSocket<S>) -> Self {
+        Self {
+            ws,
+            buf: Vec::new(),
+            pos: 0,
+        }
+    }
+}
+
+impl<S: IoRead + IoWrite> IoRead for WsIo<S> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        while self.pos >= self.buf.len() {
+            match self.ws.read() {
+                Ok(Message::Binary(data)) => {
+                    self.buf = data;
+                    self.pos = 0;
+                }
+                Ok(Message::Close(_)) => return Ok(0),
+                Ok(_) => continue, // ignore text/ping/pong
+                Err(tungstenite::Error::ConnectionClosed) => return Ok(0),
+                Err(e) => return Err(io::Error::other(e)),
+            }
+        }
+        let n = out.len().min(self.buf.len() - self.pos);
+        out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
+impl<S: IoRead + IoWrite> IoWrite for WsIo<S> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.ws
+            .send(Message::Binary(data.to_vec()))
+            .map_err(io::Error::other)?;
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.ws.flush().map_err(io::Error::other)
+    }
+}
+
+struct ServerHandle {
+    stop: Arc<AtomicBool>,
+    join: JoinHandle<()>,
+}
+
+fn emit_to(subs: &SharedSubs, event: serde_json::Value) {
+    if let Ok(subs) = subs.lock() {
+        for tsfn in subs.values() {
+            tsfn.call(event.clone(), ThreadsafeFunctionCallMode::NonBlocking);
+        }
+    }
+}
+
+/// One accepted connection: WS handshake, then a sync serve session while
+/// holding the store lock (held per session only, not while accepting).
+fn serve_connection(stream: TcpStream, inner: &SharedStore, subs: &SharedSubs) {
+    let peer_addr = stream
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
+    let _ = stream.set_nonblocking(false);
+    let Ok(ws) = tungstenite::accept(stream) else {
+        return;
+    };
+    let mut io = WsIo::new(ws);
+    let Ok(mut guard) = inner.lock() else { return };
+    let Some(store) = guard.as_mut() else { return };
+    match sync::serve(store, &mut io) {
+        Ok(summary) => emit_to(
+            subs,
+            serde_json::json!({
+                "kind": "sync",
+                "role": "serve",
+                "peer": summary.peer,
+                "peerAddr": peer_addr,
+                "sent": summary.sent,
+                "accepted": summary.accepted,
+                "skipped": summary.skipped,
+            }),
+        ),
+        Err(e) => emit_to(
+            subs,
+            serde_json::json!({
+                "kind": "sync",
+                "role": "serve",
+                "peerAddr": peer_addr,
+                "error": e.to_string(),
+            }),
+        ),
+    }
+}
+
 /// SQLite-backed ZeroDB handle for Node (M2 vertical).
 #[napi]
 pub struct Database {
-    inner: Mutex<Option<LocalStore>>,
-    subs: Mutex<HashMap<u32, Subscriber>>,
+    inner: SharedStore,
+    subs: SharedSubs,
     next_sub: Mutex<u32>,
+    server: Mutex<Option<ServerHandle>>,
 }
 
 impl Database {
     fn emit(&self, event: serde_json::Value) {
-        if let Ok(subs) = self.subs.lock() {
-            for tsfn in subs.values() {
-                tsfn.call(event.clone(), ThreadsafeFunctionCallMode::NonBlocking);
-            }
+        emit_to(&self.subs, event);
+    }
+
+    fn stop_server(&self) -> Result<()> {
+        let handle = self
+            .server
+            .lock()
+            .map_err(|e| map_err(e.to_string()))?
+            .take();
+        if let Some(handle) = handle {
+            handle.stop.store(true, Ordering::SeqCst);
+            let _ = handle.join.join();
         }
+        Ok(())
     }
 
     fn emit_op(&self, method: &str, node: &str, key: Option<&str>, op_id: Option<&str>) {
@@ -69,9 +194,10 @@ impl Database {
     pub fn init(path: String) -> Result<Self> {
         let store = LocalStore::init(Path::new(&path)).map_err(map_err)?;
         Ok(Self {
-            inner: Mutex::new(Some(store)),
-            subs: Mutex::new(HashMap::new()),
+            inner: Arc::new(Mutex::new(Some(store))),
+            subs: Arc::new(Mutex::new(HashMap::new())),
             next_sub: Mutex::new(0),
+            server: Mutex::new(None),
         })
     }
 
@@ -80,15 +206,17 @@ impl Database {
     pub fn open(path: String) -> Result<Self> {
         let store = LocalStore::open(Path::new(&path)).map_err(map_err)?;
         Ok(Self {
-            inner: Mutex::new(Some(store)),
-            subs: Mutex::new(HashMap::new()),
+            inner: Arc::new(Mutex::new(Some(store))),
+            subs: Arc::new(Mutex::new(HashMap::new())),
             next_sub: Mutex::new(0),
+            server: Mutex::new(None),
         })
     }
 
     /// Release the SQLite connection (required before deleting the file on Windows).
     #[napi]
     pub fn close(&self) -> Result<()> {
+        self.stop_server()?;
         let mut guard = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
         *guard = None;
         if let Ok(mut subs) = self.subs.lock() {
@@ -293,5 +421,66 @@ impl Database {
             Ok(serde_json::json!({ "accepted": accepted, "skipped": skipped }))
         })
         .inspect(|result| self.emit(serde_json::json!({ "kind": "import", "accepted": result["accepted"], "skipped": result["skipped"] })))
+    }
+
+    /// Start a loopback-only WebSocket sync listener (`ws://127.0.0.1:port`).
+    /// Port 0 asks the OS for a free port; the actual port is returned. Each
+    /// incoming connection runs one serve session and emits a
+    /// `{kind:'sync', role:'serve', ...}` event.
+    #[napi]
+    pub fn serve(&self, port: u32) -> Result<u32> {
+        let mut server = self.server.lock().map_err(|e| map_err(e.to_string()))?;
+        if server.is_some() {
+            return Err(Error::from_reason("already serving"));
+        }
+        let listener = TcpListener::bind(("127.0.0.1", port as u16)).map_err(map_err)?;
+        let actual = listener.local_addr().map_err(map_err)?.port();
+        listener.set_nonblocking(true).map_err(map_err)?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        let inner = self.inner.clone();
+        let subs = self.subs.clone();
+        let join = std::thread::spawn(move || {
+            while !stop_flag.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((stream, _)) => serve_connection(stream, &inner, &subs),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        *server = Some(ServerHandle { stop, join });
+        Ok(actual as u32)
+    }
+
+    /// Stop the sync listener started by `serve`; no-op if not serving.
+    #[napi]
+    pub fn stop_serve(&self) -> Result<()> {
+        self.stop_server()
+    }
+
+    /// Connect to a peer's sync listener (`ws://host:port`) and run one
+    /// two-way session. Returns `{ accepted, skipped, sent, remoteAccepted,
+    /// remoteSkipped }` and emits a `{kind:'sync', role:'connect', ...}` event.
+    #[napi]
+    pub fn connect_peer(&self, url: String) -> Result<serde_json::Value> {
+        let (ws, _resp) = tungstenite::connect(&url).map_err(map_err)?;
+        let mut io = WsIo::new(ws);
+        let summary = self.with_store_mut(|store| sync::pull(store, &mut io).map_err(map_err))?;
+        let result = serde_json::json!({
+            "accepted": summary.accepted,
+            "skipped": summary.skipped,
+            "sent": summary.sent,
+            "remoteAccepted": summary.remote_accepted,
+            "remoteSkipped": summary.remote_skipped,
+        });
+        let mut event = result.clone();
+        event["kind"] = "sync".into();
+        event["role"] = "connect".into();
+        event["url"] = url.into();
+        self.emit(event);
+        Ok(result)
     }
 }

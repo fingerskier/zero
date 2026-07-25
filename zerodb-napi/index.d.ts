@@ -49,4 +49,19 @@ export declare class Database {
   exportJson(): string
   /** Import a JSON export bundle. Returns `{ accepted, skipped }`. */
   importJson(json: string): any
+  /**
+   * Start a loopback-only WebSocket sync listener (`ws://127.0.0.1:port`).
+   * Port 0 asks the OS for a free port; the actual port is returned. Each
+   * incoming connection runs one serve session and emits a
+   * `{kind:'sync', role:'serve', ...}` event.
+   */
+  serve(port: number): number
+  /** Stop the sync listener started by `serve`; no-op if not serving. */
+  stopServe(): void
+  /**
+   * Connect to a peer's sync listener (`ws://host:port`) and run one
+   * two-way session. Returns `{ accepted, skipped, sent, remoteAccepted,
+   * remoteSkipped }` and emits a `{kind:'sync', role:'connect', ...}` event.
+   */
+  connectPeer(url: string): any
 }

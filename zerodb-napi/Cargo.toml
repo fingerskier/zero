@@ -13,6 +13,7 @@ zerodb-storage = { path = "../zerodb-storage" }
 napi = { version = "3", default-features = false, features = ["napi4", "serde-json"] }
 napi-derive = "3"
 serde_json.workspace = true
+tungstenite = "0.24"
 
 [build-dependencies]
 napi-build = "2"
