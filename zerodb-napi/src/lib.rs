@@ -9,20 +9,19 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use tungstenite::{Message, WebSocket};
-use zerodb_storage::{sync, LocalStore};
+use zerodb_storage::{LocalStore, sync};
 
 fn map_err(e: impl ToString) -> Error {
     Error::from_reason(e.to_string())
 }
 
-type Subscriber =
-    ThreadsafeFunction<serde_json::Value, (), serde_json::Value, Status, false, true>;
+type Subscriber = ThreadsafeFunction<serde_json::Value, (), serde_json::Value, Status, false, true>;
 
 type SharedStore = Arc<Mutex<Option<LocalStore>>>;
 type SharedSubs = Arc<Mutex<HashMap<u32, Subscriber>>>;
@@ -86,6 +85,38 @@ struct ServerHandle {
     join: JoinHandle<()>,
 }
 
+struct ConnHandle {
+    stop: Arc<AtomicBool>,
+    join: JoinHandle<()>,
+}
+
+/// Sleep in small slices so stop/dirty flags stay responsive.
+fn wait_until(deadline: Instant, stop: &AtomicBool, dirty: Option<&AtomicBool>) {
+    while !stop.load(Ordering::SeqCst)
+        && !dirty.is_some_and(|d| d.load(Ordering::SeqCst))
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// One client sync session against `url`: connect, two-way pull, replay if
+/// anything was accepted so materialized state stays current.
+fn connect_session(
+    inner: &SharedStore,
+    url: &str,
+) -> std::result::Result<sync::PullSummary, String> {
+    let (ws, _resp) = tungstenite::connect(url).map_err(|e| e.to_string())?;
+    let mut io = WsIo::new(ws);
+    let mut guard = inner.lock().map_err(|e| e.to_string())?;
+    let store = guard.as_mut().ok_or("database is closed")?;
+    let summary = sync::pull(store, &mut io).map_err(|e| e.to_string())?;
+    if summary.accepted > 0 {
+        store.replay_all().map_err(|e| e.to_string())?;
+    }
+    Ok(summary)
+}
+
 fn emit_to(subs: &SharedSubs, event: serde_json::Value) {
     if let Ok(subs) = subs.lock() {
         for tsfn in subs.values() {
@@ -109,18 +140,23 @@ fn serve_connection(stream: TcpStream, inner: &SharedStore, subs: &SharedSubs) {
     let Ok(mut guard) = inner.lock() else { return };
     let Some(store) = guard.as_mut() else { return };
     match sync::serve(store, &mut io) {
-        Ok(summary) => emit_to(
-            subs,
-            serde_json::json!({
-                "kind": "sync",
-                "role": "serve",
-                "peer": summary.peer,
-                "peerAddr": peer_addr,
-                "sent": summary.sent,
-                "accepted": summary.accepted,
-                "skipped": summary.skipped,
-            }),
-        ),
+        Ok(summary) => {
+            if summary.accepted > 0 {
+                let _ = store.replay_all();
+            }
+            emit_to(
+                subs,
+                serde_json::json!({
+                    "kind": "sync",
+                    "role": "serve",
+                    "peer": summary.peer,
+                    "peerAddr": peer_addr,
+                    "sent": summary.sent,
+                    "accepted": summary.accepted,
+                    "skipped": summary.skipped,
+                }),
+            )
+        }
         Err(e) => emit_to(
             subs,
             serde_json::json!({
@@ -140,6 +176,9 @@ pub struct Database {
     subs: SharedSubs,
     next_sub: Mutex<u32>,
     server: Mutex<Option<ServerHandle>>,
+    dirty: Arc<AtomicBool>,
+    conns: Mutex<HashMap<u32, ConnHandle>>,
+    next_conn: Mutex<u32>,
 }
 
 impl Database {
@@ -160,7 +199,20 @@ impl Database {
         Ok(())
     }
 
+    fn stop_conns(&self) -> Result<()> {
+        let handles: Vec<ConnHandle> = {
+            let mut conns = self.conns.lock().map_err(|e| map_err(e.to_string()))?;
+            conns.drain().map(|(_, h)| h).collect()
+        };
+        for handle in handles {
+            handle.stop.store(true, Ordering::SeqCst);
+            let _ = handle.join.join();
+        }
+        Ok(())
+    }
+
     fn emit_op(&self, method: &str, node: &str, key: Option<&str>, op_id: Option<&str>) {
+        self.dirty.store(true, Ordering::SeqCst);
         self.emit(serde_json::json!({
             "kind": "op",
             "method": method,
@@ -198,6 +250,9 @@ impl Database {
             subs: Arc::new(Mutex::new(HashMap::new())),
             next_sub: Mutex::new(0),
             server: Mutex::new(None),
+            dirty: Arc::new(AtomicBool::new(false)),
+            conns: Mutex::new(HashMap::new()),
+            next_conn: Mutex::new(0),
         })
     }
 
@@ -210,6 +265,9 @@ impl Database {
             subs: Arc::new(Mutex::new(HashMap::new())),
             next_sub: Mutex::new(0),
             server: Mutex::new(None),
+            dirty: Arc::new(AtomicBool::new(false)),
+            conns: Mutex::new(HashMap::new()),
+            next_conn: Mutex::new(0),
         })
     }
 
@@ -217,6 +275,7 @@ impl Database {
     #[napi]
     pub fn close(&self) -> Result<()> {
         self.stop_server()?;
+        self.stop_conns()?;
         let mut guard = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
         *guard = None;
         if let Ok(mut subs) = self.subs.lock() {
@@ -289,7 +348,8 @@ impl Database {
 
     #[napi]
     pub fn set_lww(&self, node: String, key: String, value: String) -> Result<String> {
-        let op = self.with_store_mut(|store| store.set_lww(&node, &key, &value).map_err(map_err))?;
+        let op =
+            self.with_store_mut(|store| store.set_lww(&node, &key, &value).map_err(map_err))?;
         self.emit_op("setLww", &node, Some(&key), Some(&op));
         Ok(op)
     }
@@ -320,16 +380,16 @@ impl Database {
 
     #[napi]
     pub fn counter_inc(&self, node: String, key: String, n: u32) -> Result<String> {
-        let op = self
-            .with_store_mut(|store| store.counter_inc(&node, &key, n as u64).map_err(map_err))?;
+        let op =
+            self.with_store_mut(|store| store.counter_inc(&node, &key, n as u64).map_err(map_err))?;
         self.emit_op("counterInc", &node, Some(&key), Some(&op));
         Ok(op)
     }
 
     #[napi]
     pub fn counter_dec(&self, node: String, key: String, n: u32) -> Result<String> {
-        let op = self
-            .with_store_mut(|store| store.counter_dec(&node, &key, n as u64).map_err(map_err))?;
+        let op =
+            self.with_store_mut(|store| store.counter_dec(&node, &key, n as u64).map_err(map_err))?;
         self.emit_op("counterDec", &node, Some(&key), Some(&op));
         Ok(op)
     }
@@ -482,5 +542,86 @@ impl Database {
         event["url"] = url.into();
         self.emit(event);
         Ok(result)
+    }
+
+    /// Keep this store converged with a peer (`ws://host:port`) from a
+    /// background thread: one session immediately, then re-sync whenever a
+    /// local mutation lands (dirty flag) or `intervalMs` elapses (poll floor
+    /// for remote changes). Failures emit `{kind:'sync-error', url, error,
+    /// retryInMs}` and retry with capped exponential backoff (1s..30s).
+    /// Returns a connection id for `disconnect`; `close()` stops all.
+    ///
+    /// Stage-5 upgrade path: true push (server notifies clients of new remote
+    /// ops over a persistent session) needs protocol v3; until then the dirty
+    /// flag + interval poll approximates live sync with no wire changes.
+    #[napi]
+    pub fn auto_connect(&self, url: String, interval_ms: u32) -> Result<u32> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        let inner = self.inner.clone();
+        let subs = self.subs.clone();
+        let dirty = self.dirty.clone();
+        let interval = Duration::from_millis(interval_ms.max(20) as u64);
+        let join = std::thread::spawn(move || {
+            let mut backoff = Duration::from_secs(1);
+            while !stop_flag.load(Ordering::SeqCst) {
+                dirty.store(false, Ordering::SeqCst);
+                match connect_session(&inner, &url) {
+                    Ok(summary) => {
+                        backoff = Duration::from_secs(1);
+                        emit_to(
+                            &subs,
+                            serde_json::json!({
+                                "kind": "sync",
+                                "role": "connect",
+                                "url": url,
+                                "accepted": summary.accepted,
+                                "skipped": summary.skipped,
+                                "sent": summary.sent,
+                                "remoteAccepted": summary.remote_accepted,
+                                "remoteSkipped": summary.remote_skipped,
+                            }),
+                        );
+                        wait_until(Instant::now() + interval, &stop_flag, Some(&dirty));
+                    }
+                    Err(e) => {
+                        emit_to(
+                            &subs,
+                            serde_json::json!({
+                                "kind": "sync-error",
+                                "url": url,
+                                "error": e,
+                                "retryInMs": backoff.as_millis() as u64,
+                            }),
+                        );
+                        wait_until(Instant::now() + backoff, &stop_flag, None);
+                        backoff = (backoff * 2).min(Duration::from_secs(30));
+                    }
+                }
+            }
+        });
+        let mut next = self.next_conn.lock().map_err(|e| map_err(e.to_string()))?;
+        let id = *next;
+        *next += 1;
+        self.conns
+            .lock()
+            .map_err(|e| map_err(e.to_string()))?
+            .insert(id, ConnHandle { stop, join });
+        Ok(id)
+    }
+
+    /// Stop an `autoConnect` background connection; unknown ids are a no-op.
+    #[napi]
+    pub fn disconnect(&self, id: u32) -> Result<()> {
+        let handle = self
+            .conns
+            .lock()
+            .map_err(|e| map_err(e.to_string()))?
+            .remove(&id);
+        if let Some(handle) = handle {
+            handle.stop.store(true, Ordering::SeqCst);
+            let _ = handle.join.join();
+        }
+        Ok(())
     }
 }

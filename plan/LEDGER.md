@@ -80,6 +80,8 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M2-napi-crud | Database init/open/mutate/get/inspect/export/import/close | done | `test/m2-basic.test.mjs` (3) |
 | M2-subscribe | `subscribe` / live change notifications | done (experimental) | `test/m2-subscribe.test.mjs` (3): op/import/replay events, unsubscribe |
 | M2-query | O3 query via NAPI | done (experimental) | `test/m2-query.test.mjs` (2): match/where/return + parse reject |
+| M2-ws-sync | `serve`/`connectPeer` WebSocket sync (protocol v2 two-way) | done (experimental) | `test/m2-sync.test.mjs` (3): converge both ways, stop/close, bad urls |
+| M2-autosync | `autoConnect`/`disconnect` background re-sync (dirty flag + interval poll + backoff) | done (experimental) | `test/m2-autosync.test.mjs` (2): auto-converge both ways, disconnect stops, sync-error retry, clean close; `examples/webapp` two-process demo |
 | M2-schema | schema apply / TS→IR pipeline (O2) | open | blocked(M1-schema/tsir) |
 | M2-crdts | MVRegister + resolve, RGA, LWWMap | open | kernel + binding |
 | M2-parity | binding parity vectors vs core fixtures | open | — |

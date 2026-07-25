@@ -1,11 +1,13 @@
 /**
- * ZeroDB back&forth demo server.
+ * ZeroDB peer server — one LocalStore per process.
  *
- * Hosts two independent LocalStores ("a" and "b") via @zerodb/node, serves a
- * two-pane UI, streams subscribe events over SSE, and syncs the peers by
- * exchanging export bundles both directions.
+ * Serves a single-pane UI over its own store, exposes a WebSocket sync
+ * listener (db.serve), and — when ZERO_PEER is set — keeps itself converged
+ * with that peer via db.autoConnect (dirty-flag push + interval poll).
  *
- * Run: node server.mjs   (http://localhost:8787)
+ * Run two instances and watch them converge:
+ *   PORT=8787 WS_PORT=9787 node server.mjs
+ *   PORT=8788 WS_PORT=9788 ZERO_PEER=ws://127.0.0.1:9787 node server.mjs
  */
 import { createServer } from 'node:http'
 import { readFileSync, mkdirSync } from 'node:fs'
@@ -20,6 +22,11 @@ const root = dirname(fileURLToPath(import.meta.url))
 const dataDir = join(root, 'data')
 mkdirSync(dataDir, { recursive: true })
 
+const port = Number(process.env.PORT || 8787)
+const wsPort = Number(process.env.WS_PORT || port + 1000)
+const peerUrl = process.env.ZERO_PEER || null
+const dbPath = process.env.ZERO_DATA || join(dataDir, `peer-${port}.sqlite`)
+
 function openOrInit(path) {
   try {
     return Database.open(path)
@@ -28,25 +35,23 @@ function openOrInit(path) {
   }
 }
 
-const peers = {
-  a: openOrInit(join(dataDir, 'peer-a.sqlite')),
-  b: openOrInit(join(dataDir, 'peer-b.sqlite')),
-}
+const db = openOrInit(dbPath)
+const actualWsPort = db.serve(wsPort)
+if (peerUrl) db.autoConnect(peerUrl, 1000)
 
-// SSE clients per peer
-const clients = { a: new Set(), b: new Set() }
+// SSE clients
+const clients = new Set()
+let lastSync = null
 
-for (const [name, db] of Object.entries(peers)) {
-  db.subscribe((event) => {
-    const payload = `data: ${JSON.stringify(event)}\n\n`
-    for (const res of clients[name]) res.write(payload)
-  })
-}
+db.subscribe((event) => {
+  if (event.kind === 'sync' || event.kind === 'sync-error') lastSync = event
+  const payload = `data: ${JSON.stringify(event)}\n\n`
+  for (const res of clients) res.write(payload)
+})
 
 function json(res, code, body) {
-  const data = JSON.stringify(body)
   res.writeHead(code, { 'content-type': 'application/json' })
-  res.end(data)
+  res.end(JSON.stringify(body))
 }
 
 function readBody(req) {
@@ -64,23 +69,17 @@ function readBody(req) {
   })
 }
 
-function peerState(name) {
-  const db = peers[name]
-  const report = db.inspect(join(dataDir, `peer-${name}.sqlite`))
+function state() {
+  const report = db.inspect(dbPath)
   return {
     peerId: db.peerId(),
     datastoreId: db.datastoreId(),
     ops: db.opCount(),
     nodes: report.nodes,
+    wsPort: actualWsPort,
+    peerUrl,
+    lastSync,
   }
-}
-
-function sync() {
-  // a→b first; export b AFTER, so an empty b that just adopted a's datastore
-  // id (empty-peer bootstrap rule) sends back a compatible bundle.
-  const aToB = peers.b.importJson(peers.a.exportJson())
-  const bToA = peers.a.importJson(peers.b.exportJson())
-  return { aToB, bToA }
 }
 
 const server = createServer(async (req, res) => {
@@ -94,44 +93,37 @@ const server = createServer(async (req, res) => {
       return
     }
 
-    // GET /events/:peer — SSE stream
-    if (req.method === 'GET' && parts[0] === 'events' && peers[parts[1]]) {
+    // GET /events — SSE stream
+    if (req.method === 'GET' && url.pathname === '/events') {
       res.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
         connection: 'keep-alive',
       })
       res.write(': connected\n\n')
-      clients[parts[1]].add(res)
-      req.on('close', () => clients[parts[1]].delete(res))
+      clients.add(res)
+      req.on('close', () => clients.delete(res))
       return
     }
 
-    // GET /api/:peer/state
-    if (req.method === 'GET' && parts[0] === 'api' && peers[parts[1]] && parts[2] === 'state') {
-      json(res, 200, peerState(parts[1]))
+    // GET /api/state
+    if (req.method === 'GET' && url.pathname === '/api/state') {
+      json(res, 200, state())
       return
     }
 
-    // POST /api/sync
-    if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'sync') {
-      json(res, 200, sync())
-      return
-    }
-
-    // POST /api/:peer/<create|set|delete>
-    if (req.method === 'POST' && parts[0] === 'api' && peers[parts[1]]) {
-      const db = peers[parts[1]]
+    // POST /api/<create|set|delete>
+    if (req.method === 'POST' && parts[0] === 'api') {
       const body = await readBody(req)
-      if (parts[2] === 'create') {
+      if (parts[1] === 'create') {
         json(res, 200, { node: db.createNode(body.label || 'Item') })
         return
       }
-      if (parts[2] === 'set') {
+      if (parts[1] === 'set') {
         json(res, 200, { op: db.setLww(body.node, body.key, String(body.value)) })
         return
       }
-      if (parts[2] === 'delete') {
+      if (parts[1] === 'delete') {
         json(res, 200, { op: db.deleteNode(body.node) })
         return
       }
@@ -143,8 +135,8 @@ const server = createServer(async (req, res) => {
   }
 })
 
-const port = process.env.PORT || 8787
 server.listen(port, '127.0.0.1', () => {
-  console.log(`zerodb webapp: http://localhost:${port}`)
-  console.log(`peer a: ${peers.a.peerId().slice(0, 12)}…  peer b: ${peers.b.peerId().slice(0, 12)}…`)
+  console.log(`zerodb peer: http://localhost:${port}  sync: ws://127.0.0.1:${actualWsPort}`)
+  console.log(`store: ${dbPath}`)
+  console.log(`peer id: ${db.peerId().slice(0, 12)}…${peerUrl ? `  auto-sync → ${peerUrl}` : ''}`)
 })

@@ -64,4 +64,19 @@ export declare class Database {
    * remoteSkipped }` and emits a `{kind:'sync', role:'connect', ...}` event.
    */
   connectPeer(url: string): any
+  /**
+   * Keep this store converged with a peer (`ws://host:port`) from a
+   * background thread: one session immediately, then re-sync whenever a
+   * local mutation lands (dirty flag) or `intervalMs` elapses (poll floor
+   * for remote changes). Failures emit `{kind:'sync-error', url, error,
+   * retryInMs}` and retry with capped exponential backoff (1s..30s).
+   * Returns a connection id for `disconnect`; `close()` stops all.
+   *
+   * Stage-5 upgrade path: true push (server notifies clients of new remote
+   * ops over a persistent session) needs protocol v3; until then the dirty
+   * flag + interval poll approximates live sync with no wire changes.
+   */
+  autoConnect(url: string, intervalMs: number): number
+  /** Stop an `autoConnect` background connection; unknown ids are a no-op. */
+  disconnect(id: number): void
 }
