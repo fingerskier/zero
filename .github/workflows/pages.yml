@@ -1,0 +1,69 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/todo/**'
+      - 'zerodb-wasm/**'
+      - 'zerodb-storage/**'
+      - 'examples/browser-peer/zero-sync.mjs'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Build wasm pkg into the app
+        working-directory: zerodb-wasm
+        run: wasm-pack build --target web --out-dir ../apps/todo/pkg
+
+      - name: Assemble site
+        run: |
+          mkdir _site
+          cp -r apps/todo/. _site/
+          # Replace the dev re-export shim with the canonical driver so the
+          # deployed app is self-contained (all imports relative).
+          cp examples/browser-peer/zero-sync.mjs _site/zero-sync.mjs
+          rm -rf _site/test _site/.gitignore _site/pkg/.gitignore
+          ls -R _site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>zerodb todo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 720px; margin: 2rem auto; padding: 0 1rem;
+    color: light-dark(#1a1a1a, #e6e6e6);
+    background: light-dark(#ffffff, #16181c);
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  fieldset {
+    margin-bottom: 1rem; border: 1px solid light-dark(#ccc, #3a3d44);
+    border-radius: 6px;
+  }
+  input[type=text] {
+    background: light-dark(#fff, #1f2227); color: inherit;
+    border: 1px solid light-dark(#bbb, #4a4d55); border-radius: 4px;
+    padding: 0.25rem 0.4rem;
+  }
+  button {
+    background: light-dark(#f2f2f2, #2a2d33); color: inherit;
+    border: 1px solid light-dark(#bbb, #4a4d55); border-radius: 4px;
+    padding: 0.25rem 0.6rem; cursor: pointer;
+  }
+  button:hover { background: light-dark(#e6e6e6, #34383f); }
+  .muted { color: light-dark(#666, #9a9da5); font-size: 0.8rem; }
+  #status { font-weight: 600; }
+  #status.live { color: light-dark(#0a7a2f, #5bd98a); }
+  #status.poll { color: light-dark(#8a6d00, #e6c84a); }
+  #status.off  { color: light-dark(#666, #9a9da5); }
+  #status.err  { color: light-dark(#b3261e, #ff7b72); }
+  ul#todos { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+  ul#todos li {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    padding: 0.35rem 0.25rem; border-bottom: 1px solid light-dark(#eee, #2a2d33);
+  }
+  ul#todos li.done .title { text-decoration: line-through; opacity: 0.6; }
+  .title { flex: 1 1 12rem; cursor: text; }
+  .tag {
+    font-size: 0.75rem; background: light-dark(#e8eefc, #2a3550);
+    border-radius: 999px; padding: 0.05rem 0.5rem; cursor: pointer;
+  }
+  .rowbtn { font-size: 0.75rem; padding: 0.1rem 0.4rem; }
+  #log {
+    font-family: monospace; font-size: 0.8rem; white-space: pre-wrap;
+    background: light-dark(#f5f5f5, #1c1e23);
+    border: 1px solid light-dark(#ddd, #33363d);
+    padding: 0.5rem; max-height: 14rem; overflow-y: auto;
+  }
+  code { font-size: 0.85em; }
+  footer { margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<h1>zerodb todo</h1>
+<p class="muted">
+  A distributed todo list dogfooding the zerodb browser peer: a local-first
+  CRDT store (wasm) persisted to IndexedDB, syncing with any zerodb peer over
+  WebSocket (sync protocol v2). Titles are last-writer-wins, done is an
+  enable-wins flag, tags are an observed-remove set — concurrent edits merge
+  without conflicts.
+</p>
+
+<fieldset>
+  <legend title="Who this browser store is: every operation it writes is Ed25519-signed by this identity">identity</legend>
+  <span title="PeerId — BLAKE3 hash of this store's Ed25519 public key; identifies this device/author in every op">peer <code id="peer">-</code></span> ·
+  <span title="Datastore id — identity of the shared database. A fresh (empty) store adopts the peer's datastore id on first sync">datastore <code id="ds">-</code></span> ·
+  <span title="Number of operations in the local append-only oplog (the source of truth; todos are derived from it)">ops <code id="ops">0</code></span> ·
+  <span title="Sync status: live-push (persistent session, ops stream both ways), polling (periodic sync-once), disconnected, or error">sync <span id="status" class="off">disconnected</span></span>
+  <button id="reset" style="float:right" title="Delete the IndexedDB copy (identity seed + todos) and mint a fresh identity — this store becomes a brand-new empty peer">reset local store</button>
+</fieldset>
+
+<fieldset>
+  <legend title="Todos are graph nodes labeled 'Todo'; every edit is a signed CRDT operation">todos</legend>
+  <form id="addForm" style="display:flex; gap:0.4rem">
+    <input type="text" id="newTitle" placeholder="what needs doing?" style="flex:1"
+           title="Title for the new todo (a last-writer-wins register)" />
+    <button type="submit" title="Create a new Todo node with this title">add</button>
+  </form>
+  <div style="margin-top:0.5rem">
+    filter:
+    <label title="Show every todo"><input type="radio" name="filter" value="all" checked /> all</label>
+    <label title="Show only todos not yet done"><input type="radio" name="filter" value="active" /> active</label>
+    <label title="Show only completed todos"><input type="radio" name="filter" value="done" /> done</label>
+  </div>
+  <ul id="todos" title="Materialized todo list, derived from the local oplog"></ul>
+</fieldset>
+
+<fieldset>
+  <legend title="Exchange operations with a zerodb peer over WebSocket (two-way, idempotent)">sync</legend>
+  <input type="text" id="url" value="ws://127.0.0.1:9787"
+         title="WebSocket URL of the peer to sync with (e.g. a Node peer running Database.serve). Plaintext and unauthenticated — trusted/local use only" />
+  <button id="connect" title="Auto-sync: persistent push session when the peer supports it, otherwise 2s polling; reconnects on failure">connect</button>
+</fieldset>
+
+<details>
+  <summary class="muted" title="Local ops, sync sessions, and errors">event log</summary>
+  <div id="log"></div>
+</details>
+
+<footer class="muted">
+  Mixed-content note: when this page is served over <b>https</b> (e.g. GitHub
+  Pages), browsers allow plain <code>ws://localhost</code> and
+  <code>ws://127.0.0.1</code> but <b>block</b> plain <code>ws://</code> to LAN
+  IPs. So syncing with a peer on <i>this</i> machine works from the hosted
+  page; to sync with another machine on your LAN, serve this page locally over
+  http (or wait for wss support).
+</footer>
+
+<script type="module">
+// Local copy first (deployed layout), repo-root layout as fallback for dev.
+const wasmMod = await import('./pkg/zerodb_wasm.js')
+  .catch(() => import('../../zerodb-wasm/pkg/zerodb_wasm.js'))
+const init = wasmMod.default
+const { ZeroDb } = wasmMod
+import { syncOnce, connectPush } from './zero-sync.mjs'
+import { ZeroJournal } from './zero-idb.mjs'
+import * as model from './todo-model.mjs'
+
+const $ = id => document.getElementById(id)
+const log = msg => {
+  $('log').textContent += `${new Date().toISOString().slice(11, 19)} ${msg}\n`
+  $('log').scrollTop = $('log').scrollHeight
+}
+
+await init()
+
+const journal = await ZeroJournal.open('zerodb-todo')
+const { db, restored, opCount } = await journal.restore(ZeroDb)
+log(restored
+  ? `restored identity + ${opCount} ops from IndexedDB journal`
+  : 'fresh identity created')
+
+// Every successful mutation/import/replay persists incrementally (deferred:
+// onChange fires while the wasm borrow is held).
+db.onChange(() => queueMicrotask(async () => {
+  try {
+    await journal.persist(db)
+    render()
+  } catch (e) {
+    log(`persist error: ${e.message}`)
+  }
+}))
+
+// --- rendering ---------------------------------------------------------------
+let filter = 'all'
+
+function todoRow(t) {
+  const li = document.createElement('li')
+  if (t.done) li.className = 'done'
+
+  const check = document.createElement('input')
+  check.type = 'checkbox'
+  check.checked = t.done
+  check.title = 'Toggle done (enable-wins flag: a concurrent done + not-done resolves to done)'
+  check.onchange = () => { model.toggleDone(db, t.id); mutated(`toggled ${short(t.id)}`) }
+  li.appendChild(check)
+
+  const title = document.createElement('span')
+  title.className = 'title'
+  title.textContent = t.title || '(untitled)'
+  title.title = 'Click to edit the title (last-writer-wins register)'
+  title.onclick = () => {
+    const next = prompt('title', t.title)
+    if (next !== null && next !== t.title) {
+      model.setTitle(db, t.id, next)
+      mutated(`retitled ${short(t.id)}`)
+    }
+  }
+  li.appendChild(title)
+
+  for (const tag of t.tags) {
+    const chip = document.createElement('span')
+    chip.className = 'tag'
+    chip.textContent = tag
+    chip.title = 'Click to remove this tag (observed-remove set: a concurrent add elsewhere survives)'
+    chip.onclick = () => { model.removeTag(db, t.id, tag); mutated(`untagged ${tag}`) }
+    li.appendChild(chip)
+  }
+
+  const addTag = document.createElement('button')
+  addTag.className = 'rowbtn'
+  addTag.textContent = '+tag'
+  addTag.title = 'Add a tag to this todo (observed-remove set add)'
+  addTag.onclick = () => {
+    const tag = prompt('tag')
+    if (tag) { model.addTag(db, t.id, tag); mutated(`tagged ${tag}`) }
+  }
+  li.appendChild(addTag)
+
+  const del = document.createElement('button')
+  del.className = 'rowbtn'
+  del.textContent = 'delete'
+  del.title = 'Delete this todo (tombstone — the node is marked deleted, not erased from history)'
+  del.onclick = () => { model.deleteTodo(db, t.id); mutated(`deleted ${short(t.id)}`) }
+  li.appendChild(del)
+
+  const id = document.createElement('code')
+  id.className = 'muted'
+  id.textContent = short(t.id)
+  id.title = 'Node id of this todo'
+  li.appendChild(id)
+  return li
+}
+
+const short = s => s.slice(0, 8)
+
+function render() {
+  $('peer').textContent = db.peerId().slice(0, 12)
+  $('ds').textContent = db.datastoreId().slice(0, 12)
+  $('ops').textContent = db.opCount()
+  const list = $('todos')
+  list.innerHTML = ''
+  for (const t of model.listTodos(db, filter)) list.appendChild(todoRow(t))
+}
+render()
+
+async function mutated(msg) {
+  if (msg) log(msg)
+  await journal.persist(db)
+  render()
+}
+
+$('addForm').onsubmit = e => {
+  e.preventDefault()
+  const title = $('newTitle').value.trim()
+  if (!title) return
+  const id = model.createTodo(db, title)
+  $('newTitle').value = ''
+  mutated(`created ${short(id)} "${title}"`)
+}
+
+for (const r of document.querySelectorAll('input[name=filter]')) {
+  r.onchange = () => { filter = r.value; render() }
+}
+
+$('reset').onclick = async () => {
+  await journal.reset()
+  location.reload()
+}
+
+// --- sync loop with status --------------------------------------------------
+// Prefer a persistent push session; fall back to 2s polling if the peer is
+// push-unaware; retry with backoff on failure. Tracks a visible status.
+let syncing = false
+let stopped = true
+let handle = null
+let timer = null
+
+function setStatus(kind, text) {
+  const el = $('status')
+  el.className = kind
+  el.textContent = text
+}
+
+function stopSync() {
+  stopped = true
+  if (timer) clearTimeout(timer)
+  if (handle) { handle.close(); handle = null }
+  setStatus('off', 'disconnected')
+  $('connect').textContent = 'connect'
+  log('sync stopped')
+}
+
+async function poll(url) {
+  if (stopped) return
+  try {
+    const s = await syncOnce(db, url)
+    setStatus('poll', 'polling')
+    if (s.accepted || s.sent) {
+      log(`poll sync: accepted=${s.accepted} sent=${s.sent}`)
+      await mutated()
+    }
+  } catch (e) {
+    setStatus('err', 'error, retrying')
+    log(`sync error: ${e.message}`)
+  }
+  if (!stopped) timer = setTimeout(() => poll(url), 2000)
+}
+
+async function startSync(url) {
+  if (stopped) return
+  try {
+    handle = await connectPush(db, url, {
+      onEvent: ev => {
+        if (ev.kind === 'push-received' && (ev.accepted || ev.skipped)) {
+          log(`push received: accepted=${ev.accepted}`)
+          mutated()
+        } else if (ev.kind === 'push-sent') {
+          log(`push sent: ${ev.sent}`)
+        } else if (ev.kind === 'push-closed' && !stopped) {
+          handle = null
+          setStatus('err', 'reconnecting')
+          timer = setTimeout(() => startSync(url), 2000)
+        }
+      },
+    })
+    const s = handle.summary
+    log(`sync: accepted=${s.accepted} sent=${s.sent} remoteAccepted=${s.remoteAccepted}`)
+    if (s.accepted) await mutated()
+    if (handle.push) {
+      setStatus('live', 'live-push')
+    } else {
+      handle = null
+      setStatus('poll', 'polling')
+      timer = setTimeout(() => poll(url), 2000)
+    }
+  } catch (e) {
+    setStatus('err', 'error, retrying')
+    log(`sync error: ${e.message}`)
+    if (!stopped) timer = setTimeout(() => startSync(url), 3000)
+  }
+}
+
+$('connect').onclick = () => {
+  if (!stopped) return stopSync()
+  stopped = false
+  $('connect').textContent = 'disconnect'
+  log(`auto-sync started -> ${$('url').value}`)
+  startSync($('url').value)
+}
+</script>
+</body>
+</html>
