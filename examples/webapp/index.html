@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZeroDB back&amp;forth</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; max-width: 1100px; margin-inline: auto; }
+  h1 { font-size: 1.2rem; }
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .pane { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 8px; padding: 0.8rem; }
+  .pane h2 { margin-top: 0; font-size: 1rem; }
+  .meta { font-size: 0.72rem; opacity: 0.7; word-break: break-all; }
+  form { display: flex; gap: 0.4rem; margin: 0.5rem 0; flex-wrap: wrap; }
+  input { flex: 1; min-width: 6rem; padding: 0.3rem; }
+  button { padding: 0.3rem 0.7rem; cursor: pointer; }
+  ul.nodes { list-style: none; padding: 0; }
+  ul.nodes li { padding: 0.35rem 0.5rem; border-radius: 5px; margin-bottom: 0.3rem;
+    background: color-mix(in srgb, currentColor 7%, transparent); }
+  ul.nodes li.deleted { opacity: 0.45; text-decoration: line-through; }
+  .props { font-size: 0.8rem; opacity: 0.85; }
+  .nid { font-size: 0.65rem; opacity: 0.55; }
+  .syncbar { display: flex; align-items: center; gap: 1rem; margin: 1rem 0; }
+  .log { font-family: ui-monospace, monospace; font-size: 0.7rem; max-height: 10rem;
+    overflow-y: auto; border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: 6px; padding: 0.5rem; margin-top: 1rem; }
+  .log div { white-space: nowrap; }
+</style>
+</head>
+<body>
+<h1>ZeroDB back&amp;forth — two peers, one truth (eventually)</h1>
+
+<div class="syncbar">
+  <button id="sync">⇄ Sync now</button>
+  <label><input type="checkbox" id="autosync"> auto-sync (2s)</label>
+  <span id="syncmsg"></span>
+</div>
+
+<div class="panes">
+  <section class="pane" id="pane-a"><h2>Peer A</h2><div class="meta"></div>
+    <form data-act="create"><input name="label" placeholder="label (e.g. Todo)" required><button>create node</button></form>
+    <form data-act="set"><input name="node" placeholder="node id" required><input name="key" placeholder="key" required><input name="value" placeholder="value" required><button>set</button></form>
+    <ul class="nodes"></ul>
+  </section>
+  <section class="pane" id="pane-b"><h2>Peer B</h2><div class="meta"></div>
+    <form data-act="create"><input name="label" placeholder="label (e.g. Todo)" required><button>create node</button></form>
+    <form data-act="set"><input name="node" placeholder="node id" required><input name="key" placeholder="key" required><input name="value" placeholder="value" required><button>set</button></form>
+    <ul class="nodes"></ul>
+  </section>
+</div>
+
+<div class="log" id="log"></div>
+
+<script>
+const $ = (sel, el = document) => el.querySelector(sel)
+const log = (msg) => {
+  const line = document.createElement('div')
+  line.textContent = `${new Date().toLocaleTimeString()} ${msg}`
+  $('#log').prepend(line)
+}
+
+async function api(path, body) {
+  const res = await fetch(path, body
+    ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
+    : undefined)
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || res.statusText)
+  return data
+}
+
+async function refresh(peer) {
+  const s = await api(`/api/${peer}/state`)
+  const pane = $(`#pane-${peer}`)
+  $('.meta', pane).textContent = `peer ${s.peerId.slice(0, 16)}… · ds ${s.datastoreId.slice(0, 16)}… · ${s.ops} ops`
+  const ul = $('.nodes', pane)
+  ul.innerHTML = ''
+  for (const n of s.nodes) {
+    const li = document.createElement('li')
+    if (n.deleted) li.className = 'deleted'
+    const props = Object.entries(n.props || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' · ')
+    li.innerHTML = `<b>${n.label}</b> <span class="props">${props}</span>
+      <div class="nid">${n.id} <button data-copy="${n.id}">copy id</button>
+      <button data-del="${n.id}">delete</button></div>`
+    ul.appendChild(li)
+  }
+}
+
+for (const peer of ['a', 'b']) {
+  const pane = $(`#pane-${peer}`)
+  for (const form of pane.querySelectorAll('form')) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const fields = Object.fromEntries(new FormData(form))
+      try {
+        await api(`/api/${peer}/${form.dataset.act}`, fields)
+        form.reset()
+      } catch (err) { log(`✖ ${peer}: ${err.message}`) }
+    })
+  }
+  pane.addEventListener('click', async (e) => {
+    if (e.target.dataset.copy) navigator.clipboard.writeText(e.target.dataset.copy)
+    if (e.target.dataset.del) {
+      try { await api(`/api/${peer}/delete`, { node: e.target.dataset.del }) }
+      catch (err) { log(`✖ ${peer}: ${err.message}`) }
+    }
+  })
+  const es = new EventSource(`/events/${peer}`)
+  es.onmessage = (e) => {
+    const ev = JSON.parse(e.data)
+    log(`peer ${peer}: ${ev.kind}${ev.method ? ' ' + ev.method : ''}${ev.key ? ' ' + ev.key : ''}${ev.accepted !== undefined ? ` accepted=${ev.accepted} skipped=${ev.skipped}` : ''}`)
+    refresh(peer)
+  }
+}
+
+$('#sync').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/sync', {})
+    $('#syncmsg').textContent = `a→b +${r.aToB.accepted}, b→a +${r.bToA.accepted}`
+  } catch (err) { log(`✖ sync: ${err.message}`) }
+})
+
+let timer = null
+$('#autosync').addEventListener('change', (e) => {
+  clearInterval(timer)
+  if (e.target.checked) timer = setInterval(() => $('#sync').click(), 2000)
+})
+
+refresh('a'); refresh('b')
+</script>
+</body>
+</html>
