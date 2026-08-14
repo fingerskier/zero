@@ -1,0 +1,25 @@
+{
+  "id": "RELAY-RESUME-001",
+  "type": "relay-transcript",
+  "kind": "resume",
+  "invariants": ["I-12"],
+  "description": "SYNC_REQUEST carries Cursor={frontier,epoch}. Sender retransmits only held ops not covered by the receiver frontier (DELIVERY §4 on the wire).",
+  "held": [
+    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "physical_ms": 50, "logical": 0 },
+    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "physical_ms": 200, "logical": 0 },
+    { "op_id": "0303030303030303030303030303030303030303030303030303030303030303", "author": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "physical_ms": 80, "logical": 0 }
+  ],
+  "cursor": {
+    "epoch": 1,
+    "frontier": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+        "physical_ms": 200,
+        "logical": 0
+      }
+    }
+  },
+  "expect": {
+    "retransmit": ["0303030303030303030303030303030303030303030303030303030303030303"]
+  }
+}

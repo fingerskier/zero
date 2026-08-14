@@ -103,10 +103,11 @@ Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
 | M2a-e1 | E1 honesty: do not claim EXEMPLAR E1 | done(LEDGER M1-e1 wording) | kill + clock remain separate suites; no pre-kill projection |
 | M2a-e4 | E4 honesty: SEAL/TRUNCATE N/A on single-txn backend | done(LEDGER M1-e4 wording) | failpoint matrix kept; not EXEMPLAR E4 |
 | M2a-m0 | CX-03 AAD slot-hash; CX-04 frontier tip; CX-05 resume; CX-06 WAL MUSTs + vectors | done(109 required vectors) | KERNEL §7 slot AAD; FrontierTip+HLC; delivery frontier cursor; WAL n/unique/visible + WAL-013..016 |
-| M2a-relay | CX-08 accepted-set + RELAY-SPEC §7.4 (docs only) | done(RELAY 0.2.1-draft) | dual roots; no relay binary; M3a still blocked on wire transcripts |
+| M2a-relay | CX-08 accepted-set + RELAY-SPEC §7.4 (docs only) | done(RELAY 0.2.2-draft + transcripts) | dual roots; frames in `M3a-transcripts`; no relay binary |
 | M2a-schema | persist M0b IR + SchemaId; stamp `ep`; enforce `deps`; NAPI `applySchema` | done(`m2_schema` + NAPI `applySchema`) | pin still accepted; compiles to IR |
 | M2a-bind | NAPI/wasm edges + `listNodes` props parity + query params + promise facade | done | `listNodes.props`; `createEdge`/`deleteEdge`; `query(q, params)`; `zerodb.mjs` |
 | M3a | L2 relay + offline catch-up (E3) | open | M2, M0c/M0f | L | internal |
+| M3a-transcripts | RELAY 0.2.2 handshake / dual-root / resume / reject-ack frames | done(`relay-transcript` 5) | two-language vectors RELAY-HELLO-001/002, ROOT-001, RESUME-001, REJECT-001; no relay binary |
 | M3b | Security: auth, envelope, negatives (E5–E8) | open | M3a, M0d | L | internal |
 | M3c | Interop TS wire peer + release | open | M3b | M | `v0.1.0` |
 | M4a | Browser/WASM/WebRTC/React | open | M3c | L | feature |

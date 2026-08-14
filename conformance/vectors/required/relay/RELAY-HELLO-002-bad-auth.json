@@ -1,0 +1,19 @@
+{
+  "id": "RELAY-HELLO-002",
+  "type": "relay-transcript",
+  "kind": "handshake",
+  "invariants": ["I-9"],
+  "description": "Tampered AUTH signature MUST fail; relay responds ERROR 0x201 AUTH_FAILED and does not WELCOME (RELAY §5.2).",
+  "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
+  "secret_key": "560295411cb3771a4892c53fab032abaa0dc96b7a6ed7be6c64865551d062dfa",
+  "nonce": "0707070707070707070707070707070707070707070707070707070707070707",
+  "hello_capabilities": ["dual-root"],
+  "relay_capabilities": ["dual-root"],
+  "relay_level": 2,
+  "protocol_version": 1,
+  "auth_signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "expect": {
+    "auth_ok": false,
+    "error_code": 513
+  }
+}

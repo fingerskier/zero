@@ -1,0 +1,24 @@
+{
+  "id": "RELAY-ROOT-001",
+  "type": "relay-transcript",
+  "kind": "dual-root",
+  "invariants": ["I-11"],
+  "description": "Relay validated oplog includes an unauthorized-but-authentic op; honest peers omit it. validated_root ≠ accepted_root; two honest peers share accepted_root (RELAY §7.4 / CX-08).",
+  "validated": [
+    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "op_id": "0303030303030303030303030303030303030303030303030303030303030303", "physical_ms": 3000, "logical": 0, "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+  ],
+  "accepted_a": [
+    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  ],
+  "accepted_b": [
+    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  ],
+  "expect": {
+    "roots_equal": false,
+    "peer_accepted_equal": true
+  }
+}
