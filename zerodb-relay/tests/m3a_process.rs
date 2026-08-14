@@ -119,6 +119,13 @@ fn handshake(sess: &mut RelaySession) {
     assert_eq!(ty, MSG_WELCOME);
 }
 
+fn op_id_bytes(n: u16) -> Vec<u8> {
+    let mut id = vec![0u8; 32];
+    id[30] = (n >> 8) as u8;
+    id[31] = n as u8;
+    id
+}
+
 fn op_map(id: u8, author: u8, ms: u64) -> Cbor {
     Cbor::Map(vec![
         ("op_id".into(), Cbor::Bytes(vec![id; 32])),
@@ -126,6 +133,35 @@ fn op_map(id: u8, author: u8, ms: u64) -> Cbor {
         ("physical_ms".into(), Cbor::Uint(ms)),
         ("logical".into(), Cbor::Uint(0)),
     ])
+}
+
+fn op_map_n(n: u16, author: u8, ms: u64) -> Cbor {
+    Cbor::Map(vec![
+        ("op_id".into(), Cbor::Bytes(op_id_bytes(n))),
+        ("author".into(), Cbor::Bytes(vec![author; 32])),
+        ("physical_ms".into(), Cbor::Uint(ms)),
+        ("logical".into(), Cbor::Uint(0)),
+    ])
+}
+
+fn subscribe_frame(request_id: u32) -> Vec<u8> {
+    encode_env(
+        MSG_SUBSCRIBE,
+        request_id,
+        Cbor::Map(vec![(
+            "datastores".into(),
+            Cbor::Array(vec![Cbor::Text("app:main".into())]),
+        )]),
+    )
+}
+
+fn subscribed_peer_count(frame: &[u8]) -> u64 {
+    let (_, _, pl) = decode_env(frame);
+    let ds = match map_get(&pl, "datastores") {
+        Cbor::Array(a) => &a[0],
+        _ => panic!("datastores"),
+    };
+    as_u64(map_get(ds, "peer_count"))
 }
 
 fn tmp_path(name: &str) -> std::path::PathBuf {
@@ -431,6 +467,63 @@ fn catch_up_sends_ops_not_covered_by_cursor() {
 }
 
 #[test]
+fn catch_up_chunks_ops_to_batch_limit() {
+    let relay = Relay::memory();
+    let mut a = relay.accept();
+    handshake(&mut a);
+    let operations: Vec<Cbor> = (1u16..=70).map(|i| op_map_n(i, 0xaa, i as u64)).collect();
+    a.handle(&encode_env(
+        MSG_OPS,
+        20,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("operations".into(), Cbor::Array(operations)),
+        ]),
+    ))
+    .unwrap();
+
+    let mut b = relay.accept();
+    handshake(&mut b);
+    let out = b
+        .handle(&encode_env(
+            MSG_SYNC_REQUEST,
+            21,
+            Cbor::Map(vec![
+                ("datastore".into(), Cbor::Text("app:main".into())),
+                ("accepted_root".into(), Cbor::Bytes(vec![0u8; 32])),
+            ]),
+        ))
+        .unwrap();
+    assert_eq!(decode_env(&out[0]).0, MSG_SYNC_RESPONSE);
+    let ops_frames: Vec<&Vec<u8>> = out.iter().filter(|f| decode_env(f).0 == MSG_OPS).collect();
+    assert!(
+        ops_frames.len() >= 2,
+        "catch-up over 64 ops must emit multiple OPS frames, got {}",
+        ops_frames.len()
+    );
+    let mut ids = Vec::new();
+    for frame in &ops_frames {
+        let (_, rid, pl) = decode_env(frame);
+        assert_eq!(rid, 0, "unsolicited forward");
+        let operations = match map_get(&pl, "operations") {
+            Cbor::Array(a) => a,
+            _ => panic!(),
+        };
+        assert!(!operations.is_empty());
+        assert!(
+            operations.len() <= 64,
+            "OPS batch {} exceeds max_batch_ops",
+            operations.len()
+        );
+        for op in operations {
+            ids.push(as_bytes(map_get(op, "op_id")).to_vec());
+        }
+    }
+    let expected: Vec<Vec<u8>> = (1u16..=70).map(op_id_bytes).collect();
+    assert_eq!(ids, expected);
+}
+
+#[test]
 fn durable_reopen_keeps_validated_ops() {
     let path = tmp_path("durable");
     {
@@ -519,4 +612,24 @@ fn subscribe_reports_validated_root() {
     assert!(matches!(map_get(ds, "validated_root"), Cbor::Bytes(b) if b.len() == 32));
     let _ = DIR_RELAY_TO_PEER;
     let _ = MSG_SUBSCRIBED;
+}
+
+#[test]
+fn subscribe_peer_count_is_shared() {
+    let relay = Relay::memory();
+    let mut a = relay.accept();
+    handshake(&mut a);
+    let mut b = relay.accept();
+    handshake(&mut b);
+
+    let out_a = a.handle(&subscribe_frame(30)).unwrap();
+    assert_eq!(subscribed_peer_count(&out_a[0]), 1);
+    let out_b = b.handle(&subscribe_frame(31)).unwrap();
+    assert_eq!(subscribed_peer_count(&out_b[0]), 2);
+    let out_a2 = a.handle(&subscribe_frame(32)).unwrap();
+    assert_eq!(subscribed_peer_count(&out_a2[0]), 2);
+
+    drop(b);
+    let out_a3 = a.handle(&subscribe_frame(33)).unwrap();
+    assert_eq!(subscribed_peer_count(&out_a3[0]), 1);
 }

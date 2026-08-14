@@ -1,6 +1,6 @@
 //! RELAY 0.2.2 session: handshake → persist / sync / subscribe.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
@@ -23,9 +23,14 @@ pub enum RelayError {
     Poison,
 }
 
+const MAX_BATCH_OPS: usize = 64;
+const MAX_BATCH_BYTES: usize = 16_777_216;
+
 pub struct Inner {
     pub store: Box<dyn OpStore>,
     pub next_nonce: Option<[u8; 32]>,
+    next_session: u64,
+    subscribers: HashMap<String, HashSet<u64>>,
 }
 
 pub struct Relay {
@@ -38,6 +43,8 @@ impl Relay {
             inner: Arc::new(Mutex::new(Inner {
                 store: Box::new(crate::store::MemoryStore::new()),
                 next_nonce: None,
+                next_session: 0,
+                subscribers: HashMap::new(),
             })),
         }
     }
@@ -47,6 +54,8 @@ impl Relay {
             inner: Arc::new(Mutex::new(Inner {
                 store: Box::new(crate::store::SqliteStore::open(path)?),
                 next_nonce: None,
+                next_session: 0,
+                subscribers: HashMap::new(),
             })),
         })
     }
@@ -58,16 +67,19 @@ impl Relay {
     }
 
     pub fn accept(&self) -> RelaySession {
-        let nonce = self
-            .inner
-            .lock()
-            .ok()
-            .and_then(|mut g| g.next_nonce.take())
-            .unwrap_or_else(random_nonce);
+        let (nonce, session_id) = match self.inner.lock() {
+            Ok(mut g) => {
+                g.next_session = g.next_session.wrapping_add(1);
+                let nonce = g.next_nonce.take().unwrap_or_else(random_nonce);
+                (nonce, g.next_session)
+            }
+            Err(_) => (random_nonce(), 0),
+        };
         RelaySession {
             inner: self.inner.clone(),
             phase: Phase::New,
             nonce,
+            session_id,
             subscriptions: HashSet::new(),
         }
     }
@@ -103,6 +115,7 @@ pub struct RelaySession {
     inner: Arc<Mutex<Inner>>,
     phase: Phase,
     nonce: [u8; 32],
+    session_id: u64,
     subscriptions: HashSet<String>,
 }
 
@@ -113,6 +126,27 @@ impl RelaySession {
 
     pub fn is_closed(&self) -> bool {
         matches!(self.phase, Phase::Closed)
+    }
+
+    fn close(&mut self) {
+        self.unregister();
+        self.phase = Phase::Closed;
+    }
+
+    fn unregister(&mut self) {
+        if self.subscriptions.is_empty() {
+            return;
+        }
+        if let Ok(mut g) = self.inner.lock() {
+            for ds in self.subscriptions.drain() {
+                if let Some(set) = g.subscribers.get_mut(&ds) {
+                    set.remove(&self.session_id);
+                    if set.is_empty() {
+                        g.subscribers.remove(&ds);
+                    }
+                }
+            }
+        }
     }
 
     pub fn handle(&mut self, frame: &[u8]) -> Result<Vec<Vec<u8>>, RelayError> {
@@ -138,7 +172,7 @@ impl RelaySession {
         f: impl FnOnce(&mut Self, &Envelope) -> Result<Vec<Vec<u8>>, RelayError>,
     ) -> Result<Vec<Vec<u8>>, RelayError> {
         if !self.is_authed() {
-            self.phase = Phase::Closed;
+            self.close();
             return Ok(vec![error_frame(
                 env.request_id,
                 0x201,
@@ -155,7 +189,7 @@ impl RelaySession {
             _ => 0,
         };
         if version != 1 {
-            self.phase = Phase::Closed;
+            self.close();
             return Ok(vec![error_frame(
                 env.request_id,
                 0x102,
@@ -185,7 +219,7 @@ impl RelaySession {
             hello_caps,
         } = &self.phase
         else {
-            self.phase = Phase::Closed;
+            self.close();
             return Ok(vec![error_frame(
                 env.request_id,
                 ERR_AUTH_FAILED,
@@ -199,7 +233,7 @@ impl RelaySession {
         let request_id = env.request_id;
         let sig = take64(map_get(&env.payload, "signature"))?;
         if authenticate(&claimed, &pk, &self.nonce, &sig).is_err() {
-            self.phase = Phase::Closed;
+            self.close();
             return Ok(vec![error_frame(
                 request_id,
                 ERR_AUTH_FAILED,
@@ -287,29 +321,20 @@ impl RelaySession {
             .into_iter()
             .filter(|o| want.contains(&hex::encode(o.op_id)))
             .collect();
-        if !send.is_empty() {
-            let operations = send
-                .into_iter()
-                .map(|o| {
-                    cbor::decode(&o.body).unwrap_or_else(|_| {
-                        Cbor::Map(vec![
-                            ("op_id".into(), Cbor::Bytes(o.op_id.to_vec())),
-                            ("author".into(), Cbor::Bytes(o.author.to_vec())),
-                            ("physical_ms".into(), Cbor::Uint(o.physical_ms)),
-                            ("logical".into(), Cbor::Uint(o.logical as u64)),
-                        ])
-                    })
+        let operations: Vec<Cbor> = send
+            .into_iter()
+            .map(|o| {
+                cbor::decode(&o.body).unwrap_or_else(|_| {
+                    Cbor::Map(vec![
+                        ("op_id".into(), Cbor::Bytes(o.op_id.to_vec())),
+                        ("author".into(), Cbor::Bytes(o.author.to_vec())),
+                        ("physical_ms".into(), Cbor::Uint(o.physical_ms)),
+                        ("logical".into(), Cbor::Uint(o.logical as u64)),
+                    ])
                 })
-                .collect();
-            out.push(encode_env(
-                MSG_OPS,
-                0,
-                Cbor::Map(vec![
-                    ("datastore".into(), Cbor::Text(ds)),
-                    ("operations".into(), Cbor::Array(operations)),
-                ]),
-            ));
-        }
+            })
+            .collect();
+        out.extend(chunk_ops_frames(&ds, operations));
         Ok(out)
     }
 
@@ -326,15 +351,25 @@ impl RelaySession {
             }
         };
         let mut entries = Vec::new();
-        let guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
+        let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         for item in list {
             let ds = text(item)?;
             self.subscriptions.insert(ds.clone());
+            guard
+                .subscribers
+                .entry(ds.clone())
+                .or_default()
+                .insert(self.session_id);
+            let peer_count = guard
+                .subscribers
+                .get(&ds)
+                .map(|s| s.len() as u64)
+                .unwrap_or(1);
             let stored = guard.store.list(&ds)?;
             let root = hex::decode(validated_root_hex(&stored)).unwrap_or(vec![0; 32]);
             entries.push(Cbor::Map(vec![
                 ("id".into(), Cbor::Text(ds)),
-                ("peer_count".into(), Cbor::Uint(1)),
+                ("peer_count".into(), Cbor::Uint(peer_count)),
                 ("validated_root".into(), Cbor::Bytes(root)),
             ]));
         }
@@ -343,6 +378,12 @@ impl RelaySession {
             env.request_id,
             Cbor::Map(vec![("datastores".into(), Cbor::Array(entries))]),
         )])
+    }
+}
+
+impl Drop for RelaySession {
+    fn drop(&mut self) {
+        self.unregister();
     }
 }
 
@@ -382,11 +423,46 @@ fn error_frame(request_id: u32, code: u16, message: &str, fatal: bool) -> Vec<u8
     )
 }
 
+fn ops_forward_frame(ds: &str, operations: Vec<Cbor>) -> Vec<u8> {
+    encode_env(
+        MSG_OPS,
+        0,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text(ds.into())),
+            ("operations".into(), Cbor::Array(operations)),
+        ]),
+    )
+}
+
+fn chunk_ops_frames(ds: &str, operations: Vec<Cbor>) -> Vec<Vec<u8>> {
+    if operations.is_empty() {
+        return Vec::new();
+    }
+    let mut frames = Vec::new();
+    let mut chunk: Vec<Cbor> = Vec::new();
+    for op in operations {
+        if !chunk.is_empty() {
+            let over_count = chunk.len() >= MAX_BATCH_OPS;
+            let mut trial = chunk.clone();
+            trial.push(op.clone());
+            let over_bytes = ops_forward_frame(ds, trial).len() > MAX_BATCH_BYTES;
+            if over_count || over_bytes {
+                frames.push(ops_forward_frame(ds, std::mem::take(&mut chunk)));
+            }
+        }
+        chunk.push(op);
+    }
+    if !chunk.is_empty() {
+        frames.push(ops_forward_frame(ds, chunk));
+    }
+    frames
+}
+
 fn default_limits() -> Cbor {
     Cbor::Map(vec![
         ("max_payload_bytes".into(), Cbor::Uint(1_048_576)),
-        ("max_batch_ops".into(), Cbor::Uint(64)),
-        ("max_batch_bytes".into(), Cbor::Uint(16_777_216)),
+        ("max_batch_ops".into(), Cbor::Uint(MAX_BATCH_OPS as u64)),
+        ("max_batch_bytes".into(), Cbor::Uint(MAX_BATCH_BYTES as u64)),
         ("max_subscriptions".into(), Cbor::Uint(64)),
         ("ops_per_second".into(), Cbor::Uint(100)),
         ("bytes_per_second".into(), Cbor::Uint(10_485_760)),
