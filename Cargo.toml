@@ -6,6 +6,7 @@ members = [
     "zerodb-cli",
     "zerodb-napi",
     "zerodb-wasm",
+    "zerodb-relay",
 ]
 
 [workspace.package]

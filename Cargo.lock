@@ -1223,6 +1223,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zerodb-relay"
+version = "0.1.0-alpha"
+dependencies = [
+ "clap",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "hex",
+ "rusqlite",
+ "thiserror 2.0.18",
+ "tungstenite",
+ "zerodb-core",
+]
+
+[[package]]
 name = "zerodb-storage"
 version = "0.1.0-alpha"
 dependencies = [
