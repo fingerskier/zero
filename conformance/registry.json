@@ -57,6 +57,7 @@
     "genesis":      "zerodb-genesis-v1",
     "device_cert":  "zerodb-device-cert-v1",
     "value_aad":    "zerodb-value-aad-v1",
+    "value_slot":   "zerodb-value-slot-v1",
     "relay_auth":   "zerodb-relay-auth-v1",
     "merkle_leaf":  "zerodb-merkle-leaf-v1",
     "merkle_node":  "zerodb-merkle-node-v1",

@@ -2,7 +2,7 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** **Composite M0 closed** (contract model). **M1 exit resolved 2026-07-25** — `v0.1.0-local` (experimental format): E1/E2-model/E4/E9 acceptance green incl. crash-injection matrix and kill/clock-rollback durability; CBOR IR, indexes, and repl re-scoped to M2/M3 (Decision Log). **M2** `@zerodb/node` with CRUD/subscribe/query; storage behind a backend trait (browser path). **Browser peer (experimental):** `zerodb-wasm` in-memory store + WS sync driver, `examples/browser-peer`. Conformance **103** vectors CI-blocking. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
+**Status:** **Composite M0 closed** (contract model). **M1 exit resolved 2026-07-25** — `v0.1.0-local` (experimental format): E1/E2-model/E4/E9 acceptance green incl. crash-injection matrix and kill/clock-rollback durability; CBOR IR, indexes, and repl re-scoped to M2/M3 (Decision Log). **M2** `@zerodb/node` with CRUD/subscribe/query; storage behind a backend trait (browser path). **Browser peer (experimental):** `zerodb-wasm` in-memory store + WS sync driver, `examples/browser-peer`. Conformance **109** vectors CI-blocking. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
 
 
 ## Documents
@@ -41,7 +41,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 - **M0** — executable contracts as packages **(composite exit 2026-07-18)**:
   - **M0a–M0f** closed at contract-model layer (C1–C5, C7–C8; C6 deferred)
   - Draft-1 profiles; format freeze still requires an explicit Decision Log freeze
-  - **103** two-language conformance vectors CI-blocking
+  - **109** two-language conformance vectors CI-blocking
 - **M1** — local durable core: Rust + SQLite + CLI (`v0.1.0-local`)
 - **M2** — Node/NAPI TypeScript SDK vertical, byte-identical to the core (`v0.1.0-sdk`)
 - **M3** — secure multi-peer sync in three gates: **M3a** durable convergence (L2 relay + offline catch-up), **M3b** security (signatures, admission, E2E encryption), **M3c** interop TS wire peer + release (`v0.1.0`)

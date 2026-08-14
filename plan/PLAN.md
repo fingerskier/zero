@@ -24,7 +24,7 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 | Gate | Status |
 |------|--------|
 | P0 readiness | **done** |
-| Composite M0 (contract-model, draft-1, 103 vectors) | **done** 2026-07-18 — implementability holes CX-03..06 / CX-08 tracked under M2a |
+| Composite M0 (contract-model, draft-1, 109 vectors) | **done** 2026-07-18 — CX-03..06 amended 2026-08-14; CX-08 still M2a-relay |
 | Format freeze | **not done** — draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile |
 | Experimental M1 local store + file/TCP peer exchange | **done** (experimental) — [M1-LOCAL.md](../doc/M1-LOCAL.md) |
 | M1 exit (`v0.1.0-local`) | **done** 2026-07-25 — experimental format; EXEMPLAR E1/E4 honesty leftovers in M2a |

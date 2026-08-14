@@ -1,7 +1,7 @@
 {
-  "description": "Both group members applied → group_seal succeeds.",
-  "id": "WAL-005",
-  "type": "group-seal",
+  "description": "After recover, applied unsealed group members are not application-visible (I-13 / CX-06).",
+  "id": "WAL-016",
+  "type": "wal-crash",
   "invariants": ["I-13"],
   "schedule": [
     {
@@ -30,19 +30,16 @@
     {
       "op": "state_apply",
       "op_id": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
-    },
-    {
-      "op": "group_seal",
-      "manifest": {
-        "group_id": "99999999999999999999999999999999",
-        "members": [
-          "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
-          "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
-        ],
-        "n": 2,
-        "abort": false
-      }
     }
   ],
-  "expect_sealed": ["99999999999999999999999999999999"]
+  "crash_after_step": 4,
+  "expect_after_recover": {
+    "wal_len": 2,
+    "applied": [
+      "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+    ],
+    "visible": [],
+    "sealed": []
+  }
 }

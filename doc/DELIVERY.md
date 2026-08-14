@@ -30,10 +30,12 @@ A batch of N ops yields N ordered outcomes. Partial success is allowed: earlier 
 
 ## 4. Resume cursor
 
-`Cursor = { last_acked_op_id: OpId | null, epoch: uint }` (opaque to relays).
+`Cursor = { frontier: Frontier, epoch: uint }` where `Frontier` is the M0f map `PeerId → {op_id, physical_ms, logical}` (CX-05). An OpId-only `last_acked_op_id` cannot represent reorderable receipt.
 
 - After a disconnect, the receiver includes its cursor in the next pull/subscribe.
-- Sender retransmits ops **not** covered by anti-replay at the receiver (model: all ops whose OpId is not in the receiver's seen set and that the sender still holds).
+- Sender and receiver are **independent** state machines. The sender holds ops with author/HLC; the receiver publishes a frontier built from ops it has accepted.
+- Sender retransmits held ops **not covered** by the receiver frontier: for author A, an op is covered iff `Frontier[A]` exists and `order(op) ≤ order(Frontier[A])` under KERNEL §4.5.
+- A late op behind the tip is therefore not retransmitted (it is already implied by the cursor). Set-difference of two in-process id sets is **not** a conforming resume model.
 - Cursor advance is monotonic per peer: never rewinds without an explicit reset (datastore re-bootstrap).
 
 ## 5. Receipt vs durable ack (H11)
@@ -50,10 +52,12 @@ L1 relays may only emit `RECEIPT`. L2 relays that claim catch-up backup MUST emi
 Reference model state per peer link:
 
 ```
-{ seen: set OpId, cursor: Cursor, inbox: [op…], outbox: [op…] }
+Sender   { held: map OpId → {author, ts} }
+Receiver { seen: map OpId → {author, ts} }
+Cursor   { frontier: Frontier, epoch }
 ```
 
-Steps: `send(op)`, `deliver(op)` (may drop/reorder in adversarial schedules), `ack(outcomes)`, `resume(cursor)`.
+Steps: `hold(op)`, `deliver(op)` (may drop/reorder), `resume` (sender minus receiver cursor).
 
 Vectors exercise: reorder → same materialization; drop → retransmit on resume; duplicate after ack → `DUPLICATE`.
 

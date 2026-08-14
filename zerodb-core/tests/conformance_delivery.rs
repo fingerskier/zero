@@ -23,7 +23,19 @@ fn bytes_to_hex(b: &[u8]) -> String {
 
 fn parse_step(v: &Json) -> DelivStep {
     match v["op"].as_str().unwrap() {
-        "hold" => DelivStep::Hold(arr32(v["op_id"].as_str().unwrap())),
+        "hold" => {
+            let op_id = arr32(v["op_id"].as_str().unwrap());
+            DelivStep::Hold(zerodb_core::delivery::KnownOp {
+                op_id,
+                author: v
+                    .get("author")
+                    .and_then(|a| a.as_str())
+                    .map(arr32)
+                    .unwrap_or(op_id),
+                physical_ms: v["physical_ms"].as_u64().unwrap_or(0),
+                logical: v["logical"].as_u64().unwrap_or(0) as u16,
+            })
+        }
         "deliver" => DelivStep::Deliver {
             op_id: arr32(v["op_id"].as_str().unwrap()),
             reject: v["reject"].as_bool().unwrap_or(false),

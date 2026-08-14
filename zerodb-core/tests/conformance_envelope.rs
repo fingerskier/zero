@@ -12,7 +12,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
+use zerodb_core::cbor::Cbor;
 use zerodb_core::envelope::{EnvelopeError, ValueContext, open, seal};
+use zerodb_core::op::{OpEnvelope, OpTs};
 
 fn hex_to_bytes(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -32,7 +34,9 @@ fn fixed<const N: usize>(s: &str) -> [u8; N] {
 fn context(v: &Json) -> ValueContext {
     ValueContext {
         ds: fixed::<32>(v["ds"].as_str().unwrap()),
-        op_id: fixed::<32>(v["op_id"].as_str().unwrap()),
+        author: fixed::<32>(v["author"].as_str().unwrap()),
+        physical_ms: v["physical_ms"].as_u64().unwrap(),
+        logical: v["logical"].as_u64().unwrap_or(0) as u16,
         ep: v["ep"].as_u64().unwrap(),
         path: v["path"].as_str().unwrap().to_owned(),
     }
@@ -95,11 +99,25 @@ fn check_vector(v: &Json, path: &Path) {
         "{id}: ds flip"
     );
     let mut c = ctx.clone();
-    c.op_id[0] ^= 1;
+    c.author[0] ^= 1;
     assert_eq!(
         open(&key, &envelope, &c),
         Err(EnvelopeError::DecryptFailed),
-        "{id}: op_id flip"
+        "{id}: author flip"
+    );
+    let mut c = ctx.clone();
+    c.physical_ms ^= 1;
+    assert_eq!(
+        open(&key, &envelope, &c),
+        Err(EnvelopeError::DecryptFailed),
+        "{id}: physical_ms flip"
+    );
+    let mut c = ctx.clone();
+    c.logical ^= 1;
+    assert_eq!(
+        open(&key, &envelope, &c),
+        Err(EnvelopeError::DecryptFailed),
+        "{id}: logical flip"
     );
     let mut c = ctx.clone();
     c.ep += 1;
@@ -144,6 +162,34 @@ fn check_vector(v: &Json, path: &Path) {
         Err(EnvelopeError::DecryptFailed),
         "{id}: tag flip"
     );
+
+    // Complete-operation construction (CX-03): OpId is hashed *after* seal.
+    if let Some(want_id) = v["expect_op_id_hex"].as_str() {
+        let op = OpEnvelope {
+            v: 1,
+            ds: ctx.ds,
+            ep: ctx.ep,
+            author: ctx.author,
+            ts: OpTs {
+                physical_ms: ctx.physical_ms,
+                logical: ctx.logical,
+            },
+            deps: vec![],
+            grp: None,
+            kind: 3,
+            body: Cbor::Map(vec![
+                ("crdt".into(), Cbor::Text("lww".into())),
+                ("encrypted".into(), Cbor::Bytes(envelope.clone())),
+                ("path".into(), Cbor::Text(ctx.path.clone())),
+            ]),
+        };
+        assert_eq!(bytes_to_hex(&op.op_id().unwrap()), want_id, "{id}: op_id");
+        assert_eq!(
+            open(&key, &envelope, &ctx).unwrap(),
+            plaintext,
+            "{id}: decrypt after OpId"
+        );
+    }
 }
 
 /// Authoring helper: fills TBD envelope_hex fields in place.
@@ -152,7 +198,9 @@ fn check_vector(v: &Json, path: &Path) {
 fn generate_envelope_hex() {
     for path in vector_files() {
         let mut v: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        if v["envelope_hex"] != "TBD" {
+        let need_env = v["envelope_hex"] == "TBD";
+        let need_id = v.get("expect_op_id_hex").map(|x| x == "TBD").unwrap_or(false);
+        if !need_env && !need_id {
             continue;
         }
         let key = fixed::<32>(v["key_hex"].as_str().unwrap());
@@ -160,6 +208,28 @@ fn generate_envelope_hex() {
         let ctx = context(&v);
         let plaintext = hex_to_bytes(v["plaintext_hex"].as_str().unwrap());
         v["envelope_hex"] = Json::String(bytes_to_hex(&seal(&key, &nonce, &ctx, &plaintext)));
+        if v.get("expect_op_id_hex").is_some() {
+            let env = hex_to_bytes(v["envelope_hex"].as_str().unwrap());
+            let op = OpEnvelope {
+                v: 1,
+                ds: ctx.ds,
+                ep: ctx.ep,
+                author: ctx.author,
+                ts: OpTs {
+                    physical_ms: ctx.physical_ms,
+                    logical: ctx.logical,
+                },
+                deps: vec![],
+                grp: None,
+                kind: 3,
+                body: Cbor::Map(vec![
+                    ("crdt".into(), Cbor::Text("lww".into())),
+                    ("encrypted".into(), Cbor::Bytes(env)),
+                    ("path".into(), Cbor::Text(ctx.path.clone())),
+                ]),
+            };
+            v["expect_op_id_hex"] = Json::String(bytes_to_hex(&op.op_id().unwrap()));
+        }
         let mut pretty = serde_json::to_string_pretty(&v).unwrap();
         pretty.push('\n');
         fs::write(&path, pretty).unwrap();

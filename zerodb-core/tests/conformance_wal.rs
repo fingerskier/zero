@@ -57,6 +57,7 @@ fn parse_step(v: &Json) -> Step {
                     .iter()
                     .map(|x| arr32(x.as_str().unwrap()))
                     .collect(),
+                n: m.get("n").and_then(|x| x.as_u64()).map(|n| n as usize),
                 abort: m["abort"].as_bool().unwrap_or(false),
             })
         }
@@ -99,13 +100,26 @@ fn check_expect(st: &WalState, exp: &Json, path: &std::path::Path) {
         want.sort();
         assert_eq!(got, want, "applied {}", path.display());
     }
-    match &exp["hlc"] {
-        Json::Null => assert!(st.hlc.is_none(), "hlc {}", path.display()),
-        Json::Object(_) => {
-            let t = parse_ts(&exp["hlc"]);
-            assert_eq!(st.hlc, Some(t), "hlc {}", path.display());
+    if let Some(hlc) = exp.get("hlc") {
+        match hlc {
+            Json::Null => assert!(st.hlc.is_none(), "hlc {}", path.display()),
+            Json::Object(_) => {
+                let t = parse_ts(hlc);
+                assert_eq!(st.hlc, Some(t), "hlc {}", path.display());
+            }
+            _ => {}
         }
-        _ => {}
+    }
+    if let Some(arr) = exp["visible"].as_array() {
+        let mut got: Vec<String> = st
+            .visible_material()
+            .keys()
+            .map(|id| id.iter().map(|b| format!("{b:02x}")).collect())
+            .collect();
+        got.sort();
+        let mut want: Vec<String> = arr.iter().map(|x| x.as_str().unwrap().to_owned()).collect();
+        want.sort();
+        assert_eq!(got, want, "visible {}", path.display());
     }
     if let Some(arr) = exp["sealed"].as_array() {
         let mut got: Vec<String> = st

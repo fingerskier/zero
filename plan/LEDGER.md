@@ -13,7 +13,7 @@ Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)`.
 | Gate | Closed | Where remembered |
 |------|--------|------------------|
 | P0 readiness (P0-1..P0-7) | 2026-07-16 | ISSUES Decision Log; conformance + INVARIANTS + EXEMPLAR in `doc/` |
-| Composite M0a–M0f (contract-model) | 2026-07-18 | [SPEC §10](../doc/SPEC.md), package docs (KERNEL…FRONTIER), 103 vectors |
+| Composite M0a–M0f (contract-model) | 2026-07-18 | [SPEC §10](../doc/SPEC.md), package docs (KERNEL…FRONTIER); **109** vectors after 2026-08-14 CX-03..06 amend |
 | DQ-1..DQ-8, DQ-10 | 2026-07-16/18 | AUTH / KERNEL / SCHEMA / WAL + Decision Log |
 | Historical plan reviews (Codex 07-16, Grok plan 07-15) | dispositioned | Decision Log |
 | July 2026 state reviews (FINDINGS.GROK / FINDINGS.CODEX) | archived 2026-08-14 | [plan/archive/](archive/) — CX-01/CX-02 closed in tree; do not treat as live backlog |
@@ -102,8 +102,8 @@ Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
 | M2a-store | Conflicting/same-id CreateNode; HLC meta-ahead; import pin; shuffle replay | done(`r0_stabilize` + `m1_wave1`) | same-id no resurrection; HLC-order labels; inflated meta rewritten; import pin; shuffle replay identity |
 | M2a-e1 | E1 honesty: do not claim EXEMPLAR E1 | done(LEDGER M1-e1 wording) | kill + clock remain separate suites; no pre-kill projection |
 | M2a-e4 | E4 honesty: SEAL/TRUNCATE N/A on single-txn backend | done(LEDGER M1-e4 wording) | failpoint matrix kept; not EXEMPLAR E4 |
-| M2a-m0 | CX-03 AAD slot-hash; CX-04 frontier tip; CX-05 resume; CX-06 WAL MUSTs + vectors | open | blocks freeze and M3; not current local CRUD |
-| M2a-relay | CX-08 accepted-set + RELAY-SPEC rewrite (docs/vectors only) | open | blocks M3 start |
+| M2a-m0 | CX-03 AAD slot-hash; CX-04 frontier tip; CX-05 resume; CX-06 WAL MUSTs + vectors | done(109 required vectors) | KERNEL §7 slot AAD; FrontierTip+HLC; delivery frontier cursor; WAL n/unique/visible + WAL-013..016 |
+| M2a-relay | CX-08 accepted-set + RELAY-SPEC §7.4 (docs only) | done(RELAY 0.2.1-draft) | dual roots; no relay binary; M3a still blocked on wire transcripts |
 | M2a-schema | persist M0b IR + SchemaId; stamp `ep`; enforce `deps`; NAPI `applySchema` | open | replaces JSON pin |
 | M2a-bind | NAPI/wasm edges + `listNodes` props parity + query params + promise facade | open | wasm `listNodes` includes `props`; NAPI does not |
 | M3a | L2 relay + offline catch-up (E3) | open | M2, M0c/M0f | L | internal |

@@ -40,18 +40,37 @@ function stateApply(st, opId) {
   return 'ok';
 }
 
+function tsEq(a, b) {
+  return a && b && a.p === b.p && a.l === b.l;
+}
+
 function hlcPersist(st, ts) {
+  if (!st.wal.some((r) => tsEq(r.author_ts, ts))) return 'INVALID';
   st.hlc = { ...ts };
+  return 'ok';
 }
 
 function groupSeal(st, m) {
   if (m.abort) return 'GROUP_ABORTED';
   if (!m.members || m.members.length === 0) return 'INVALID';
+  if (m.n !== undefined && m.n !== m.members.length) return 'INVALID';
+  if (new Set(m.members).size !== m.members.length) return 'INVALID';
   for (const id of m.members) {
     if (!st.applied.has(id)) return 'GROUP_INCOMPLETE';
+    const rec = st.wal.find((r) => r.op_id === id);
+    if (!rec || rec.group !== m.group_id) return 'INVALID';
   }
   st.sealed.add(m.group_id);
   return 'ok';
+}
+
+function visibleMaterial(st) {
+  const out = [];
+  for (const id of st.applied) {
+    const rec = st.wal.find((r) => r.op_id === id);
+    if (!rec || rec.group == null || st.sealed.has(rec.group)) out.push(id);
+  }
+  return out;
 }
 
 function walTruncate(st, n) {
@@ -95,8 +114,7 @@ function runStep(st, step) {
     case 'state_apply':
       return stateApply(st, step.op_id);
     case 'hlc_persist':
-      hlcPersist(st, step.ts);
-      return 'ok';
+      return hlcPersist(st, step.ts);
     case 'group_seal':
       return groupSeal(st, step.manifest);
     case 'wal_truncate':
@@ -134,6 +152,13 @@ function expectMatch(st, exp) {
   } else if (exp.hlc) {
     if (!st.hlc || st.hlc.p !== exp.hlc.p || st.hlc.l !== exp.hlc.l) {
       throw new Error(`hlc: expected ${JSON.stringify(exp.hlc)}, got ${JSON.stringify(st.hlc)}`);
+    }
+  }
+  if (exp.visible) {
+    const got = visibleMaterial(st).sort();
+    const want = [...exp.visible].sort();
+    if (JSON.stringify(got) !== JSON.stringify(want)) {
+      throw new Error(`visible: expected ${want}, got ${got}`);
     }
   }
   if (exp.sealed) {

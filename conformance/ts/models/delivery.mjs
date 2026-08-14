@@ -2,25 +2,71 @@
 
 import { hexToBytes, bytesToHex } from './cbor.mjs';
 
+function orderKey(op) {
+  return [op.physical_ms, op.logical, op.author, op.op_id];
+}
+
+function cmpKey(a, b) {
+  const ka = orderKey(a);
+  const kb = orderKey(b);
+  for (let i = 0; i < ka.length; i++) {
+    if (ka[i] < kb[i]) return -1;
+    if (ka[i] > kb[i]) return 1;
+  }
+  return 0;
+}
+
+function knownFrom(step) {
+  const id = step.op_id;
+  return {
+    op_id: id,
+    author: step.author || id,
+    physical_ms: step.physical_ms ?? 0,
+    logical: step.logical ?? 0,
+  };
+}
+
+function receiverFrontier(seenMeta) {
+  const best = new Map();
+  for (const op of seenMeta.values()) {
+    if (!best.has(op.author) || cmpKey(op, best.get(op.author)) > 0) {
+      best.set(op.author, op);
+    }
+  }
+  return best;
+}
+
+function covered(frontier, op) {
+  const tip = frontier.get(op.author);
+  if (!tip) return false;
+  return cmpKey(op, tip) <= 0;
+}
+
 function runSchedule(steps) {
   const seen = new Set();
-  const held = new Set();
+  const seenMeta = new Map();
+  const held = new Map();
   let lastOutcomes = [];
   let resumeSent = [];
+
+  const accept = (op) => {
+    if (seen.has(op.op_id)) return 'DUPLICATE';
+    seen.add(op.op_id);
+    seenMeta.set(op.op_id, op);
+    return 'ACCEPT';
+  };
 
   for (const step of steps) {
     switch (step.op) {
       case 'hold':
-        held.add(step.op_id);
+        held.set(step.op_id, knownFrom(step));
         break;
       case 'deliver': {
         if (step.reject) {
           lastOutcomes = ['REJECT'];
-        } else if (seen.has(step.op_id)) {
-          lastOutcomes = ['DUPLICATE'];
         } else {
-          seen.add(step.op_id);
-          lastOutcomes = ['ACCEPT'];
+          const op = held.get(step.op_id) || knownFrom(step);
+          lastOutcomes = [accept(op)];
         }
         break;
       }
@@ -29,17 +75,20 @@ function runSchedule(steps) {
         const rejects = step.rejects || [];
         step.op_ids.forEach((id, i) => {
           if (rejects[i]) lastOutcomes.push('REJECT');
-          else if (seen.has(id)) lastOutcomes.push('DUPLICATE');
           else {
-            seen.add(id);
-            lastOutcomes.push('ACCEPT');
+            const op = held.get(id) || { op_id: id, author: id, physical_ms: 0, logical: 0 };
+            lastOutcomes.push(accept(op));
           }
         });
         break;
       }
       case 'resume': {
-        resumeSent = [...held].filter((id) => !seen.has(id)).sort();
-        for (const id of resumeSent) seen.add(id);
+        const frontier = receiverFrontier(seenMeta);
+        resumeSent = [...held.values()]
+          .filter((op) => !covered(frontier, op))
+          .map((op) => op.op_id)
+          .sort();
+        for (const id of resumeSent) accept(held.get(id));
         break;
       }
       default:

@@ -2,38 +2,53 @@
 //!
 //! Layout: `version (u8, = 1) ‖ key_id (16B = BLAKE3(key)[..16]) ‖
 //! nonce (24B) ‖ ciphertext+tag (XChaCha20-Poly1305)`.
-//! AAD = domain ‖ ds ‖ op_id ‖ ep (u64 BE) ‖ property path — an envelope
-//! authenticates its datastore, operation, epoch, and property slot, so
-//! replay into any other slot fails decryption (INVARIANTS I-10).
+//! SlotId = BLAKE3(domain_slot ‖ ds ‖ ep ‖ path ‖ author ‖ ts);
+//! AAD = domain_aad ‖ SlotId. Ciphertext and OpId are not inputs, so
+//! seal completes before OpId exists (CX-03). Replay into any other
+//! slot fails decryption (INVARIANTS I-10).
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use thiserror::Error;
 
-/// Domain-separation prefix (registry `domain_separation.value_aad`).
+/// Domain-separation prefixes (registry `domain_separation`).
 pub const DOMAIN_VALUE_AAD: &[u8] = b"zerodb-value-aad-v1";
+pub const DOMAIN_VALUE_SLOT: &[u8] = b"zerodb-value-slot-v1";
 pub const ENVELOPE_VERSION: u8 = 1;
 const KEY_ID_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
 
-/// Context an envelope is bound to (KERNEL §7).
+/// Pre-encryption slot context (KERNEL §7). Never includes ciphertext or OpId.
 #[derive(Debug, Clone)]
 pub struct ValueContext {
     pub ds: [u8; 32],
-    pub op_id: [u8; 32],
+    pub author: [u8; 32],
+    pub physical_ms: u64,
+    pub logical: u16,
     pub ep: u64,
     pub path: String,
 }
 
 impl ValueContext {
+    /// `SlotId = BLAKE3(domain("value_slot") ‖ ds ‖ ep ‖ path ‖ author ‖ ts)`.
+    pub fn slot_id(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(DOMAIN_VALUE_SLOT);
+        hasher.update(&self.ds);
+        hasher.update(&self.ep.to_be_bytes());
+        hasher.update(self.path.as_bytes());
+        hasher.update(&self.author);
+        hasher.update(&self.physical_ms.to_be_bytes());
+        hasher.update(&self.logical.to_be_bytes());
+        *hasher.finalize().as_bytes()
+    }
+
     pub fn aad(&self) -> Vec<u8> {
-        let mut aad = Vec::with_capacity(DOMAIN_VALUE_AAD.len() + 72 + self.path.len());
+        let slot = self.slot_id();
+        let mut aad = Vec::with_capacity(DOMAIN_VALUE_AAD.len() + 32);
         aad.extend_from_slice(DOMAIN_VALUE_AAD);
-        aad.extend_from_slice(&self.ds);
-        aad.extend_from_slice(&self.op_id);
-        aad.extend_from_slice(&self.ep.to_be_bytes());
-        aad.extend_from_slice(self.path.as_bytes());
+        aad.extend_from_slice(&slot);
         aad
     }
 }
@@ -117,7 +132,9 @@ mod tests {
     fn ctx() -> ValueContext {
         ValueContext {
             ds: [0x11; 32],
-            op_id: [0x77; 32],
+            author: [0x22; 32],
+            physical_ms: 1_000_000,
+            logical: 3,
             ep: 2,
             path: "note.body".into(),
         }
@@ -130,12 +147,18 @@ mod tests {
         let envelope = seal(&key, &nonce, &ctx(), b"attack at dawn");
         assert_eq!(open(&key, &envelope, &ctx()).unwrap(), b"attack at dawn");
 
-        // Each AAD component must bind (I-10).
+        // Each slot-context component must bind (I-10).
         let mut c = ctx();
         c.ds[0] ^= 1;
         assert_eq!(open(&key, &envelope, &c), Err(EnvelopeError::DecryptFailed));
         let mut c = ctx();
-        c.op_id[0] ^= 1;
+        c.author[0] ^= 1;
+        assert_eq!(open(&key, &envelope, &c), Err(EnvelopeError::DecryptFailed));
+        let mut c = ctx();
+        c.physical_ms += 1;
+        assert_eq!(open(&key, &envelope, &c), Err(EnvelopeError::DecryptFailed));
+        let mut c = ctx();
+        c.logical += 1;
         assert_eq!(open(&key, &envelope, &c), Err(EnvelopeError::DecryptFailed));
         let mut c = ctx();
         c.ep += 1;
@@ -143,6 +166,39 @@ mod tests {
         let mut c = ctx();
         c.path.push('x');
         assert_eq!(open(&key, &envelope, &c), Err(EnvelopeError::DecryptFailed));
+    }
+
+    #[test]
+    fn seal_does_not_require_opid_then_op_hashes_ciphertext() {
+        use crate::cbor::Cbor;
+        use crate::op::{OpEnvelope, OpTs};
+
+        let key = [0x42; 32];
+        let ctx = ctx();
+        let envelope = seal(&key, &[0x05; 24], &ctx, b"attack at dawn");
+        let op = OpEnvelope {
+            v: 1,
+            ds: ctx.ds,
+            ep: ctx.ep,
+            author: ctx.author,
+            ts: OpTs {
+                physical_ms: ctx.physical_ms,
+                logical: ctx.logical,
+            },
+            deps: vec![],
+            grp: None,
+            kind: 3,
+            body: Cbor::Map(vec![
+                ("crdt".into(), Cbor::Text("lww".into())),
+                ("encrypted".into(), Cbor::Bytes(envelope.clone())),
+                ("path".into(), Cbor::Text(ctx.path.clone())),
+            ]),
+        };
+        let op_id = op.op_id().unwrap();
+        // Slot context never included op_id; flipping a hypothetical op_id
+        // cannot be part of AAD. Decrypt still works after OpId is derived.
+        assert_eq!(open(&key, &envelope, &ctx).unwrap(), b"attack at dawn");
+        assert_ne!(op_id, [0u8; 32]);
     }
 
     #[test]

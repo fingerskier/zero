@@ -1,0 +1,35 @@
+{
+  "description": "group_seal with n != len(members) → INVALID (CX-06).",
+  "id": "WAL-015",
+  "type": "group-seal",
+  "invariants": ["I-13"],
+  "schedule": [
+    {
+      "op": "wal_append",
+      "record": {
+        "op_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "body": "g1",
+        "group": "99999999999999999999999999999999",
+        "author_ts": { "p": 10, "l": 0 }
+      }
+    },
+    { "op": "wal_sync" },
+    {
+      "op": "state_apply",
+      "op_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    },
+    {
+      "op": "group_seal",
+      "manifest": {
+        "group_id": "99999999999999999999999999999999",
+        "members": [
+          "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+        ],
+        "n": 2,
+        "abort": false
+      },
+      "expect_error": "INVALID"
+    }
+  ],
+  "expect_sealed": []
+}

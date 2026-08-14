@@ -60,7 +60,7 @@ Contract: C4 (M0a context + M0d). First gated: M0d negative vectors; live at M3b
 ### I-10 — Encrypted-value confidentiality
 No party outside the recipient set — including any relay — can recover the plaintext of an encrypted value from any protocol artifact (operations, sync messages, snapshots, logs).
 **Falsified when:** a non-recipient reconstructs plaintext in the E2E test harness.
-Contract: H10 envelope (frozen in M0a/M0b per CX-05). First gated: M3b.
+Contract: H10 envelope (KERNEL §7 slot-context AAD; draft-1, unfrozen). First gated: M3b.
 
 ## Sync & delivery
 

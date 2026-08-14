@@ -23,6 +23,8 @@ pub struct WalRecord {
 pub struct GroupManifest {
     pub group_id: [u8; 16],
     pub members: Vec<[u8; 32]>,
+    /// MUST equal `members.len()` when present (WAL §2).
+    pub n: Option<usize>,
     pub abort: bool,
 }
 
@@ -83,8 +85,13 @@ impl WalState {
         Ok(())
     }
 
-    pub fn hlc_persist(&mut self, ts: ModelTs) {
+    pub fn hlc_persist(&mut self, ts: ModelTs) -> Result<(), WalError> {
+        // MUST only persist an HLC that a synced WAL record already carries.
+        if !self.wal.iter().any(|r| r.author_ts == ts) {
+            return Err(WalError::Invalid);
+        }
         self.hlc = Some(ts);
+        Ok(())
     }
 
     pub fn group_seal(&mut self, m: &GroupManifest) -> Result<(), WalError> {
@@ -94,13 +101,43 @@ impl WalState {
         if m.members.is_empty() {
             return Err(WalError::Invalid);
         }
+        if m.n.is_some_and(|n| n != m.members.len()) {
+            return Err(WalError::Invalid);
+        }
+        let mut uniq = BTreeSet::new();
+        for id in &m.members {
+            if !uniq.insert(*id) {
+                return Err(WalError::Invalid);
+            }
+        }
         for id in &m.members {
             if !self.applied.contains(id) {
                 return Err(WalError::GroupIncomplete);
             }
+            let rec = self.wal.iter().find(|r| r.op_id == *id);
+            match rec {
+                Some(r) if r.group == Some(m.group_id) => {}
+                Some(_) => return Err(WalError::Invalid),
+                None => return Err(WalError::Invalid),
+            }
         }
         self.sealed.insert(m.group_id);
         Ok(())
+    }
+
+    /// Application-visible materialization (I-13): unsealed group members
+    /// stay hidden even if they sit in `material` for CRDT tests.
+    pub fn visible_material(&self) -> BTreeMap<[u8; 32], String> {
+        self.material
+            .iter()
+            .filter(|(id, _)| {
+                match self.wal.iter().find(|r| r.op_id == **id) {
+                    Some(r) => r.group.is_none_or(|g| self.sealed.contains(&g)),
+                    None => true,
+                }
+            })
+            .map(|(k, v)| (*k, v.clone()))
+            .collect()
     }
 
     pub fn wal_truncate(&mut self, up_to_index: usize) -> Result<(), WalError> {
@@ -145,10 +182,7 @@ impl WalState {
                 Ok(())
             }
             Step::StateApply(id) => self.state_apply(*id),
-            Step::HlcPersist(ts) => {
-                self.hlc_persist(*ts);
-                Ok(())
-            }
+            Step::HlcPersist(ts) => self.hlc_persist(*ts),
             Step::GroupSeal(m) => self.group_seal(m),
             Step::WalTruncate(n) => self.wal_truncate(*n),
         }
@@ -250,6 +284,7 @@ mod tests {
         let m = GroupManifest {
             group_id: [9u8; 16],
             members: vec![oid(1), oid(2)],
+            n: None,
             abort: false,
         };
         assert_eq!(st.group_seal(&m), Err(WalError::GroupIncomplete));

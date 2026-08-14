@@ -109,7 +109,7 @@ recover(state):
 | `wal-crash` | schedule × crash_point → post-`recover` observable state | I-3, I-13, I-14, DQ-7 |
 | `group-seal` | incomplete / complete / abort manifests | I-13 |
 
-Lifecycle: red in `xfail/`, promote on both-runners-green. First twelve vectors promoted (WAL-001..012: crash matrix, group seal/abort, truncate safe/unsafe, apply idempotent). M0e.1 exit still requires the C8 checklist half for the WAL model (delivery is M0e.2).
+Lifecycle: red in `xfail/`, promote on both-runners-green. WAL-001..012 cover the crash/seal matrix. WAL-013..016 (2026-08-14) falsify the three CX-06 MUSTs: HLC without a carrying op, duplicate members / `n` mismatch, and unsealed members hidden from application-visible material after recover.
 
 ### Vector shape (`wal-crash`)
 

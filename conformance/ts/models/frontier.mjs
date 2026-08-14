@@ -38,7 +38,11 @@ export function buildFrontier(ops) {
   }
   const out = {};
   for (const [a, op] of [...best.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
-    out[a] = bytesToHex(op.op_id);
+    out[a] = {
+      op_id: bytesToHex(op.op_id),
+      physical_ms: op.physical_ms,
+      logical: op.logical,
+    };
   }
   return out;
 }
@@ -54,8 +58,17 @@ function frontierBytes(frontier) {
   const authors = Object.keys(frontier).sort();
   const parts = [];
   for (const a of authors) {
+    const tip = frontier[a];
     parts.push(hexToBytes(a));
-    parts.push(hexToBytes(frontier[a]));
+    parts.push(hexToBytes(typeof tip === 'string' ? tip : tip.op_id));
+    const p = typeof tip === 'string' ? 0 : tip.physical_ms;
+    const l = typeof tip === 'string' ? 0 : tip.logical;
+    const pb = new Uint8Array(8);
+    new DataView(pb.buffer).setBigUint64(0, BigInt(p), false);
+    const lb = new Uint8Array(2);
+    new DataView(lb.buffer).setUint16(0, l, false);
+    parts.push(pb);
+    parts.push(lb);
   }
   let n = 0;
   for (const p of parts) n += p.length;
@@ -93,20 +106,30 @@ export function snapshotId(datastoreIdHex, frontier, merkleHex, tailHex) {
   return bytesToHex(blake3(pre));
 }
 
+export function isLateOp(op, frontier) {
+  const tip = frontier[bytesToHex(op.author)];
+  if (!tip) return false;
+  const tipOp = {
+    op_id: hexToBytes(typeof tip === 'string' ? tip : tip.op_id),
+    physical_ms: typeof tip === 'string' ? 0 : tip.physical_ms,
+    logical: typeof tip === 'string' ? 0 : tip.logical,
+    author: op.author,
+  };
+  return cmpKey(op, tipOp) < 0 && bytesToHex(op.op_id) !== bytesToHex(tipOp.op_id);
+}
+
 export function isLateAgainstOps(op, frontierOps) {
-  const f = buildFrontier(frontierOps);
-  const tipHex = f[bytesToHex(op.author)];
-  if (!tipHex) return false;
-  const tip = frontierOps.find((o) => bytesToHex(o.op_id) === tipHex);
-  return cmpKey(op, tip) < 0 && bytesToHex(op.op_id) !== tipHex;
+  return isLateOp(op, buildFrontier(frontierOps));
 }
 
 export function runFrontierBuildVector(vector) {
   const ops = (vector.ops || []).map(parseOp);
   const got = buildFrontier(ops);
-  if (JSON.stringify(got) !== JSON.stringify(vector.expect_frontier)) {
+  const gotIds = {};
+  for (const [a, tip] of Object.entries(got)) gotIds[a] = tip.op_id;
+  if (JSON.stringify(gotIds) !== JSON.stringify(vector.expect_frontier)) {
     throw new Error(
-      `frontier mismatch:\n  expected ${JSON.stringify(vector.expect_frontier)}\n  got ${JSON.stringify(got)}`
+      `frontier mismatch:\n  expected ${JSON.stringify(vector.expect_frontier)}\n  got ${JSON.stringify(gotIds)}`
     );
   }
 }
@@ -126,9 +149,10 @@ export function runSnapshotIdVector(vector) {
 }
 
 export function runLateOpVector(vector) {
-  const base = (vector.frontier_ops || []).map(parseOp);
   const op = parseOp(vector.op);
-  const late = isLateAgainstOps(op, base);
+  const late = vector.encoded_frontier
+    ? isLateOp(op, vector.encoded_frontier)
+    : isLateAgainstOps(op, (vector.frontier_ops || []).map(parseOp));
   if (late !== vector.expect_late) {
     throw new Error(`late: expected ${vector.expect_late}, got ${late}`);
   }

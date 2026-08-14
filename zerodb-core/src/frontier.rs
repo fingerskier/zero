@@ -7,8 +7,17 @@ use crate::merkle::{MerkleOp, merkle_root};
 pub const DOMAIN_SNAPSHOT: &[u8] = b"zerodb-snapshot-v1";
 pub const SNAPSHOT_FORMAT_VERSION: u8 = 1;
 
-/// Frontier: PeerId (author) → greatest OpId for that author.
-pub type Frontier = BTreeMap<[u8; 32], [u8; 32]>;
+/// One author's tip: greatest accepted op under KERNEL §4.5, with the
+/// HLC needed to decide late-op from the encoded frontier alone (CX-04).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrontierTip {
+    pub op_id: [u8; 32],
+    pub physical_ms: u64,
+    pub logical: u16,
+}
+
+/// Frontier: PeerId (author) → tip.
+pub type Frontier = BTreeMap<[u8; 32], FrontierTip>;
 
 fn order_key(op: &MerkleOp) -> (u64, u16, [u8; 32], [u8; 32]) {
     (op.physical_ms, op.logical, op.author, op.op_id)
@@ -27,7 +36,16 @@ pub fn build_frontier(ops: &[MerkleOp]) -> Frontier {
             .or_insert(op);
     }
     best.into_iter()
-        .map(|(author, op)| (author, op.op_id))
+        .map(|(author, op)| {
+            (
+                author,
+                FrontierTip {
+                    op_id: op.op_id,
+                    physical_ms: op.physical_ms,
+                    logical: op.logical,
+                },
+            )
+        })
         .collect()
 }
 
@@ -38,12 +56,15 @@ pub fn tail_boundary(ops: &[MerkleOp]) -> Option<[u8; 32]> {
         .map(|o| o.op_id)
 }
 
-/// Canonical frontier encoding for SnapshotId: sorted by author, each author‖op_id.
+/// Canonical frontier encoding: sorted by author, each
+/// author ‖ op_id ‖ physical_ms (u64 BE) ‖ logical (u16 BE).
 pub fn frontier_bytes(f: &Frontier) -> Vec<u8> {
     let mut out = Vec::new();
-    for (author, op_id) in f {
+    for (author, tip) in f {
         out.extend_from_slice(author);
-        out.extend_from_slice(op_id);
+        out.extend_from_slice(&tip.op_id);
+        out.extend_from_slice(&tip.physical_ms.to_be_bytes());
+        out.extend_from_slice(&tip.logical.to_be_bytes());
     }
     out
 }
@@ -70,37 +91,21 @@ pub fn snapshot_id(
     *blake3::hash(&pre).as_bytes()
 }
 
-/// Late op: author's frontier tip is already past this op in §4.5 order.
+/// Late op: author's encoded tip already dominates this op in §4.5 order.
+/// Uses only the frontier map — no extra op list (CX-04).
 pub fn is_late_op(op: &MerkleOp, frontier: &Frontier) -> bool {
     match frontier.get(&op.author) {
         None => false,
-        Some(tip_id) => {
-            // If tip is greater than op in order among same author ops we only
-            // have the tip id — compare bytewise OpId as proxy only when tips
-            // are built from this set. Contract: late if tip's order > op's order
-            // when tip is a known greater op. Model uses: tip != op_id and tip
-            // was chosen as max, so any other op by same author with lower order is "not late"
-            // relative to frontier if still in set. Late means op arrives AFTER frontier
-            // published claiming tip covers all ≤ tip — so op with order ≤ tip that is
-            // missing would be late when it appears. If op_id is tip, not late.
-            // Simplified model: late iff author has tip and op_id != tip and
-            // op is not the tip (always true for missing ops). For fixtures we
-            // mark late when physical_ms < tip_ms provided separately.
-            op.op_id != *tip_id
+        Some(tip) => {
+            let tip_key = (tip.physical_ms, tip.logical, op.author, tip.op_id);
+            order_key(op) < tip_key && op.op_id != tip.op_id
         }
     }
 }
 
-/// Fixture-friendly late check using full op list for tip order.
+/// Late check from a published op set: build the frontier, then `is_late_op`.
 pub fn is_late_against_ops(op: &MerkleOp, frontier_ops: &[MerkleOp]) -> bool {
-    let f = build_frontier(frontier_ops);
-    match f.get(&op.author) {
-        None => false,
-        Some(tip) => {
-            let tip_op = frontier_ops.iter().find(|o| o.op_id == *tip).unwrap();
-            order_key(op) < order_key(tip_op) && op.op_id != *tip
-        }
-    }
+    is_late_op(op, &build_frontier(frontier_ops))
 }
 
 pub fn snapshot_for_ops(datastore_id: &[u8; 32], ops: &[MerkleOp]) -> [u8; 32] {
@@ -127,14 +132,18 @@ mod tests {
     fn frontier_per_author_max() {
         let ops = vec![op(1, 0xAA, 100), op(2, 0xAA, 200), op(3, 0xBB, 150)];
         let f = build_frontier(&ops);
-        assert_eq!(f.get(&[0xAA; 32]), Some(&[2; 32]));
-        assert_eq!(f.get(&[0xBB; 32]), Some(&[3; 32]));
+        assert_eq!(f.get(&[0xAA; 32]).map(|t| t.op_id), Some([2; 32]));
+        assert_eq!(f.get(&[0xBB; 32]).map(|t| t.op_id), Some([3; 32]));
+        assert_eq!(f.get(&[0xAA; 32]).map(|t| t.physical_ms), Some(200));
     }
 
     #[test]
     fn late_op_detected() {
         let base = vec![op(2, 0xAA, 200)];
         let late = op(1, 0xAA, 100);
+        let f = build_frontier(&base);
+        assert!(is_late_op(&late, &f));
+        assert!(!is_late_op(&op(3, 0xAA, 300), &f));
         assert!(is_late_against_ops(&late, &base));
         assert!(!is_late_against_ops(&op(3, 0xAA, 300), &base));
     }
@@ -145,6 +154,8 @@ mod tests {
         let ops = vec![op(1, 0xAA, 1000)];
         assert_eq!(snapshot_for_ops(&ds, &ops), snapshot_for_ops(&ds, &ops));
     }
+
+
 
     #[test]
     #[ignore]
@@ -158,6 +169,6 @@ mod tests {
         eprintln!("root={}", hex(&merkle_root(&ops)));
         let f = build_frontier(&ops);
         eprintln!("frontier_author={}", hex(&[0xAAu8; 32]));
-        eprintln!("frontier_tip={}", hex(f.get(&[0xAAu8; 32]).unwrap()));
+        eprintln!("frontier_tip={}", hex(&f.get(&[0xAAu8; 32]).unwrap().op_id));
     }
 }

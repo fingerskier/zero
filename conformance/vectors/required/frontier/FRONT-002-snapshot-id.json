@@ -12,5 +12,5 @@
     }
   ],
   "expect_merkle_root_hex": "c059a7bb6294be70fceca60b6a16a6d8ee4e3949bf6aef1cbd70ecc11d0fc11a",
-  "expect_snapshot_id_hex": "a03833ef1e211f347ba94c59ad0417be51bca59d48959f04c8392c18c90a75aa"
+  "expect_snapshot_id_hex": "eb63c126215e8ceb1ea318e51d201ac016e2f843fb181f0bfbab6399d3f56221"
 }

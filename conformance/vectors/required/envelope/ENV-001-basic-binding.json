@@ -1,16 +1,19 @@
 {
-  "description": "Encrypted-value envelope golden (KERNEL §7): fixed key/nonce for determinism. Handlers must seal to identical bytes, open to the plaintext, and reject every flipped AAD component (ds, op_id, ep, path), truncation, unknown version, and a wrong key id.",
+  "author": "2222222222222222222222222222222222222222222222222222222222222222",
+  "description": "Encrypted-value envelope golden (KERNEL §7 slot-context AAD): fixed key/nonce. Seal does not take OpId. Handlers reject every flipped slot field (ds, author, ts, ep, path), truncation, unknown version, and a wrong key id.",
   "ds": "1111111111111111111111111111111111111111111111111111111111111111",
-  "envelope_hex": "01bcff11daf7dbb8c789b7bcc4e4529804000102030405060708090a0b0c0d0e0f1011121314151617ed88f086a4cae7a18646c027755620c76feb6401511cfb70f73b0f3f923e",
+  "envelope_hex": "01bcff11daf7dbb8c789b7bcc4e4529804000102030405060708090a0b0c0d0e0f1011121314151617ed88f086a4cae7a18646c0277556db52b88d0797352ae1dc1d82418f0fd0",
   "ep": 2,
+  "expect_op_id_hex": "4bc4781a3bacc13a8dffe3861d8e2875e6527b4c8558c1f1883764d9ef89796c",
   "id": "ENV-001",
   "invariants": [
     "I-10"
   ],
   "key_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "logical": 3,
   "nonce_hex": "000102030405060708090a0b0c0d0e0f1011121314151617",
-  "op_id": "7777777777777777777777777777777777777777777777777777777777777777",
   "path": "note.body",
+  "physical_ms": 1000000,
   "plaintext_hex": "61747461636b206174206461776e",
   "type": "envelope"
 }

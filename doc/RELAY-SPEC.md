@@ -1,10 +1,10 @@
 # ZeroDB Relay Protocol Specification
 
-**Version:** 0.2.0-draft
-**Date:** 2026-07-13
+**Version:** 0.2.1-draft
+**Date:** 2026-08-14
 **Author:** Matt / Turing Automations
-**Status:** Draft
-**Companion to:** [ZeroDB Technical Specification](SPEC.md)
+**Status:** Draft — **not implementation-ready for M3a**. Wire messages remain 0.2; §7.4 (accepted sets) is the CX-08 contract. Canonical CBOR wire is protocol v3.
+**Companion to:** [ZeroDB Technical Specification](SPEC.md), [MERKLE.md](MERKLE.md), [AUTH.md](AUTH.md), [DELIVERY.md](DELIVERY.md), [KERNEL.md](KERNEL.md)
 
 ---
 
@@ -230,7 +230,7 @@ Subscription is the single membership verb: it scopes presence, peer listing, si
 }
 ```
 
-> **Note:** datastore admission is currently unauthenticated — any authenticated peer can subscribe to a guessed datastore ID. Datastore-membership capabilities (ISSUES C4 → **M0d** format, M3 enforcement) will add an admission credential to this message.
+> **Note:** datastore admission is unauthenticated in this draft. M0d defines membership capabilities; on-wire admission is M3b. Guessed-id subscribe MUST be rejected once admission is enforced.
 
 #### `SUBSCRIBED` (0x11) — R→P [L0]
 
@@ -509,13 +509,34 @@ The specification does NOT mandate a storage engine. SQLite, RocksDB, PostgreSQL
 
 ### 7.2 Merkle Sync Tree
 
-A Level 2 relay MUST maintain a Merkle sync tree per datastore, as defined in SPEC.md §2.6 (canonical construction pending ISSUES C3 / **M0c**). The tree is a derived structure computed from the oplog and MUST be updated as operations are persisted.
+A Level 2 relay MUST maintain a Merkle sync tree per datastore as defined in [MERKLE.md](MERKLE.md) (M0c closed 2026-07-18). The tree is a derived structure. **Which op set it hashes is defined in §7.4** — hashing the raw validated oplog is not the same as hashing a peer's accepted set.
 
 ### 7.3 Compaction
 
 Compaction follows SPEC.md §7.3 and is gated on ISSUES C7: garbage collection is **disabled by default** until causal-frontier, peer-retirement, and restore semantics are specified and tested. Independent of GC, the relay MUST retain the full oplog: the configurable retention window (RECOMMENDED: 30 days) is a **minimum service commitment**, not a deletion license — deleting operations after the window is still forbidden until C7 GC semantics ship (M5).
 
-Snapshot sync for bootstrapping new peers has no messages in this protocol version; contracts are M0f work and snapshot shipping is scheduled M4 (SPEC §10, ISSUES C7).
+Snapshot sync for bootstrapping new peers has no messages in this protocol version; snapshot identity is M0f and shipping is M4 (SPEC §10).
+
+### 7.4 Accepted sets vs Merkle roots (CX-08)
+
+Three sets exist around an L2 relay. They are **not** interchangeable.
+
+| Set | Who computes it | Filter |
+|-----|-----------------|--------|
+| **Validated** | Relay | Decode, signature, OpId, ds match, size limits. **Not** the AUTH §4 causal authz predicate. |
+| **Accepted** | Honest peer | Validated **plus** AUTH §4 (membership at grant-time, revoke, founder). MERKLE.md hashes **this** set. |
+| **Rejected** | Honest peer | Validated ops the peer will not materialize (unauthorized, equivocation, wrong ds after forwarding). |
+
+A colluding or merely schema-blind relay can retain authentic but unauthorized ops. Those ops stay in the relay validated oplog and would change a Merkle root built over that oplog. Honest peers reject them. **Equal Merkle roots between relay and peer are therefore not a protocol invariant** if both trees hash different sets.
+
+**v0.1 contract (Decision Log 2026-08-14):** L2 publishes **two** roots when it claims catch-up:
+
+1. `validated_root` — MERKLE over the relay's validated oplog (what it stored).
+2. Peers publish `accepted_root` — MERKLE over their accepted set.
+
+Catch-up completeness (EXEMPLAR E3) is: after sync, every honest peer's `accepted_root` matches every other honest peer's `accepted_root`. The relay's `validated_root` MAY differ. The protocol MUST acknowledge rejected OpIds (explicit `REJECT` outcomes per DELIVERY) so a sender does not retry forever. Dual-root walk messages are M3a wire work; this section is the semantic precondition.
+
+Do **not** implement a relay that claims peer-root equality against its validated oplog.
 
 ---
 
@@ -556,9 +577,9 @@ The relay MUST validate operations before forwarding or persisting them. Validat
 
 All Level 1 and Level 2 relays MUST perform these checks on every received operation:
 
-1. **Signature presence and verification:** operation signatures are mandatory for all synced operations (v0.1 trust model). Unsigned operations are rejected with `ERROR` (code `0x301`). Signature verification against the *author's* key requires the author-key resolution contract (ISSUES C5 → **M0d** contract / M3 enforcement); until then relays verify what they can resolve and MUST NOT reject forwarded operations solely because the author key is not the transport sender's key.
+1. **Signature presence and verification:** operation signatures are mandatory for all synced operations (v0.1 trust model). Unsigned operations are rejected with `ERROR` (code `0x301`). Author-key resolution is AUTH §1 (M0d); on-wire enforcement is M3b. Relays MUST NOT reject forwarded operations solely because the author key is not the transport sender's key.
 
-2. **Content hash integrity:** `BLAKE3(operation_content) == operation.id` — the `OpId` MUST match the content hash (canonical `operation_content` bytes pending ISSUES C1). This detects corruption and tampering.
+2. **Content hash integrity:** `OpId` MUST equal `BLAKE3(id-preimage)` per KERNEL §4.4 (M0a). This detects corruption and tampering.
 
 3. **Author consistency:** The operation's `peer` field MUST correspond to the public key that produced the signature.
 

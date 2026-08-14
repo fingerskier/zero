@@ -4,7 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde_json::Value as Json;
-use zerodb_core::frontier::{build_frontier, is_late_against_ops, snapshot_for_ops, tail_boundary};
+use zerodb_core::frontier::{
+    build_frontier, is_late_against_ops, is_late_op, snapshot_for_ops, tail_boundary,
+};
 use zerodb_core::merkle::{MerkleOp, merkle_root};
 
 fn hex_to_bytes(s: &str) -> Vec<u8> {
@@ -53,7 +55,12 @@ fn frontier_vectors() {
                 for (k, val) in exp {
                     let author = arr32(k);
                     let want = arr32(val.as_str().unwrap());
-                    assert_eq!(f.get(&author), Some(&want), "{}", path.display());
+                    assert_eq!(
+                        f.get(&author).map(|t| t.op_id),
+                        Some(want),
+                        "{}",
+                        path.display()
+                    );
                 }
             }
             "snapshot-id" => {
@@ -72,19 +79,31 @@ fn frontier_vectors() {
                 let _ = tail_boundary(&ops);
             }
             "late-op" => {
-                let base: Vec<_> = v["frontier_ops"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(parse_op)
-                    .collect();
                 let op = parse_op(&v["op"]);
-                assert_eq!(
-                    is_late_against_ops(&op, &base),
-                    v["expect_late"].as_bool().unwrap(),
-                    "{}",
-                    path.display()
-                );
+                let late = if let Some(enc) = v.get("encoded_frontier") {
+                    // CX-04: decide late-op from the encoded map alone.
+                    let mut f = zerodb_core::frontier::Frontier::new();
+                    for (k, val) in enc.as_object().unwrap() {
+                        f.insert(
+                            arr32(k),
+                            zerodb_core::frontier::FrontierTip {
+                                op_id: arr32(val["op_id"].as_str().unwrap()),
+                                physical_ms: val["physical_ms"].as_u64().unwrap(),
+                                logical: val["logical"].as_u64().unwrap_or(0) as u16,
+                            },
+                        );
+                    }
+                    is_late_op(&op, &f)
+                } else {
+                    let base: Vec<_> = v["frontier_ops"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(parse_op)
+                        .collect();
+                    is_late_against_ops(&op, &base)
+                };
+                assert_eq!(late, v["expect_late"].as_bool().unwrap(), "{}", path.display());
             }
             other => panic!("unknown {other}"),
         }

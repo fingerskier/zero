@@ -11,10 +11,11 @@
 A **frontier** summarizes which ops are included without listing the full set:
 
 ```
-Frontier = map PeerId → OpId
+FrontierTip = { op_id: OpId, physical_ms: u64, logical: u16 }
+Frontier    = map PeerId → FrontierTip
 ```
 
-Interpretation: for each peer P, `Frontier[P]` is the greatest OpId (KERNEL §4.5 total order among P's ops) such that **all** of P's ops ≤ that OpId in §4.5 order are in the accepted set. Peers absent from the map have no known ops.
+Interpretation: for each peer P, `Frontier[P]` is the greatest accepted op of P under KERNEL §4.5. The tip **carries HLC** so `is_late_op` is decided from the encoded map alone (CX-04) — an OpId-only tip cannot implement the late-op rule. Peers absent from the map have no known ops.
 
 **Compactness (O7):** `|Frontier|` equals the number of distinct authors with accepted ops (not per-op). Checkpoint translation: when compacting, replace a set of OpIds with the frontier of that set.
 
@@ -40,14 +41,15 @@ An op that arrives with `deps` or author history implying it should have been be
 ```
 SnapshotId = BLAKE3(
   domain("snapshot") ‖ snapshot_format_version (u8)
-  ‖ DatastoreId ‖ FrontierCanonicalCBOR ‖ MerkleRoot ‖ tail_boundary_OpId
+  ‖ DatastoreId ‖ FrontierBytes ‖ MerkleRoot ‖ tail_boundary_OpId
 )
 ```
 
 - `domain("snapshot")` = `zerodb-snapshot-v1`
 - `snapshot_format_version` = 1
-- **Tail boundary:** greatest OpId in the snapshot's accepted set under §4.5 total order (or null if empty).
-- L2 relays **store peer-produced authenticated snapshots**; they do not materialize schema-blind state into application objects (decision for v0.1).
+- **FrontierBytes:** sorted by author; each entry is `author ‖ op_id ‖ physical_ms (u64 BE) ‖ logical (u16 BE)`.
+- **Tail boundary:** greatest OpId in the snapshot's accepted set under §4.5 total order (or null if empty). Snapshot identity is a hash of the above; a **signed** snapshot envelope (signer + signature + state) ships at M4 — until then "authenticated" means content-addressed identity only.
+- L2 relays **store peer-produced snapshot artifacts**; they do not materialize schema-blind state into application objects (decision for v0.1).
 
 ## 6. Root comparison across checkpoints
 

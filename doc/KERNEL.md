@@ -157,9 +157,16 @@ Out-of-order and permutation behavior: for any set of valid operations, every ar
 version (u8, = 1) ‖ key_id (16B) ‖ nonce (24B) ‖ ciphertext+tag (XChaCha20-Poly1305)
 ```
 
-AAD = `domain("value_aad") ‖ ds ‖ id-preimage hash context (OpId) ‖ ep (u64 BE) ‖ property path (UTF-8)`. An envelope therefore authenticates its datastore, operation, epoch, and property — replay into any other slot fails decryption (I-10).
+AAD is bound to a **slot context that excludes ciphertext and OpId** (CX-03; Decision Log 2026-08-14), so seal can complete before `OpId` exists:
 
-Constraints: encrypted values are legal only for `LWW` and (post-M2) `MVRegister` properties; schema validation (M0b) rejects other placements. Group-key distribution, rotation, and revocation ride `KeyRecord` operations (M0d format, M3b behavior). Negative vectors MUST include: wrong AAD component (each field), truncated envelope, unknown version, unknown `key_id`.
+```
+slot_preimage = domain("value_slot") ‖ ds ‖ ep (u64 BE) ‖ path (UTF-8)
+                ‖ author ‖ physical_ms (u64 BE) ‖ logical (u16 BE)
+SlotId        = BLAKE3(slot_preimage)     (32B)
+AAD           = domain("value_aad") ‖ SlotId
+```
+
+`domain("value_slot")` = `zerodb-value-slot-v1`. An envelope authenticates datastore, author, timestamp, epoch, and property path — replay into any other slot, or onto a different author/timestamp, fails decryption (I-10). Construction order is: form the slot context from envelope fields that are known before encryption → seal → place the envelope in `body` → hash the body to `OpId` → sign. Negative vectors MUST include: wrong AAD component (each slot field), truncated envelope, unknown version, unknown `key_id`. At least one vector MUST construct a complete operation (plaintext → envelope → body → OpId) without supplying an external `OpId`.
 
 ## 8. Large values & limits (DQ-6)
 

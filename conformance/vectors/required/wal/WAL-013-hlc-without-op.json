@@ -1,0 +1,14 @@
+{
+  "description": "hlc_persist with no synced WAL record carrying that timestamp → INVALID (CX-06).",
+  "id": "WAL-013",
+  "type": "group-seal",
+  "invariants": ["I-14"],
+  "schedule": [
+    {
+      "op": "hlc_persist",
+      "ts": { "p": 99, "l": 0 },
+      "expect_error": "INVALID"
+    }
+  ],
+  "expect_sealed": []
+}
