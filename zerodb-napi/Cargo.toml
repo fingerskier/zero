@@ -9,6 +9,7 @@ license.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+zerodb-core = { path = "../zerodb-core" }
 zerodb-storage = { path = "../zerodb-storage" }
 napi = { version = "3", default-features = false, features = ["napi4", "serde-json"] }
 napi-derive = "3"

@@ -38,6 +38,8 @@ db.close() // required before deleting the file on Windows
 | `exportJson` / `importJson` | format-1 op bundles |
 | `subscribe` / `unsubscribe` | live change callbacks; async delivery (next tick) |
 | `query` | O3 minimal `MATCH/WHERE/RETURN/ORDER BY/LIMIT`; rows keyed `"t.title"` |
+| `applySchema` | pin or SCHEMA IR JSON; returns `{ schemaId, epoch }` |
+| `applyCrdtVector` | replay one KERNEL `crdt-apply` fixture through the core kernel |
 | `serve(port, allowInsecureLan?)` / `stopServe` | WebSocket sync listener (see Sync) |
 | `connectPeer(url)` | one two-way sync session against `ws://host:port` |
 | `autoConnect(url, intervalMs)` / `disconnect` | background live sync with retry/backoff |
@@ -79,8 +81,8 @@ Decision Log format freeze. Do not persist bundles across SDK versions.
 
 ## Not yet (SPEC M2 exit)
 
-- schema apply / TS→IR  
-- MVRegister, RGA, LWWMap  
-- Binding parity vector suite / E11 budgets  
+- MVRegister, RGA, LWWMap (deferred until an app needs them)
+- E11 artifact-size / performance budgets
+- query-scoped subscribe; interactive `repl`
 
-See [plan/LEDGER.md](../plan/LEDGER.md) M2 subtasks.
+See [plan/LEDGER.md](../plan/LEDGER.md) M2 subtasks. Binding parity fixtures are in `test/m2-parity.test.mjs`.

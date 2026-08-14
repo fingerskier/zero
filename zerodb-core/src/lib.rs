@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod cbor;
+pub mod crdt_apply;
 pub mod delivery;
 pub mod envelope;
 pub mod epoch;
@@ -15,7 +16,8 @@ pub mod sign;
 pub mod types;
 pub mod wal;
 
-pub use hlc::{HLC, HLCTimestamp};
+pub use crdt_apply::apply_crdt_vector;
+pub use hlc::{HLCTimestamp, HLC};
 pub use kernel::{Flag, GCounter, KernelOp, Lww, OrSet, Payload, PnCounter, Replica, Value};
 pub use schema::{encode_ir, parse_ir, schema_id, SchemaIr};
 pub use types::*;

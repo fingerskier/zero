@@ -16,7 +16,18 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
-use zerodb_storage::{LocalStore, sync};
+use zerodb_core::apply_crdt_vector as apply_crdt_vector_core;
+use zerodb_storage::{sync, LocalStore};
+
+/// Replay one KERNEL `crdt-apply` vector through the same Rust kernel the
+/// core conformance harness uses. Input is the vector JSON; output is
+/// `{ id, orders: [{ equivocation, error, state }] }`.
+#[napi]
+pub fn apply_crdt_vector(vector_json: String) -> Result<serde_json::Value> {
+    let v: serde_json::Value =
+        serde_json::from_str(&vector_json).map_err(|e| map_err(e.to_string()))?;
+    apply_crdt_vector_core(&v).map_err(map_err)
+}
 
 fn map_err(e: impl ToString) -> Error {
     Error::from_reason(e.to_string())
@@ -569,9 +580,8 @@ impl Database {
 
     #[napi]
     pub fn create_edge(&self, label: String, src: String, dst: String) -> Result<String> {
-        let id = self.with_store_mut(|store| {
-            store.create_edge(&label, &src, &dst).map_err(map_err)
-        })?;
+        let id =
+            self.with_store_mut(|store| store.create_edge(&label, &src, &dst).map_err(map_err))?;
         self.emit_op("createEdge", &id, None, Some(&id));
         Ok(id)
     }
@@ -617,11 +627,7 @@ impl Database {
     /// Run an O3 minimal query (`MATCH/WHERE/RETURN/ORDER BY/LIMIT`).
     /// Optional `params` bind `$name` placeholders.
     #[napi]
-    pub fn query(
-        &self,
-        q: String,
-        params: Option<serde_json::Value>,
-    ) -> Result<serde_json::Value> {
+    pub fn query(&self, q: String, params: Option<serde_json::Value>) -> Result<serde_json::Value> {
         self.with_store(|store| {
             store
                 .query_with(&q, params.as_ref().unwrap_or(&serde_json::json!({})))

@@ -97,3 +97,10 @@ export declare class Database {
   /** Stop an `autoConnect` background connection; unknown ids are a no-op. */
   disconnect(id: number): void
 }
+
+/**
+ * Replay one KERNEL `crdt-apply` vector through the same Rust kernel the
+ * core conformance harness uses. Input is the vector JSON; output is
+ * `{ id, orders: [{ equivocation, error, state }] }`.
+ */
+export declare function applyCrdtVector(vectorJson: string): any

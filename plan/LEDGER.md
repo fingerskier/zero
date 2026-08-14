@@ -85,14 +85,14 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M2-autosync | `autoConnect`/`disconnect` background re-sync (dirty flag + interval poll + backoff) | done (experimental) | `test/m2-autosync.test.mjs` (2): auto-converge both ways, disconnect stops, sync-error retry, clean close; `examples/webapp` two-process demo |
 | M2-lan-hardening | sync session timeout + non-loopback serve behind unsafe flag | done | 30s socket timeouts; per-connection serve threads; `serve(port, allowInsecureLan?)` binds 0.0.0.0 only with explicit flag; tests in `m2-sync.test.mjs` |
 | M2-push | v2 push capability: persistent sessions (server streams new ops; client pushes on dirty) negotiated via `Hello.push`/`HelloOk.push` (serde defaults — old peers fall back to one-shot; CBOR wire still reserved for v3) | done | `zerodb_storage::sync::{serve_push,pull_push}` + `tests/sync_push.rs` (3: two-way push w/o new session, plain-serve fallback, capability field compat); NAPI `serve(port, lan?, push?)` + `autoConnect` upgrade, `test/m2-push.test.mjs` (2: push latency well under interval, push-disabled server poll fallback) |
-| M2-ci | clean-checkout CI: NAPI build + JS suites; 5-CRDT semantic parity | done([run 30178840377](https://github.com/fingerskier/zero/actions/runs/30178840377) @ `3d5ae48`) | rust `--locked` + clippy `-D warnings`; napi ubuntu+windows; ts-to-ir; conformance required. `m2-parity.test.mjs` (5) is semantic smoke, not byte-level core fixtures (that remains `M2-parity`) |
+| M2-ci | clean-checkout CI: NAPI build + JS suites; 5-CRDT semantic parity | done([run 30178840377](https://github.com/fingerskier/zero/actions/runs/30178840377) @ `3d5ae48`) | rust `--locked` + clippy `-D warnings`; napi ubuntu+windows; ts-to-ir; conformance required. `m2-parity.test.mjs` keeps 5 semantic smokes plus byte-level `applyCrdtVector` replay of `required/crdt/*` |
 | M2-schema | canonical CBOR IR + SchemaId + `ep`/`deps` in store + NAPI `applySchema` | done(`m2_schema` + `m2-schema.test.mjs`) | pin or IR JSON → persist IR/SchemaId/ep=1; local ops stamp ep; import rejects >64 or missing deps |
 | M2-crdts | MVRegister + resolve, RGA, LWWMap | deferred(app-trigger) | Decision Log 2026-07-25 / 2026-08-14 — not required for `v0.1.0-sdk` |
-| M2-parity | binding parity vectors vs core fixtures | open | byte-level replay of `conformance/vectors/required/crdt/*` — not the current semantic smoke |
+| M2-parity | binding parity vectors vs core fixtures | done(`applyCrdtVector` + `m2-parity.test.mjs`) | NAPI replays all 9 `required/crdt` fixtures through `zerodb_core::apply_crdt_vector` (same runner as `conformance_crdt`); high-level semantic smoke kept |
 | M2-facade | thin promise/typed JS facade over sync NAPI | done(`zerodb-napi/zerodb.mjs`) | `ZeroDB.open/create/mutate/query`; NAPI remains the sync binding |
-| M2-exit | Close `v0.1.0-sdk` | blocked(M2a) | narrowed checklist: schema IR + applySchema + edges/listNodes parity + facade; not E11 / extra CRDTs / query-subscribe / repl |
+| M2-exit | Close `v0.1.0-sdk` | ready | narrowed checklist is implemented (schema IR + applySchema + edges/listNodes + facade + M2-parity). Tag is a Decision Log act; not E11 / extra CRDTs / query-subscribe / repl |
 
-### M2a — Stabilize and schema (current)
+### M2a — Stabilize and schema (done)
 
 Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
 

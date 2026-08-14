@@ -15,23 +15,23 @@
  *       * EWFlag: disable only cancels observed enables (enable-wins for a
  *         concurrent unobserved enable)
  *
- * What this does NOT cover (full E11 parity remains open):
- *   - byte-level replay of the kernel conformance vectors
- *     (conformance/vectors/required/crdt/CRDT-*.json) through the binding —
- *     that needs a NAPI entry point that ingests raw encoded ops / vector
- *     traces, plus equivocation-exclusion and equal-timestamp total-order
- *     tie-break cases that require crafted op ids/HLC values not expressible
- *     through the current high-level API.
+ * Byte-level fixture replay (M2-parity) is a separate test below: it loads
+ * every required `crdt-apply` JSON vector and drives the same Rust kernel
+ * the core harness uses, via `applyCrdtVector`. That is the path that can
+ * express equal-timestamp total-order, equivocation exclusion, and BlobRef
+ * rejection — cases the high-level mutate API cannot craft.
+ *
+ * E11 budgets remain open / deferred.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-const { Database } = require('../index.js')
+const { Database, applyCrdtVector } = require('../index.js')
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '../../target/m2-napi-test')
 
@@ -206,5 +206,37 @@ test('parity: LWW last write wins and converges both directions', () => {
   } finally {
     cleanup(pathA, a)
     cleanup(pathB, b)
+  }
+})
+
+const crdtVectors = join(
+  fileURLToPath(new URL('.', import.meta.url)),
+  '../../conformance/vectors/required/crdt',
+)
+
+test('parity: byte-level replay of required CRDT fixtures through NAPI', () => {
+  assert.equal(typeof applyCrdtVector, 'function')
+  const files = readdirSync(crdtVectors)
+    .filter((f) => f.endsWith('.json'))
+    .sort()
+  assert.ok(files.length >= 9, `expected ≥9 CRDT fixtures, got ${files.length}`)
+
+  for (const file of files) {
+    const vector = JSON.parse(readFileSync(join(crdtVectors, file), 'utf8'))
+    assert.equal(vector.type, 'crdt-apply', file)
+    const result = applyCrdtVector(JSON.stringify(vector))
+    assert.equal(result.id, vector.id, file)
+    assert.equal(result.orders.length, vector.orders.length, file)
+    for (const [i, got] of result.orders.entries()) {
+      const ctx = `${vector.id} order ${i}`
+      if (vector.expect_error) {
+        assert.equal(got.error, vector.expect_error, ctx)
+        assert.equal(got.state, null, ctx)
+      } else {
+        assert.equal(got.error, null, ctx)
+        assert.deepEqual(got.state, vector.expect, ctx)
+        assert.equal(got.equivocation, vector.expect_equivocation ?? false, ctx)
+      }
+    }
   }
 })
