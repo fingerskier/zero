@@ -26,6 +26,8 @@ pub const MSG_HELLO: u8 = 0x01;
 pub const MSG_CHALLENGE: u8 = 0x02;
 pub const MSG_AUTH: u8 = 0x03;
 pub const MSG_WELCOME: u8 = 0x04;
+pub const MSG_SUBSCRIBE: u8 = 0x10;
+pub const MSG_SUBSCRIBED: u8 = 0x11;
 pub const MSG_SYNC_REQUEST: u8 = 0x20;
 pub const MSG_SYNC_RESPONSE: u8 = 0x21;
 pub const MSG_OPS: u8 = 0x30;
@@ -83,6 +85,8 @@ pub fn known_message_type(ty: u8) -> bool {
             | MSG_CHALLENGE
             | MSG_AUTH
             | MSG_WELCOME
+            | MSG_SUBSCRIBE
+            | MSG_SUBSCRIBED
             | MSG_ERROR
             | MSG_SYNC_REQUEST
             | MSG_SYNC_RESPONSE

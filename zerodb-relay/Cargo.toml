@@ -1,0 +1,22 @@
+[package]
+name = "zerodb-relay"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zerodb-relay"
+path = "src/bin/zerodb-relay.rs"
+
+[dependencies]
+zerodb-core = { path = "../zerodb-core" }
+thiserror.workspace = true
+rusqlite.workspace = true
+hex.workspace = true
+getrandom.workspace = true
+clap.workspace = true
+tungstenite = "0.24"
+
+[dev-dependencies]
+ed25519-dalek.workspace = true
