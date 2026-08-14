@@ -30,7 +30,7 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 | M1 exit (`v0.1.0-local`) | **done** 2026-07-25 — experimental format |
 | M2 Node/NAPI vertical | **done** 2026-08-14 — experimental `v0.1.0-sdk`; not SPEC-complete M2 |
 | M2a stabilize + schema | **done** — [LEDGER.md](LEDGER.md) |
-| M3a L2 relay | **not started** — transcripts **done** (RELAY 0.2.2-draft); binary still blocked |
+| M3a L2 relay | **not started** — transcripts **done** (RELAY 0.2.2-draft, 6 vectors); binary still blocked |
 
 ---
 
@@ -61,7 +61,7 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 **Current work package: M3a relay process** only after this PR lands. Wire transcripts are specified.
 
-1. ~~Golden two-language frames~~ **done** — RELAY 0.2.2-draft + 5 `relay-transcript` vectors (114 required).
+1. ~~Golden two-language frames~~ **done** — RELAY 0.2.2-draft + 6 `relay-transcript` vectors (115 required).
 2. L2 relay process (M3a proper) against those frames. Do not implement against 0.2.0-draft.
 
 **Shipped already (do not re-open as next work):** M1 experimental exit; M2a; M2-parity; `v0.1.0-sdk` (CI [run 31836860347](https://github.com/fingerskier/zero/actions/runs/31836860347) @ `b352ca4`).

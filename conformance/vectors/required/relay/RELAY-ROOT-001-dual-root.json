@@ -3,7 +3,7 @@
   "type": "relay-transcript",
   "kind": "dual-root",
   "invariants": ["I-11"],
-  "description": "Relay validated oplog includes an unauthorized-but-authentic op; honest peers omit it. validated_root ≠ accepted_root; two honest peers share accepted_root (RELAY §7.4 / CX-08).",
+  "description": "Relay validated oplog includes an unauthorized-but-authentic op; honest peers omit it. validated_root ≠ accepted_root; two honest peers share accepted_root. SYNC_RESPONSE required root is direction-dependent (RELAY §4.3 / §7.4 / CX-08).",
   "validated": [
     { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
     { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
@@ -16,6 +16,44 @@
   "accepted_b": [
     { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
     { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  ],
+  "frames": [
+    {
+      "dir": "P→R",
+      "type": 32,
+      "request_id": 1,
+      "payload": {
+        "datastore": "app:main",
+        "accepted_root": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097"
+      }
+    },
+    {
+      "dir": "R→P",
+      "type": 33,
+      "request_id": 1,
+      "payload": {
+        "datastore": "app:main",
+        "validated_root": "10fda44ab77a53fa18fd5336bc8b4a753770778b7d3067037270b42715857d0c"
+      }
+    },
+    {
+      "dir": "R→P",
+      "type": 32,
+      "request_id": 2,
+      "payload": {
+        "datastore": "app:main",
+        "validated_root": "10fda44ab77a53fa18fd5336bc8b4a753770778b7d3067037270b42715857d0c"
+      }
+    },
+    {
+      "dir": "P→R",
+      "type": 33,
+      "request_id": 2,
+      "payload": {
+        "datastore": "app:main",
+        "accepted_root": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097"
+      }
+    }
   ],
   "expect": {
     "roots_equal": false,

@@ -18,7 +18,7 @@ pub mod types;
 pub mod wal;
 
 pub use crdt_apply::apply_crdt_vector;
-pub use hlc::{HLCTimestamp, HLC};
+pub use hlc::{HLC, HLCTimestamp};
 pub use kernel::{Flag, GCounter, KernelOp, Lww, OrSet, Payload, PnCounter, Replica, Value};
-pub use schema::{encode_ir, parse_ir, schema_id, SchemaIr};
+pub use schema::{SchemaIr, encode_ir, parse_ir, schema_id};
 pub use types::*;

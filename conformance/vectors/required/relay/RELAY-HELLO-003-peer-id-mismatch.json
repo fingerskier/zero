@@ -1,10 +1,10 @@
 {
-  "id": "RELAY-HELLO-002",
+  "id": "RELAY-HELLO-003",
   "type": "relay-transcript",
   "kind": "handshake",
   "invariants": ["I-9"],
-  "description": "Tampered AUTH signature MUST fail; relay responds ERROR 0x201 AUTH_FAILED and does not WELCOME (RELAY §5.2).",
-  "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
+  "description": "Valid AUTH signature with claimed HELLO.peer_id ≠ BLAKE3(public_key) MUST fail; relay responds ERROR 0x201 AUTH_FAILED (RELAY §4.1 / §5.2).",
+  "peer_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
   "secret_key": "560295411cb3771a4892c53fab032abaa0dc96b7a6ed7be6c64865551d062dfa",
   "nonce": "0707070707070707070707070707070707070707070707070707070707070707",
@@ -12,14 +12,13 @@
   "relay_capabilities": ["dual-root"],
   "relay_level": 2,
   "protocol_version": 1,
-  "auth_signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
   "frames": [
     {
       "dir": "P→R",
       "type": 1,
       "request_id": 1,
       "payload": {
-        "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
+        "peer_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
         "protocol_version": 1,
         "capabilities": ["dual-root"]
@@ -38,7 +37,7 @@
       "type": 3,
       "request_id": 1,
       "payload": {
-        "signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "signature": "78ca520ac39feb33aa456fda8fdad1d0b887397382490aac652919dad57daf14e9cd8473ae3b41ba169414348a4702136d4b3ecc5a9315776e0d9471ea9a3005"
       }
     },
     {

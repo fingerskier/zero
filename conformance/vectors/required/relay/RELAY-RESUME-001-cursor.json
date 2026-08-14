@@ -19,6 +19,57 @@
       }
     }
   },
+  "frames": [
+    {
+      "dir": "R→P",
+      "type": 32,
+      "request_id": 1,
+      "payload": {
+        "datastore": "app:main",
+        "validated_root": "e1b04de197ba195a8345f790f39c2b6370e78a8b9adfbc9f59bf8cf15afb2e5e",
+        "cursor": {
+          "epoch": 1,
+          "frontier": {
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+              "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+              "physical_ms": 200,
+              "logical": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "dir": "P→R",
+      "type": 33,
+      "request_id": 1,
+      "payload": {
+        "datastore": "app:main",
+        "accepted_root": "e1b04de197ba195a8345f790f39c2b6370e78a8b9adfbc9f59bf8cf15afb2e5e"
+      }
+    },
+    {
+      "dir": "P→R",
+      "type": 48,
+      "request_id": 2,
+      "payload": {
+        "datastore": "app:main",
+        "operations": [
+          { "op_id": "0303030303030303030303030303030303030303030303030303030303030303" }
+        ]
+      }
+    },
+    {
+      "dir": "R→P",
+      "type": 49,
+      "request_id": 2,
+      "payload": {
+        "outcomes": [
+          { "op_id": "0303030303030303030303030303030303030303030303030303030303030303", "outcome": "ACCEPT" }
+        ]
+      }
+    }
+  ],
   "expect": {
     "retransmit": ["0303030303030303030303030303030303030303030303030303030303030303"]
   }

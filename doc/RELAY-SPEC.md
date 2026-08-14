@@ -293,10 +293,12 @@ A Level 2 relay participates in sync as a peer — it has its own Merkle tree an
 ```
 {
   datastore:       string
-  validated_root:  MerkleRoot
-  accepted_root:   MerkleRoot?     // peer→peer; relay typically omits
+  validated_root:  MerkleRoot?     // required when the responder is the relay (R→P)
+  accepted_root:   MerkleRoot?     // required when the responder is a peer (P→R)
 }
 ```
+
+Required root is **direction-dependent**. A peer answering a relay-initiated `SYNC_REQUEST` MUST include `accepted_root` and MUST NOT be required to fabricate `validated_root` (the relay owns the validated oplog). A relay answering a peer-initiated `SYNC_REQUEST` MUST include `validated_root` and MAY omit `accepted_root` unless the relay itself accepted.
 
 Equal `accepted_root` values between honest peers mean catch-up is complete. Equal `validated_root` vs `accepted_root` is **not** required. A late op covered by `cursor.frontier` MUST NOT be retransmitted (DELIVERY §4).
 
@@ -562,7 +564,7 @@ A colluding or merely schema-blind relay can retain authentic but unauthorized o
 
 Catch-up completeness (EXEMPLAR E3) is: after sync, every honest peer's `accepted_root` matches every other honest peer's `accepted_root`. The relay's `validated_root` MAY differ. The protocol MUST acknowledge rejected OpIds (explicit `REJECT` outcomes per DELIVERY) so a sender does not retry forever.
 
-Wire frames (M3a transcripts, `conformance/vectors/required/relay/`): `HELLO`/`WELCOME` capability intersection; `SYNC_*` dual roots + `Cursor`; `OP_ACK.outcomes`. Both conformance runners execute the suite. Dual-root **Merkle walk** messages (subtree traversal carrying both roots) remain M3a implementation, not this contract slice.
+Wire frames (M3a transcripts, `conformance/vectors/required/relay/`): ordered `{type, request_id, payload}` envelopes for `HELLO`/`CHALLENGE`/`AUTH`/`WELCOME`/`ERROR`, `SYNC_*` (direction-dependent roots + `Cursor`), and `OPS`/`OP_ACK.outcomes`. Both conformance runners walk type codes, directions, required fields, and `request_id` correlation. Dual-root **Merkle walk** messages (subtree traversal carrying both roots) remain M3a implementation, not this contract slice.
 
 Do **not** implement a relay that claims peer-root equality against its validated oplog.
 
@@ -925,10 +927,12 @@ Pruned (each removable without loss for any current milestone):
 ### 0.2.2-draft (2026-08-14)
 
 - `HELLO`/`WELCOME.capabilities` — sorted intersection of `dual-root`, `resume-cursor`, `reject-ack`.
+- Claimed `HELLO.peer_id` MUST equal `BLAKE3(public_key)` or AUTH fails with `0x201` (RELAY-HELLO-003).
 - L2 publishes `validated_root` / `accepted_root` (not a single `merkle_root`).
+- `SYNC_RESPONSE` required root is direction-dependent: peer responses carry `accepted_root`; relay responses carry `validated_root`.
 - `SYNC_REQUEST.cursor` is DELIVERY `{frontier, epoch}`.
 - `OP_ACK.outcomes` with non-retryable `REJECT`.
-- `relay-transcript` vectors RELAY-HELLO-001/002, RELAY-ROOT-001, RELAY-RESUME-001, RELAY-REJECT-001.
+- `relay-transcript` vectors carry ordered `{type, request_id, payload}` frames. RELAY-HELLO-001/002/003, RELAY-ROOT-001, RELAY-RESUME-001, RELAY-REJECT-001.
 
 ### 0.2.1-draft
 

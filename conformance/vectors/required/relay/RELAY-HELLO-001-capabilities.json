@@ -3,7 +3,8 @@
   "type": "relay-transcript",
   "kind": "handshake",
   "invariants": ["I-9"],
-  "description": "HELLO/CHALLENGE/AUTH/WELCOME: PeerId is BLAKE3(pk); AUTH signs domain(relay_auth)||nonce; WELCOME capabilities are the sorted intersection (RELAY §4.1 / §5).",
+  "description": "HELLO/CHALLENGE/AUTH/WELCOME: claimed HELLO.peer_id MUST equal BLAKE3(pk); AUTH signs domain(relay_auth)||nonce; WELCOME capabilities are the sorted intersection (RELAY §4.1 / §5).",
+  "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
   "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
   "secret_key": "560295411cb3771a4892c53fab032abaa0dc96b7a6ed7be6c64865551d062dfa",
   "nonce": "0707070707070707070707070707070707070707070707070707070707070707",
@@ -11,6 +12,53 @@
   "relay_capabilities": ["dual-root", "resume-cursor", "reject-ack"],
   "relay_level": 2,
   "protocol_version": 1,
+  "frames": [
+    {
+      "dir": "P→R",
+      "type": 1,
+      "request_id": 1,
+      "payload": {
+        "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
+        "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
+        "protocol_version": 1,
+        "capabilities": ["reject-ack", "dual-root", "resume-cursor", "unknown-cap"]
+      }
+    },
+    {
+      "dir": "R→P",
+      "type": 2,
+      "request_id": 1,
+      "payload": {
+        "nonce": "0707070707070707070707070707070707070707070707070707070707070707"
+      }
+    },
+    {
+      "dir": "P→R",
+      "type": 3,
+      "request_id": 1,
+      "payload": {
+        "signature": "78ca520ac39feb33aa456fda8fdad1d0b887397382490aac652919dad57daf14e9cd8473ae3b41ba169414348a4702136d4b3ecc5a9315776e0d9471ea9a3005"
+      }
+    },
+    {
+      "dir": "R→P",
+      "type": 4,
+      "request_id": 1,
+      "payload": {
+        "protocol_version": 1,
+        "relay_level": 2,
+        "capabilities": ["dual-root", "reject-ack", "resume-cursor"],
+        "limits": {
+          "max_payload_bytes": 1048576,
+          "max_batch_ops": 64,
+          "max_batch_bytes": 16777216,
+          "max_subscriptions": 64,
+          "ops_per_second": 100,
+          "bytes_per_second": 10485760
+        }
+      }
+    }
+  ],
   "expect": {
     "auth_ok": true,
     "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
