@@ -42,6 +42,7 @@ db.close() // required before deleting the file on Windows
 | `applyCrdtVector` | replay one KERNEL `crdt-apply` fixture through the core kernel |
 | `serve(port, allowInsecureLan?)` / `stopServe` | WebSocket sync listener (see Sync) |
 | `connectPeer(url)` | one two-way sync session against `ws://host:port` |
+| `connectRelay(url, datastore?)` | one RELAY 0.2.2 session against `zerodb-relay`; empty store may join `datastore` |
 | `autoConnect(url, intervalMs)` / `disconnect` | background live sync with retry/backoff |
 
 ### Sync

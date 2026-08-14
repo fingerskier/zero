@@ -10,6 +10,7 @@
 
 mod backend;
 mod memory_backend;
+pub mod relay_client;
 #[cfg(feature = "sqlite")]
 mod sqlite_backend;
 pub mod sync;

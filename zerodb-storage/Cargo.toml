@@ -28,6 +28,9 @@ hex.workspace = true
 uuid.workspace = true
 getrandom.workspace = true
 
+[dev-dependencies]
+zerodb-relay = { path = "../zerodb-relay" }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # wasm32-unknown-unknown has no OS clock or CSPRNG: use JS Date.now() and
 # crypto.getRandomValues (getrandom "js" feature).
