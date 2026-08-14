@@ -4,9 +4,9 @@
 use ed25519_dalek::{Signer, SigningKey};
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::relay::{
-    DIR_RELAY_TO_PEER, DOMAIN_RELAY_AUTH, ERR_AUTH_FAILED, MSG_AUTH, MSG_CHALLENGE, MSG_ERROR,
-    MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
-    MSG_SYNC_RESPONSE, MSG_WELCOME, authenticate, peer_id_from_pk,
+    authenticate, peer_id_from_pk, DIR_RELAY_TO_PEER, DOMAIN_RELAY_AUTH, ERR_AUTH_FAILED, MSG_AUTH,
+    MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OPS, MSG_OP_ACK, MSG_SUBSCRIBE, MSG_SUBSCRIBED,
+    MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME,
 };
 use zerodb_relay::{Relay, RelaySession};
 
@@ -91,13 +91,17 @@ fn hello(claimed: [u8; 32]) -> Vec<u8> {
 }
 
 fn auth_for(nonce: &[u8; 32]) -> Vec<u8> {
+    auth_for_rid(nonce, 1)
+}
+
+fn auth_for_rid(nonce: &[u8; 32], request_id: u32) -> Vec<u8> {
     let key = SigningKey::from_bytes(&SK);
     let mut msg = DOMAIN_RELAY_AUTH.to_vec();
     msg.extend_from_slice(nonce);
     let sig = key.sign(&msg).to_bytes();
     encode_env(
         MSG_AUTH,
-        1,
+        request_id,
         Cbor::Map(vec![("signature".into(), Cbor::Bytes(sig.to_vec()))]),
     )
 }
@@ -165,6 +169,70 @@ fn hello_challenge_auth_welcome() {
     };
     assert_eq!(caps, ["dual-root", "reject-ack", "resume-cursor"]);
     assert!(sess.is_authed());
+}
+
+#[test]
+fn welcome_correlates_with_auth_request_id() {
+    let relay = Relay::memory();
+    relay.set_next_nonce(NONCE);
+    let mut sess = relay.accept();
+    let out = sess.handle(&hello(peer_id_from_pk(&PK))).unwrap();
+    let (ty, rid, _) = decode_env(&out[0]);
+    assert_eq!(ty, MSG_CHALLENGE);
+    assert_eq!(rid, 1);
+
+    let out = sess.handle(&auth_for_rid(&NONCE, 9)).unwrap();
+    let (ty, rid, _) = decode_env(&out[0]);
+    assert_eq!(ty, MSG_WELCOME);
+    assert_eq!(rid, 9);
+    assert!(sess.is_authed());
+}
+
+#[test]
+fn hello_unsupported_version_is_fatal() {
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    let frame = encode_env(
+        MSG_HELLO,
+        1,
+        Cbor::Map(vec![
+            ("peer_id".into(), Cbor::Bytes(peer_id_from_pk(&PK).to_vec())),
+            ("public_key".into(), Cbor::Bytes(PK.to_vec())),
+            ("protocol_version".into(), Cbor::Uint(2)),
+            ("capabilities".into(), Cbor::Array(vec![])),
+        ]),
+    );
+    let out = sess.handle(&frame).unwrap();
+    let (ty, rid, pl) = decode_env(&out[0]);
+    assert_eq!(ty, MSG_ERROR);
+    assert_eq!(rid, 1);
+    assert_eq!(as_u64(map_get(&pl, "code")), 0x102);
+    assert_eq!(as_text(map_get(&pl, "message")), "VERSION_MISMATCH");
+    assert!(matches!(map_get(&pl, "fatal"), Cbor::Bool(true)));
+    assert!(sess.is_closed());
+    assert!(!sess.is_authed());
+}
+
+#[test]
+fn unauthenticated_ops_emits_fatal_and_closes() {
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    let ops = encode_env(
+        MSG_OPS,
+        7,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("operations".into(), Cbor::Array(vec![op_map(1, 0xaa, 10)])),
+        ]),
+    );
+    let out = sess.handle(&ops).unwrap();
+    let (ty, rid, pl) = decode_env(&out[0]);
+    assert_eq!(ty, MSG_ERROR);
+    assert_eq!(rid, 7);
+    assert_eq!(as_u64(map_get(&pl, "code")), ERR_AUTH_FAILED as u64);
+    assert!(matches!(map_get(&pl, "fatal"), Cbor::Bool(true)));
+    assert!(sess.is_closed());
+    assert!(!sess.is_authed());
 }
 
 #[test]

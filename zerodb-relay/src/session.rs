@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::relay::{
-    ERR_AUTH_FAILED, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO,
-    MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE,
-    MSG_WELCOME, RELAY_CAPS, authenticate, negotiate_capabilities, retransmit,
+    authenticate, negotiate_capabilities, retransmit, FrontierTip, HeldOp, ERR_AUTH_FAILED,
+    MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OPS, MSG_OP_ACK, MSG_SUBSCRIBE,
+    MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS,
 };
 
-use crate::store::{OpStore, StoredOp, validated_root_hex};
+use crate::store::{validated_root_hex, OpStore, StoredOp};
 
 #[derive(Debug, Error)]
 pub enum RelayError {
@@ -94,7 +94,6 @@ enum Phase {
         claimed: [u8; 32],
         pk: [u8; 32],
         hello_caps: Vec<String>,
-        request_id: u32,
     },
     Authed,
     Closed,
@@ -139,6 +138,7 @@ impl RelaySession {
         f: impl FnOnce(&mut Self, &Envelope) -> Result<Vec<Vec<u8>>, RelayError>,
     ) -> Result<Vec<Vec<u8>>, RelayError> {
         if !self.is_authed() {
+            self.phase = Phase::Closed;
             return Ok(vec![error_frame(
                 env.request_id,
                 0x201,
@@ -150,6 +150,19 @@ impl RelaySession {
     }
 
     fn on_hello(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        let version = match map_get(&env.payload, "protocol_version") {
+            Cbor::Uint(n) => *n,
+            _ => 0,
+        };
+        if version != 1 {
+            self.phase = Phase::Closed;
+            return Ok(vec![error_frame(
+                env.request_id,
+                0x102,
+                "VERSION_MISMATCH",
+                true,
+            )]);
+        }
         let claimed = take32(map_get(&env.payload, "peer_id"))?;
         let pk = take32(map_get(&env.payload, "public_key"))?;
         let hello_caps = text_array(map_get(&env.payload, "capabilities"));
@@ -157,7 +170,6 @@ impl RelaySession {
             claimed,
             pk,
             hello_caps,
-            request_id: env.request_id,
         };
         Ok(vec![encode_env(
             MSG_CHALLENGE,
@@ -171,9 +183,9 @@ impl RelaySession {
             claimed,
             pk,
             hello_caps,
-            request_id,
         } = &self.phase
         else {
+            self.phase = Phase::Closed;
             return Ok(vec![error_frame(
                 env.request_id,
                 ERR_AUTH_FAILED,
@@ -184,7 +196,7 @@ impl RelaySession {
         let claimed = *claimed;
         let pk = *pk;
         let hello_caps = hello_caps.clone();
-        let request_id = *request_id;
+        let request_id = env.request_id;
         let sig = take64(map_get(&env.payload, "signature"))?;
         if authenticate(&claimed, &pk, &self.nonce, &sig).is_err() {
             self.phase = Phase::Closed;
