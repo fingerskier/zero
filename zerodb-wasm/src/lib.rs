@@ -238,9 +238,35 @@ impl ZeroDb {
         to_js(&serde_json::Value::Array(arr))
     }
 
+    #[wasm_bindgen(js_name = createEdge)]
+    pub fn create_edge(&mut self, label: &str, src: &str, dst: &str) -> Result<String, JsError> {
+        self.store.create_edge(label, src, dst).map_err(err)
+    }
+
+    #[wasm_bindgen(js_name = deleteEdge)]
+    pub fn delete_edge(&mut self, edge: &str) -> Result<String, JsError> {
+        self.store.delete_edge(edge).map_err(err)
+    }
+
+    #[wasm_bindgen(js_name = applySchema)]
+    pub fn apply_schema(&mut self, schema_json: &str) -> Result<JsValue, JsError> {
+        self.store.apply_schema_json(schema_json).map_err(err)?;
+        to_js(&serde_json::json!({
+            "schemaId": self.store.schema_id_hex().map_err(err)?,
+            "epoch": self.store.schema_epoch().map_err(err)?,
+        }))
+    }
+
     /// O3 minimal query; JS array of row objects.
     pub fn query(&self, q: &str) -> Result<JsValue, JsError> {
         to_js(&self.store.query(q).map_err(err)?)
+    }
+
+    #[wasm_bindgen(js_name = queryWith)]
+    pub fn query_with(&self, q: &str, params_json: &str) -> Result<JsValue, JsError> {
+        let params: serde_json::Value =
+            serde_json::from_str(params_json).map_err(|e| JsError::new(&e.to_string()))?;
+        to_js(&self.store.query_with(q, &params).map_err(err)?)
     }
 
     pub fn replay(&mut self) -> Result<(), JsError> {

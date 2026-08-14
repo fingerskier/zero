@@ -11,6 +11,121 @@ use crate::cbor::Cbor;
 use thiserror::Error;
 
 pub const SCHEMA_IR_VERSION: u64 = 1;
+/// Registry `domain_separation.schema_ir`.
+pub const DOMAIN_SCHEMA_IR: &[u8] = b"zerodb-schema-ir-v1";
+
+/// `SchemaId = BLAKE3(domain("schema_ir") ‖ canonical IR bytes)`.
+pub fn schema_id(ir_bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(DOMAIN_SCHEMA_IR);
+    hasher.update(ir_bytes);
+    *hasher.finalize().as_bytes()
+}
+
+pub fn crdt_from_name(name: &str) -> Option<u64> {
+    match name {
+        "lww" => Some(crdt_tag::LWW),
+        "gcounter" => Some(crdt_tag::GCOUNTER),
+        "pncounter" => Some(crdt_tag::PNCOUNTER),
+        "orset" => Some(crdt_tag::ORSET),
+        "flag" => Some(crdt_tag::FLAG),
+        _ => None,
+    }
+}
+
+pub fn crdt_name(tag: u64) -> Option<&'static str> {
+    match tag {
+        crdt_tag::LWW => Some("lww"),
+        crdt_tag::GCOUNTER => Some("gcounter"),
+        crdt_tag::PNCOUNTER => Some("pncounter"),
+        crdt_tag::ORSET => Some("orset"),
+        crdt_tag::FLAG => Some("flag"),
+        _ => None,
+    }
+}
+
+pub fn default_value_type(crdt: u64) -> u64 {
+    match crdt {
+        crdt_tag::GCOUNTER | crdt_tag::PNCOUNTER => value_type::INT,
+        crdt_tag::FLAG => value_type::BOOL,
+        _ => value_type::TEXT,
+    }
+}
+
+fn encode_prop(p: &PropDef) -> Cbor {
+    Cbor::Map(vec![
+        ("crdt".into(), Cbor::Uint(p.crdt)),
+        ("encrypted".into(), Cbor::Bool(p.encrypted)),
+        ("nullable".into(), Cbor::Bool(p.nullable)),
+        ("type".into(), Cbor::Uint(p.value_type)),
+    ])
+}
+
+fn encode_props(props: &BTreeMap<String, PropDef>) -> Cbor {
+    Cbor::Map(
+        props
+            .iter()
+            .map(|(k, p)| (k.clone(), encode_prop(p)))
+            .collect(),
+    )
+}
+
+/// Canonical CBOR encoding of a parsed IR (round-trips through [`parse_ir`]).
+pub fn ir_to_cbor(ir: &SchemaIr) -> Cbor {
+    let mut top = vec![("v".into(), Cbor::Uint(SCHEMA_IR_VERSION))];
+    if let Some(name) = &ir.name {
+        top.push(("name".into(), Cbor::Text(name.clone())));
+    }
+    top.push((
+        "nodes".into(),
+        Cbor::Map(
+            ir.nodes
+                .iter()
+                .map(|(label, ent)| {
+                    (
+                        label.clone(),
+                        Cbor::Map(vec![("props".into(), encode_props(&ent.props))]),
+                    )
+                })
+                .collect(),
+        ),
+    ));
+    top.push((
+        "edges".into(),
+        Cbor::Map(
+            ir.edges
+                .iter()
+                .map(|(label, ent)| {
+                    let src = match &ent.src {
+                        None => Cbor::Null,
+                        Some(ls) => {
+                            Cbor::Array(ls.iter().map(|s| Cbor::Text(s.clone())).collect())
+                        }
+                    };
+                    let dst = match &ent.dst {
+                        None => Cbor::Null,
+                        Some(ls) => {
+                            Cbor::Array(ls.iter().map(|s| Cbor::Text(s.clone())).collect())
+                        }
+                    };
+                    (
+                        label.clone(),
+                        Cbor::Map(vec![
+                            ("dst".into(), dst),
+                            ("props".into(), encode_props(&ent.props)),
+                            ("src".into(), src),
+                        ]),
+                    )
+                })
+                .collect(),
+        ),
+    ));
+    Cbor::Map(top)
+}
+
+pub fn encode_ir(ir: &SchemaIr) -> Result<Vec<u8>, crate::cbor::CborError> {
+    crate::cbor::encode(&ir_to_cbor(ir))
+}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SchemaError {
@@ -261,6 +376,15 @@ mod tests {
     #[test]
     fn valid_ir_parses() {
         assert!(parse_ir(&ir_with_prop(prop(0, 4, false))).is_ok());
+    }
+
+    #[test]
+    fn encode_ir_round_trips() {
+        let ir = parse_ir(&ir_with_prop(prop(0, 4, false))).unwrap();
+        let bytes = encode_ir(&ir).unwrap();
+        let decoded = crate::cbor::decode(&bytes).unwrap();
+        assert_eq!(parse_ir(&decoded).unwrap(), ir);
+        assert_eq!(schema_id(&bytes), schema_id(&encode_ir(&ir).unwrap()));
     }
 
     #[test]

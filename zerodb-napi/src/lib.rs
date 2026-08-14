@@ -543,26 +543,90 @@ impl Database {
         Ok(op)
     }
 
-    /// List nodes as JSON array of `{ id, label, deleted }`.
+    /// List nodes as JSON array of `{ id, label, deleted, props }`.
     #[napi]
     pub fn list_nodes(&self) -> Result<serde_json::Value> {
         self.with_store(|store| {
             let nodes = store.list_nodes().map_err(map_err)?;
-            let arr: Vec<serde_json::Value> = nodes
+            let mut arr = Vec::new();
+            for (id, label, deleted) in nodes {
+                let props: serde_json::Map<String, serde_json::Value> = if deleted {
+                    serde_json::Map::new()
+                } else {
+                    store
+                        .list_props(&id)
+                        .map_err(map_err)?
+                        .into_iter()
+                        .collect()
+                };
+                arr.push(serde_json::json!({
+                    "id": id, "label": label, "deleted": deleted, "props": props
+                }));
+            }
+            Ok(serde_json::Value::Array(arr))
+        })
+    }
+
+    #[napi]
+    pub fn create_edge(&self, label: String, src: String, dst: String) -> Result<String> {
+        let id = self.with_store_mut(|store| {
+            store.create_edge(&label, &src, &dst).map_err(map_err)
+        })?;
+        self.emit_op("createEdge", &id, None, Some(&id));
+        Ok(id)
+    }
+
+    #[napi]
+    pub fn delete_edge(&self, edge: String) -> Result<String> {
+        let op = self.with_store_mut(|store| store.delete_edge(&edge).map_err(map_err))?;
+        self.emit_op("deleteEdge", &edge, None, Some(&op));
+        Ok(op)
+    }
+
+    #[napi]
+    pub fn list_edges(&self) -> Result<serde_json::Value> {
+        self.with_store(|store| {
+            let edges = store.list_edges_visible().map_err(map_err)?;
+            let arr: Vec<serde_json::Value> = edges
                 .into_iter()
-                .map(|(id, label, deleted)| {
-                    serde_json::json!({ "id": id, "label": label, "deleted": deleted })
+                .map(|(id, label, src, dst)| {
+                    serde_json::json!({ "id": id, "label": label, "src": src, "dst": dst })
                 })
                 .collect();
             Ok(serde_json::Value::Array(arr))
         })
     }
 
-    /// Run an O3 minimal query (`MATCH/WHERE/RETURN/ORDER BY/LIMIT`).
-    /// Returns a JSON array of row objects keyed by return item (e.g. `"t.title"`).
+    /// Apply a pin or SCHEMA IR JSON. Returns `{ schemaId, epoch }`.
     #[napi]
-    pub fn query(&self, q: String) -> Result<serde_json::Value> {
-        self.with_store(|store| store.query(&q).map_err(map_err))
+    pub fn apply_schema(&self, schema_json: String) -> Result<serde_json::Value> {
+        self.with_store_mut(|store| {
+            store.apply_schema_json(&schema_json).map_err(map_err)?;
+            Ok(serde_json::json!({
+                "schemaId": store.schema_id_hex().map_err(map_err)?,
+                "epoch": store.schema_epoch().map_err(map_err)?,
+            }))
+        })
+    }
+
+    #[napi]
+    pub fn schema_id(&self) -> Result<Option<String>> {
+        self.with_store(|store| store.schema_id_hex().map_err(map_err))
+    }
+
+    /// Run an O3 minimal query (`MATCH/WHERE/RETURN/ORDER BY/LIMIT`).
+    /// Optional `params` bind `$name` placeholders.
+    #[napi]
+    pub fn query(
+        &self,
+        q: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        self.with_store(|store| {
+            store
+                .query_with(&q, params.as_ref().unwrap_or(&serde_json::json!({})))
+                .map_err(map_err)
+        })
     }
 
     /// Full inspect report as JSON (path is reported as the given string).

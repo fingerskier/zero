@@ -86,10 +86,10 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M2-lan-hardening | sync session timeout + non-loopback serve behind unsafe flag | done | 30s socket timeouts; per-connection serve threads; `serve(port, allowInsecureLan?)` binds 0.0.0.0 only with explicit flag; tests in `m2-sync.test.mjs` |
 | M2-push | v2 push capability: persistent sessions (server streams new ops; client pushes on dirty) negotiated via `Hello.push`/`HelloOk.push` (serde defaults — old peers fall back to one-shot; CBOR wire still reserved for v3) | done | `zerodb_storage::sync::{serve_push,pull_push}` + `tests/sync_push.rs` (3: two-way push w/o new session, plain-serve fallback, capability field compat); NAPI `serve(port, lan?, push?)` + `autoConnect` upgrade, `test/m2-push.test.mjs` (2: push latency well under interval, push-disabled server poll fallback) |
 | M2-ci | clean-checkout CI: NAPI build + JS suites; 5-CRDT semantic parity | done([run 30178840377](https://github.com/fingerskier/zero/actions/runs/30178840377) @ `3d5ae48`) | rust `--locked` + clippy `-D warnings`; napi ubuntu+windows; ts-to-ir; conformance required. `m2-parity.test.mjs` (5) is semantic smoke, not byte-level core fixtures (that remains `M2-parity`) |
-| M2-schema | canonical CBOR IR + SchemaId + `ep`/`deps` in store + NAPI `applySchema` | open | M2a-schema; interactive `repl` deferred (Decision Log 2026-08-14) |
+| M2-schema | canonical CBOR IR + SchemaId + `ep`/`deps` in store + NAPI `applySchema` | done(`m2_schema` + `m2-schema.test.mjs`) | pin or IR JSON → persist IR/SchemaId/ep=1; local ops stamp ep; import rejects >64 or missing deps |
 | M2-crdts | MVRegister + resolve, RGA, LWWMap | deferred(app-trigger) | Decision Log 2026-07-25 / 2026-08-14 — not required for `v0.1.0-sdk` |
 | M2-parity | binding parity vectors vs core fixtures | open | byte-level replay of `conformance/vectors/required/crdt/*` — not the current semantic smoke |
-| M2-facade | thin promise/typed JS facade over sync NAPI | open | M2a-bind; SPEC §5.3 surface without pretending NAPI is async |
+| M2-facade | thin promise/typed JS facade over sync NAPI | done(`zerodb-napi/zerodb.mjs`) | `ZeroDB.open/create/mutate/query`; NAPI remains the sync binding |
 | M2-exit | Close `v0.1.0-sdk` | blocked(M2a) | narrowed checklist: schema IR + applySchema + edges/listNodes parity + facade; not E11 / extra CRDTs / query-subscribe / repl |
 
 ### M2a — Stabilize and schema (current)
@@ -104,8 +104,8 @@ Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
 | M2a-e4 | E4 honesty: SEAL/TRUNCATE N/A on single-txn backend | done(LEDGER M1-e4 wording) | failpoint matrix kept; not EXEMPLAR E4 |
 | M2a-m0 | CX-03 AAD slot-hash; CX-04 frontier tip; CX-05 resume; CX-06 WAL MUSTs + vectors | done(109 required vectors) | KERNEL §7 slot AAD; FrontierTip+HLC; delivery frontier cursor; WAL n/unique/visible + WAL-013..016 |
 | M2a-relay | CX-08 accepted-set + RELAY-SPEC §7.4 (docs only) | done(RELAY 0.2.1-draft) | dual roots; no relay binary; M3a still blocked on wire transcripts |
-| M2a-schema | persist M0b IR + SchemaId; stamp `ep`; enforce `deps`; NAPI `applySchema` | open | replaces JSON pin |
-| M2a-bind | NAPI/wasm edges + `listNodes` props parity + query params + promise facade | open | wasm `listNodes` includes `props`; NAPI does not |
+| M2a-schema | persist M0b IR + SchemaId; stamp `ep`; enforce `deps`; NAPI `applySchema` | done(`m2_schema` + NAPI `applySchema`) | pin still accepted; compiles to IR |
+| M2a-bind | NAPI/wasm edges + `listNodes` props parity + query params + promise facade | done | `listNodes.props`; `createEdge`/`deleteEdge`; `query(q, params)`; `zerodb.mjs` |
 | M3a | L2 relay + offline catch-up (E3) | open | M2, M0c/M0f | L | internal |
 | M3b | Security: auth, envelope, negatives (E5–E8) | open | M3a, M0d | L | internal |
 | M3c | Interop TS wire peer + release | open | M3b | M | `v0.1.0` |

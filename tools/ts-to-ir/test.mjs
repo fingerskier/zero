@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { compile } from './ts-to-ir.mjs'
 
-test('compile authoring to pin IR', () => {
+test('compile authoring to SCHEMA IR JSON', () => {
   const ir = compile({
     name: 'todo',
     nodes: {
@@ -13,9 +13,13 @@ test('compile authoring to pin IR', () => {
       },
     },
   })
-  assert.equal(ir.nodes.Todo.props.title, 'lww')
-  assert.equal(ir.nodes.Todo.props.done, 'flag')
-  assert.equal(ir.nodes.Todo.props.views, 'gcounter')
+  assert.equal(ir.v, 1)
+  assert.equal(ir.nodes.Todo.props.title.crdt, 0)
+  assert.equal(ir.nodes.Todo.props.title.type, 4)
+  assert.equal(ir.nodes.Todo.props.done.crdt, 4)
+  assert.equal(ir.nodes.Todo.props.views.crdt, 1)
+  assert.equal(ir.nodes.Todo.props.views.type, 2)
+  assert.deepEqual(ir.edges, {})
 })
 
 test('rejects unique', () => {

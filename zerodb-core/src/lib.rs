@@ -17,4 +17,5 @@ pub mod wal;
 
 pub use hlc::{HLC, HLCTimestamp};
 pub use kernel::{Flag, GCounter, KernelOp, Lww, OrSet, Payload, PnCounter, Replica, Value};
+pub use schema::{encode_ir, parse_ir, schema_id, SchemaIr};
 pub use types::*;

@@ -18,7 +18,7 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "test": "node --test test/m2-basic.test.mjs test/m2-subscribe.test.mjs test/m2-query.test.mjs test/m2-sync.test.mjs test/m2-autosync.test.mjs test/m2-push.test.mjs test/m2-parity.test.mjs"
+    "test": "node --test test/m2-basic.test.mjs test/m2-subscribe.test.mjs test/m2-query.test.mjs test/m2-sync.test.mjs test/m2-autosync.test.mjs test/m2-push.test.mjs test/m2-parity.test.mjs test/m2-schema.test.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.7.3"

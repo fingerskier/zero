@@ -42,6 +42,10 @@ use zerodb_core::kernel::{
 use zerodb_core::op::{OpEnvelope, OpTs};
 use zerodb_core::query::parse as parse_query;
 use zerodb_core::queryeval::{self, GEdge, GNode, Graph, QValue};
+use zerodb_core::schema::{
+    crdt_from_name, crdt_name, default_value_type, encode_ir, parse_ir, schema_id, EntityDef,
+    PropDef, SchemaIr, SCHEMA_IR_VERSION,
+};
 use zerodb_core::sign::{DOMAIN_OP_SIG, verify_op};
 
 pub(crate) const KIND_CREATE_NODE: u64 = 1;
@@ -389,31 +393,15 @@ impl<B: StoreBackend> LocalStore<B> {
         self.backend.edge_list_visible()
     }
 
-    /// Apply a simplified JSON schema pin: `{ "nodes": { "Todo": { "props": { "title": "lww" }}} }`.
-    /// Stores in meta; subsequent local mutations must match the pin for known labels.
+    /// Apply a schema from JSON: either the M1 pin
+    /// `{ "nodes": { "Todo": { "props": { "title": "lww" }}} }` or a SCHEMA §2
+    /// IR object (`v`, `nodes`, `edges` with numeric tags). Persists canonical
+    /// CBOR IR + SchemaId and sets epoch 1.
     pub fn apply_schema_json(&mut self, schema_json: &str) -> Result<(), StoreError> {
         let v: serde_json::Value =
             serde_json::from_str(schema_json).map_err(|e| StoreError::Invalid(e.to_string()))?;
-        let nodes = v
-            .get("nodes")
-            .and_then(|n| n.as_object())
-            .ok_or_else(|| StoreError::Invalid("schema.nodes required".into()))?;
-        for (label, entity) in nodes {
-            let props = entity
-                .get("props")
-                .and_then(|p| p.as_object())
-                .ok_or_else(|| StoreError::Invalid(format!("schema.nodes.{label}.props")))?;
-            for (path, crdt) in props {
-                let c = crdt
-                    .as_str()
-                    .ok_or_else(|| StoreError::Invalid("prop crdt must be string".into()))?;
-                if !matches!(c, "lww" | "gcounter" | "pncounter" | "orset" | "flag") {
-                    return Err(StoreError::Invalid(format!("unknown crdt {c}")));
-                }
-                let _ = path;
-            }
-        }
-        self.backend.meta_set("schema_json", schema_json.as_bytes())
+        let ir = json_to_schema_ir(&v)?;
+        self.persist_schema(&ir)
     }
 
     pub fn schema_json(&self) -> Result<Option<String>, StoreError> {
@@ -423,11 +411,51 @@ impl<B: StoreBackend> LocalStore<B> {
             .map(|b| String::from_utf8_lossy(&b).into_owned()))
     }
 
+    pub fn schema_ir_bytes(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        self.backend.meta_get("schema_ir")
+    }
+
+    pub fn schema_id_hex(&self) -> Result<Option<String>, StoreError> {
+        Ok(self.backend.meta_get("schema_id")?.map(hex::encode))
+    }
+
+    pub fn schema_epoch(&self) -> Result<u64, StoreError> {
+        Ok(meta_get_u64(&self.backend, "schema_ep")?.unwrap_or(0))
+    }
+
+    fn persist_schema(&mut self, ir: &SchemaIr) -> Result<(), StoreError> {
+        let bytes = encode_ir(ir).map_err(|e| StoreError::Cbor(e.to_string()))?;
+        parse_ir(&zerodb_core::cbor::decode(&bytes).map_err(|e| StoreError::Cbor(e.to_string()))?)
+            .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let id = schema_id(&bytes);
+        let pin = schema_ir_to_pin_json(ir);
+        self.backend.meta_set("schema_ir", &bytes)?;
+        self.backend.meta_set("schema_id", &id)?;
+        meta_set_u64(&self.backend, "schema_ep", 1)?;
+        self.backend
+            .meta_set("schema_json", pin.to_string().as_bytes())?;
+        Ok(())
+    }
+
     /// O3 minimal query over visible graph materialization.
     pub fn query(&self, q: &str) -> Result<serde_json::Value, StoreError> {
+        self.query_with(q, &serde_json::json!({}))
+    }
+
+    pub fn query_with(
+        &self,
+        q: &str,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, StoreError> {
         let ast = parse_query(q).map_err(|e| StoreError::Invalid(format!("query parse: {e}")))?;
         let graph = self.to_query_graph()?;
-        let rows = queryeval::eval(&ast, &graph, &BTreeMap::new())
+        let mut pmap = BTreeMap::new();
+        if let Some(obj) = params.as_object() {
+            for (k, v) in obj {
+                pmap.insert(k.clone(), json_to_qvalue(v));
+            }
+        }
+        let rows = queryeval::eval(&ast, &graph, &pmap)
             .map_err(|e| StoreError::Invalid(format!("query eval: {e}")))?;
         let cols: Vec<String> = ast
             .items
@@ -745,14 +773,18 @@ impl<B: StoreBackend> LocalStore<B> {
             if adopting {
                 tx.meta_set("ds", &candidate_ds)?;
             }
+            let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
+            let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
             for (op, validated) in bundle.ops.iter().zip(&validated) {
                 if tx.op_exists(&validated.id)? {
                     skipped += 1;
                     continue;
                 }
+                check_wire_ingress(tx, op, &pending, local_ep)?;
                 (next_hlc_p, next_hlc_l) =
                     next_remote_hlc(next_hlc_p, next_hlc_l, op.ts.p, op.ts.l, now_ms())?;
                 apply_wire(tx, op, validated)?;
+                pending.insert(validated.id);
                 accepted += 1;
             }
             meta_set_u64(tx, "hlc_p", next_hlc_p)?;
@@ -912,6 +944,7 @@ impl<B: StoreBackend> LocalStore<B> {
             author: self.author,
             author_pk: self.author_pk,
             ds: self.ds,
+            ep: self.schema_epoch().unwrap_or(0),
             hlc_p: self.hlc_p,
             hlc_l: self.hlc_l,
             group_id,
@@ -934,13 +967,17 @@ impl<B: StoreBackend> LocalStore<B> {
         let mut next_l = self.hlc_l;
         let ds = self.ds;
         self.backend.with_txn(&mut |tx| {
+            let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
+            let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
             for wire in wires {
                 let validated = validate_wire_for_ds(wire, &ds)?;
                 if tx.op_exists(&validated.id)? {
                     return Err(StoreError::Duplicate);
                 }
+                check_wire_ingress(tx, wire, &pending, local_ep)?;
                 (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, now_ms())?;
                 apply_wire(tx, wire, &validated)?;
+                pending.insert(validated.id);
             }
             meta_set_u64(tx, "hlc_p", next_p)?;
             meta_set_u64(tx, "hlc_l", next_l as u64)?;
@@ -962,10 +999,11 @@ impl<B: StoreBackend> LocalStore<B> {
         F: FnOnce(&dyn BackendTxn, &WireOp) -> Result<(), StoreError>,
     {
         let ts = self.next_local_ts()?;
+        let ep = self.schema_epoch().unwrap_or(0);
         let env = OpEnvelope {
             v: 1,
             ds: self.ds,
-            ep: 0,
+            ep,
             author: self.author,
             ts,
             deps: vec![],
@@ -982,7 +1020,7 @@ impl<B: StoreBackend> LocalStore<B> {
             id: hex::encode(id),
             v: 1,
             ds: hex::encode(self.ds),
-            ep: 0,
+            ep,
             author: hex::encode(self.author),
             author_pk: hex::encode(self.author_pk),
             ts: WireTs {
@@ -1031,6 +1069,7 @@ pub struct GroupBuilder {
     author: [u8; 32],
     author_pk: [u8; 32],
     ds: [u8; 32],
+    ep: u64,
     hlc_p: u64,
     hlc_l: u16,
     group_id: [u8; 16],
@@ -1071,7 +1110,7 @@ impl GroupBuilder {
         let env = OpEnvelope {
             v: 1,
             ds: self.ds,
-            ep: 0,
+            ep: self.ep,
             author: self.author,
             ts,
             deps: vec![],
@@ -1088,7 +1127,7 @@ impl GroupBuilder {
             id: hex::encode(id),
             v: 1,
             ds: hex::encode(self.ds),
-            ep: 0,
+            ep: self.ep,
             author: hex::encode(self.author),
             author_pk: hex::encode(self.author_pk),
             ts: WireTs {
@@ -1777,6 +1816,113 @@ fn body_to_payload(body: &serde_json::Value) -> Result<Payload, StoreError> {
             _ => Ok(Payload::FlagEnable),
         },
         other => Err(StoreError::Invalid(format!("crdt {other}"))),
+    }
+}
+
+const MAX_DEPS: usize = 64;
+
+fn check_wire_ingress(
+    tx: &dyn BackendTxn,
+    wire: &WireOp,
+    pending: &BTreeSet<[u8; 32]>,
+    local_ep: u64,
+) -> Result<(), StoreError> {
+    if wire.deps.len() > MAX_DEPS {
+        return Err(StoreError::Invalid("deps exceed 64".into()));
+    }
+    if wire.ep > local_ep {
+        return Err(StoreError::Invalid("EPOCH_UNKNOWN".into()));
+    }
+    for dep in &wire.deps {
+        let id = decode32(dep)?;
+        if !tx.op_exists(&id)? && !pending.contains(&id) {
+            return Err(StoreError::Invalid(format!("missing dep {}", dep)));
+        }
+    }
+    Ok(())
+}
+
+fn json_to_schema_ir(v: &serde_json::Value) -> Result<SchemaIr, StoreError> {
+    if v.get("v").and_then(|x| x.as_u64()) == Some(SCHEMA_IR_VERSION) {
+        let cbor = json_value_to_cbor(v)?;
+        return parse_ir(&cbor).map_err(|e| StoreError::Invalid(e.to_string()));
+    }
+    pin_json_to_ir(v)
+}
+
+fn pin_json_to_ir(v: &serde_json::Value) -> Result<SchemaIr, StoreError> {
+    let nodes_in = v
+        .get("nodes")
+        .and_then(|n| n.as_object())
+        .ok_or_else(|| StoreError::Invalid("schema.nodes required".into()))?;
+    let mut nodes = BTreeMap::new();
+    for (label, entity) in nodes_in {
+        let props_in = entity
+            .get("props")
+            .and_then(|p| p.as_object())
+            .ok_or_else(|| StoreError::Invalid(format!("schema.nodes.{label}.props")))?;
+        let mut props = BTreeMap::new();
+        for (path, crdt) in props_in {
+            let name = crdt
+                .as_str()
+                .ok_or_else(|| StoreError::Invalid("prop crdt must be string".into()))?;
+            let tag = crdt_from_name(name)
+                .ok_or_else(|| StoreError::Invalid(format!("unknown crdt {name}")))?;
+            props.insert(
+                path.clone(),
+                PropDef {
+                    crdt: tag,
+                    value_type: default_value_type(tag),
+                    nullable: true,
+                    encrypted: false,
+                },
+            );
+        }
+        nodes.insert(label.clone(), EntityDef { props });
+    }
+    Ok(SchemaIr {
+        name: v.get("name").and_then(|n| n.as_str()).map(str::to_owned),
+        nodes,
+        edges: BTreeMap::new(),
+    })
+}
+
+fn schema_ir_to_pin_json(ir: &SchemaIr) -> serde_json::Value {
+    let mut nodes = serde_json::Map::new();
+    for (label, ent) in &ir.nodes {
+        let mut props = serde_json::Map::new();
+        for (path, def) in &ent.props {
+            if let Some(name) = crdt_name(def.crdt) {
+                props.insert(path.clone(), serde_json::Value::String(name.into()));
+            }
+        }
+        nodes.insert(
+            label.clone(),
+            serde_json::json!({ "props": serde_json::Value::Object(props) }),
+        );
+    }
+    serde_json::json!({ "nodes": serde_json::Value::Object(nodes) })
+}
+
+fn json_value_to_cbor(v: &serde_json::Value) -> Result<Cbor, StoreError> {
+    match v {
+        serde_json::Value::Null => Ok(Cbor::Null),
+        serde_json::Value::Bool(b) => Ok(Cbor::Bool(*b)),
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .map(Cbor::Uint)
+            .ok_or_else(|| StoreError::Invalid("IR numbers must be unsigned".into())),
+        serde_json::Value::String(s) => Ok(Cbor::Text(s.clone())),
+        serde_json::Value::Array(a) => Ok(Cbor::Array(
+            a.iter()
+                .map(json_value_to_cbor)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        serde_json::Value::Object(o) => Ok(Cbor::Map(
+            o.iter()
+                .map(|(k, val)| Ok((k.clone(), json_value_to_cbor(val)?)))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
     }
 }
 

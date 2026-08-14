@@ -35,13 +35,19 @@ export declare class Database {
   setRemove(node: string, key: string, value: string): string
   flagEnable(node: string, key: string): string
   flagDisable(node: string, key: string): string
-  /** List nodes as JSON array of `{ id, label, deleted }`. */
+  /** List nodes as JSON array of `{ id, label, deleted, props }`. */
   listNodes(): any
+  createEdge(label: string, src: string, dst: string): string
+  deleteEdge(edge: string): string
+  listEdges(): any
+  /** Apply a pin or SCHEMA IR JSON. Returns `{ schemaId, epoch }`. */
+  applySchema(schemaJson: string): any
+  schemaId(): string | null
   /**
    * Run an O3 minimal query (`MATCH/WHERE/RETURN/ORDER BY/LIMIT`).
-   * Returns a JSON array of row objects keyed by return item (e.g. `"t.title"`).
+   * Optional `params` bind `$name` placeholders.
    */
-  query(q: string): any
+  query(q: string, params?: any | undefined | null): any
   /** Full inspect report as JSON (path is reported as the given string). */
   inspect(path: string): any
   replay(): void
