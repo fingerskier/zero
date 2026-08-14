@@ -199,7 +199,10 @@ fn generate_envelope_hex() {
     for path in vector_files() {
         let mut v: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         let need_env = v["envelope_hex"] == "TBD";
-        let need_id = v.get("expect_op_id_hex").map(|x| x == "TBD").unwrap_or(false);
+        let need_id = v
+            .get("expect_op_id_hex")
+            .map(|x| x == "TBD")
+            .unwrap_or(false);
         if !need_env && !need_id {
             continue;
         }

@@ -130,11 +130,9 @@ impl WalState {
     pub fn visible_material(&self) -> BTreeMap<[u8; 32], String> {
         self.material
             .iter()
-            .filter(|(id, _)| {
-                match self.wal.iter().find(|r| r.op_id == **id) {
-                    Some(r) => r.group.is_none_or(|g| self.sealed.contains(&g)),
-                    None => true,
-                }
+            .filter(|(id, _)| match self.wal.iter().find(|r| r.op_id == **id) {
+                Some(r) => r.group.is_none_or(|g| self.sealed.contains(&g)),
+                None => true,
             })
             .map(|(k, v)| (*k, v.clone()))
             .collect()

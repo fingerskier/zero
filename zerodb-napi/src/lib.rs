@@ -17,7 +17,7 @@ use napi_derive::napi;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 use zerodb_core::apply_crdt_vector as apply_crdt_vector_core;
-use zerodb_storage::{sync, LocalStore};
+use zerodb_storage::{LocalStore, sync};
 
 /// Replay one KERNEL `crdt-apply` vector through the same Rust kernel the
 /// core conformance harness uses. Input is the vector JSON; output is

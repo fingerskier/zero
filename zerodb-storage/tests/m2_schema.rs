@@ -57,15 +57,8 @@ fn signed_create_with_deps(store: &LocalStore, deps: Vec<[u8; 32]>) -> WireOp {
         ep: 0,
         author: hex::encode(author),
         author_pk: hex::encode(author_pk),
-        ts: WireTs {
-            p: 9_000_000,
-            l: 0,
-        },
-        deps: envelope
-            .deps
-            .iter()
-            .map(hex::encode)
-            .collect(),
+        ts: WireTs { p: 9_000_000, l: 0 },
+        deps: envelope.deps.iter().map(hex::encode).collect(),
         grp: None,
         kind: 1,
         body: serde_json::json!({
@@ -135,10 +128,7 @@ fn import_rejects_more_than_64_deps() {
     let mut bundle = store.export_all().unwrap();
     bundle.ops.push(signed_create_with_deps(&store, deps));
     let err = store.import_bundle(&bundle).unwrap_err();
-    assert!(
-        err.to_string().to_lowercase().contains("dep"),
-        "got {err}"
-    );
+    assert!(err.to_string().to_lowercase().contains("dep"), "got {err}");
 }
 
 #[test]
@@ -150,10 +140,7 @@ fn import_rejects_unknown_dep() {
         .ops
         .push(signed_create_with_deps(&store, vec![[0xFFu8; 32]]));
     let err = store.import_bundle(&bundle).unwrap_err();
-    assert!(
-        err.to_string().to_lowercase().contains("dep"),
-        "got {err}"
-    );
+    assert!(err.to_string().to_lowercase().contains("dep"), "got {err}");
 }
 
 #[test]

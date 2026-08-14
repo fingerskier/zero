@@ -43,8 +43,8 @@ use zerodb_core::op::{OpEnvelope, OpTs};
 use zerodb_core::query::parse as parse_query;
 use zerodb_core::queryeval::{self, GEdge, GNode, Graph, QValue};
 use zerodb_core::schema::{
-    crdt_from_name, crdt_name, default_value_type, encode_ir, parse_ir, schema_id, EntityDef,
-    PropDef, SchemaIr, SCHEMA_IR_VERSION,
+    EntityDef, PropDef, SCHEMA_IR_VERSION, SchemaIr, crdt_from_name, crdt_name, default_value_type,
+    encode_ir, parse_ir, schema_id,
 };
 use zerodb_core::sign::{DOMAIN_OP_SIG, verify_op};
 

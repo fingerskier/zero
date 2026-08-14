@@ -315,8 +315,5 @@ fn import_rejects_crdt_that_breaks_schema_pin() {
     let err = dst
         .import_bundle(&src.export_all().unwrap())
         .expect_err("pinned title:lww must reject a remote gcounter on title");
-    assert!(
-        err.to_string().contains("schema pin"),
-        "got: {err}"
-    );
+    assert!(err.to_string().contains("schema pin"), "got: {err}");
 }

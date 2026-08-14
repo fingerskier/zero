@@ -98,15 +98,11 @@ pub fn ir_to_cbor(ir: &SchemaIr) -> Cbor {
                 .map(|(label, ent)| {
                     let src = match &ent.src {
                         None => Cbor::Null,
-                        Some(ls) => {
-                            Cbor::Array(ls.iter().map(|s| Cbor::Text(s.clone())).collect())
-                        }
+                        Some(ls) => Cbor::Array(ls.iter().map(|s| Cbor::Text(s.clone())).collect()),
                     };
                     let dst = match &ent.dst {
                         None => Cbor::Null,
-                        Some(ls) => {
-                            Cbor::Array(ls.iter().map(|s| Cbor::Text(s.clone())).collect())
-                        }
+                        Some(ls) => Cbor::Array(ls.iter().map(|s| Cbor::Text(s.clone())).collect()),
                     };
                     (
                         label.clone(),

@@ -103,7 +103,12 @@ fn frontier_vectors() {
                         .collect();
                     is_late_against_ops(&op, &base)
                 };
-                assert_eq!(late, v["expect_late"].as_bool().unwrap(), "{}", path.display());
+                assert_eq!(
+                    late,
+                    v["expect_late"].as_bool().unwrap(),
+                    "{}",
+                    path.display()
+                );
             }
             other => panic!("unknown {other}"),
         }

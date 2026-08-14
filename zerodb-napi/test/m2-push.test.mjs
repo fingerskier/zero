@@ -67,14 +67,23 @@ test('autoConnect push-mode converges without waiting for the interval', async (
     const intervalMs = 60_000
     const conn = dbB.autoConnect(`ws://127.0.0.1:${port}`, intervalMs)
     assert.ok(await waitFor(() => dbB.getLww(node, 'title') === 'milk'))
+    // Initial exchange emits `connect` asynchronously (ThreadsafeFunction).
+    // Wait until the persistent session is acknowledged before writing, or
+    // the next op can land in that first exchange and never produce a tick.
+    assert.ok(
+      await waitFor(() =>
+        eventsB.some((e) => e.kind === 'sync' && e.role === 'connect' && e.push === true),
+      ),
+      'push session must be negotiated before the post-bootstrap write',
+    )
 
     // Server-side mutation arrives at B far faster than the interval.
     const start = Date.now()
     dbA.setLww(node, 'title', 'pushed')
     assert.ok(await waitFor(() => dbB.getLww(node, 'title') === 'pushed'))
     assert.ok(
-      eventsB.some((e) => e.kind === 'sync' && e.role === 'connect-push'),
-      'push-session tick events should be observed'
+      await waitFor(() => eventsB.some((e) => e.kind === 'sync' && e.role === 'connect-push')),
+      'push-session tick events should be observed',
     )
     assert.ok(Date.now() - start < intervalMs / 10, 'latency must be well under intervalMs')
 

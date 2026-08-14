@@ -155,8 +155,6 @@ mod tests {
         assert_eq!(snapshot_for_ops(&ds, &ops), snapshot_for_ops(&ds, &ops));
     }
 
-
-
     #[test]
     #[ignore]
     fn print_snapshot_golden() {
