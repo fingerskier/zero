@@ -1,0 +1,86 @@
+{
+  "id": "RELAY-REJECT-001",
+  "type": "relay-transcript",
+  "kind": "reject-ack",
+  "invariants": [
+    "I-3",
+    "I-12"
+  ],
+  "description": "OP_ACK lists per-op ACCEPT/DUPLICATE/REJECT. REJECT is not retryable: resume MUST NOT retransmit a rejected OpId (RELAY §7.4, DELIVERY §2–§4).",
+  "held": [
+    {
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "physical_ms": 10,
+      "logical": 0
+    },
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "physical_ms": 20,
+      "logical": 0
+    }
+  ],
+  "outcomes": [
+    {
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "outcome": "ACCEPT"
+    },
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "outcome": "REJECT",
+      "reason": "AUTHZ"
+    }
+  ],
+  "cursor": {
+    "epoch": 0,
+    "frontier": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+        "physical_ms": 10,
+        "logical": 0
+      }
+    }
+  },
+  "frames": [
+    {
+      "dir": "P→R",
+      "type": 48,
+      "request_id": 1,
+      "payload": {
+        "datastore": "app:main",
+        "operations": [
+          {
+            "op_id": "0101010101010101010101010101010101010101010101010101010101010101"
+          },
+          {
+            "op_id": "0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        ]
+      },
+      "cbor_hex": "a364747970651830677061796c6f6164a2696461746173746f7265686170703a6d61696e6a6f7065726174696f6e7382a1656f705f696458200101010101010101010101010101010101010101010101010101010101010101a1656f705f6964582002020202020202020202020202020202020202020202020202020202020202026a726571756573745f696401"
+    },
+    {
+      "dir": "R→P",
+      "type": 49,
+      "request_id": 1,
+      "payload": {
+        "outcomes": [
+          {
+            "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+            "outcome": "ACCEPT"
+          },
+          {
+            "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+            "outcome": "REJECT",
+            "reason": "AUTHZ"
+          }
+        ]
+      },
+      "cbor_hex": "a364747970651831677061796c6f6164a1686f7574636f6d657382a2656f705f696458200101010101010101010101010101010101010101010101010101010101010101676f7574636f6d6566414343455054a3656f705f69645820020202020202020202020202020202020202020202020202020202020202020266726561736f6e65415554485a676f7574636f6d656652454a4543546a726571756573745f696401"
+    }
+  ],
+  "expect": {
+    "retransmit": []
+  }
+}

@@ -11,6 +11,7 @@ pub mod merkle;
 pub mod op;
 pub mod query;
 pub mod queryeval;
+pub mod relay;
 pub mod schema;
 pub mod sign;
 pub mod types;

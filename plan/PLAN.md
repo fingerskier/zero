@@ -30,7 +30,7 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 | M1 exit (`v0.1.0-local`) | **done** 2026-07-25 — experimental format |
 | M2 Node/NAPI vertical | **done** 2026-08-14 — experimental `v0.1.0-sdk`; not SPEC-complete M2 |
 | M2a stabilize + schema | **done** — [LEDGER.md](LEDGER.md) |
-| M3a L2 relay | **not started** — blocked on wire transcripts against RELAY 0.2.1-draft |
+| M3a L2 relay | **not started** — transcripts **done** (RELAY 0.2.2-draft, 6 vectors); binary still blocked |
 
 ---
 
@@ -59,10 +59,10 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 ## 5. Immediate next actions (ordered)
 
-**Current work package: M3a wire transcripts** (not a relay binary). `v0.1.0-sdk` is closed. Do not implement against RELAY-SPEC 0.2.0-draft.
+**Current work package: M3a relay process** only after this PR lands. Wire transcripts are specified.
 
-1. Golden two-language frames for RELAY 0.2.1-draft: Hello/capability, dual roots (`validated_root` vs `accepted_root`), resume cursor, rejected-OpId acks.
-2. Only after those transcripts exist: L2 relay process (M3a proper).
+1. ~~Golden two-language frames~~ **done** — RELAY 0.2.2-draft + 6 `relay-transcript` vectors (115 required).
+2. L2 relay process (M3a proper) against those frames. Do not implement against 0.2.0-draft.
 
 **Shipped already (do not re-open as next work):** M1 experimental exit; M2a; M2-parity; `v0.1.0-sdk` (CI [run 31836860347](https://github.com/fingerskier/zero/actions/runs/31836860347) @ `b352ca4`).
 

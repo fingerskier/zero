@@ -1,9 +1,9 @@
 # ZeroDB Relay Protocol Specification
 
-**Version:** 0.2.1-draft
+**Version:** 0.2.2-draft
 **Date:** 2026-08-14
 **Author:** Matt / Turing Automations
-**Status:** Draft — **not implementation-ready for M3a**. Wire messages remain 0.2; §7.4 (accepted sets) is the CX-08 contract. Canonical CBOR wire is protocol v3.
+**Status:** Draft — handshake, dual-root, resume-cursor, and reject-ack frames are specified and exercised by `relay-transcript` vectors. **No relay binary.** Canonical CBOR wire is still protocol v3.
 **Companion to:** [ZeroDB Technical Specification](SPEC.md), [MERKLE.md](MERKLE.md), [AUTH.md](AUTH.md), [DELIVERY.md](DELIVERY.md), [KERNEL.md](KERNEL.md)
 
 ---
@@ -141,6 +141,7 @@ Initiates a connection. Sent by the peer immediately after transport establishme
   peer_id:          PeerId      // Claimed peer identity
   public_key:       bytes       // Ed25519 public key (32 bytes)
   protocol_version: uint8       // Requested protocol version (currently 1)
+  capabilities:     [text]      // Offered session capabilities (§4.1.1)
 }
 ```
 
@@ -178,6 +179,7 @@ Sent after successful authentication. Establishes the session.
 {
   protocol_version: uint8       // Selected protocol version
   relay_level:      uint8       // Conformance level (0, 1, or 2)
+  capabilities:     [text]      // Sorted intersection of peer offer and relay offer (§4.1.1)
   limits: {
     max_payload_bytes:  uint32  // Maximum operation payload size
     max_batch_ops:      uint16  // Maximum operations per OPS message
@@ -188,6 +190,18 @@ Sent after successful authentication. Establishes the session.
   }
 }
 ```
+
+#### 4.1.1 Session capabilities
+
+Known capability tokens (registry `relay_capabilities`; unknown tokens are ignored):
+
+| Token | Meaning |
+|-------|---------|
+| `dual-root` | L2 messages carry `validated_root` and `accepted_root` separately (§7.4) |
+| `resume-cursor` | `SYNC_REQUEST` / `SUBSCRIBE` may carry `Cursor = { frontier, epoch }` (DELIVERY §4) |
+| `reject-ack` | `OP_ACK` lists per-op `ACCEPT` / `DUPLICATE` / `REJECT`; rejected OpIds are not retried |
+
+`WELCOME.capabilities` MUST be the sorted intersection of the peer's offer and the relay's offer, restricted to the known set. A session without `dual-root` MUST NOT claim catch-up completeness.
 
 There is no session resumption: a reconnecting peer repeats the full handshake (one signature — cheap by design).
 
@@ -239,12 +253,15 @@ Confirms subscription. Sent once per `SUBSCRIBE` request.
 ```
 {
   datastores: [{
-    id:           string
-    peer_count:   uint32        // Currently connected subscribers
-    merkle_root:  MerkleRoot?   // Current Merkle root (L2 only)
+    id:              string
+    peer_count:      uint32
+    validated_root:  MerkleRoot?   // L2 + dual-root: relay validated oplog
+    accepted_root:   MerkleRoot?   // L2 + dual-root: omitted unless the relay itself accepted
   }]
 }
 ```
+
+A Level 2 relay that negotiated `dual-root` MUST include `validated_root`. It MUST NOT publish a single `merkle_root` that peers are expected to match.
 
 #### `UNSUBSCRIBE` (0x12) — P→R [L0]
 
@@ -264,21 +281,28 @@ A Level 2 relay participates in sync as a peer — it has its own Merkle tree an
 
 ```
 {
-  datastore:    string
-  merkle_root:  MerkleRoot      // Sender's current Merkle root
+  datastore:       string
+  accepted_root:   MerkleRoot?     // required when the sender is a peer (P→R / peer→peer)
+  validated_root:  MerkleRoot?     // required when the sender is a relay (R→P)
+  cursor:          Cursor?         // { frontier: PeerId → {op_id, physical_ms, logical}, epoch } when resume-cursor is on
 }
 ```
+
+Required root is **direction-dependent** on both `SYNC_REQUEST` and `SYNC_RESPONSE`. A peer MUST publish `accepted_root` and MUST NOT invent a relay `validated_root`. A relay MUST publish `validated_root` and MAY omit `accepted_root` unless the relay itself accepted.
 
 #### `SYNC_RESPONSE` (0x21) — ↔ [L2]
 
 ```
 {
-  datastore:    string
-  merkle_root:  MerkleRoot
+  datastore:       string
+  validated_root:  MerkleRoot?     // required when the responder is the relay (R→P)
+  accepted_root:   MerkleRoot?     // required when the responder is a peer (P→R)
 }
 ```
 
-If the roots match, both sides skip delta exchange and enter live mode.
+Required root is **direction-dependent**. A peer answering a relay-initiated `SYNC_REQUEST` MUST include `accepted_root` and MUST NOT be required to fabricate `validated_root` (the relay owns the validated oplog). A relay answering a peer-initiated `SYNC_REQUEST` MUST include `validated_root` and MAY omit `accepted_root` unless the relay itself accepted. Peers MUST NOT invent a relay validated root.
+
+Equal `accepted_root` values between honest peers mean catch-up is complete. Equal `validated_root` vs `accepted_root` is **not** required. A late op covered by `cursor.frontier` MUST NOT be retransmitted (DELIVERY §4).
 
 #### `DELTA_REQUEST` (0x22) — ↔ [L2]
 
@@ -331,10 +355,16 @@ Relay acknowledges receipt of a peer's `OPS` submission, echoing its `request_id
 
 ```
 {
-  op_ids:       [OpId]          // Acknowledged operation IDs
-  merkle_root:  MerkleRoot?     // Updated Merkle root (L2 only)
+  outcomes: [{
+    op_id:    OpId
+    outcome:  "ACCEPT" | "DUPLICATE" | "REJECT"
+    reason:   text?            // required on REJECT (e.g. AUTHZ, SIG, DECODE)
+  }]
+  validated_root:  MerkleRoot? // L2 after persist
 }
 ```
+
+`REJECT` is not retryable. The sender MUST remove those OpIds from its retransmit set so a rejected op is not replayed forever (§7.4).
 
 > **Note:** `OP_ACK` is a *receipt* acknowledgement. A durable-commit acknowledgement for L2 relays (persistence-before-ack or a separate durable ack) is pending ISSUES H11 → M3.
 
@@ -534,7 +564,9 @@ A colluding or merely schema-blind relay can retain authentic but unauthorized o
 1. `validated_root` — MERKLE over the relay's validated oplog (what it stored).
 2. Peers publish `accepted_root` — MERKLE over their accepted set.
 
-Catch-up completeness (EXEMPLAR E3) is: after sync, every honest peer's `accepted_root` matches every other honest peer's `accepted_root`. The relay's `validated_root` MAY differ. The protocol MUST acknowledge rejected OpIds (explicit `REJECT` outcomes per DELIVERY) so a sender does not retry forever. Dual-root walk messages are M3a wire work; this section is the semantic precondition.
+Catch-up completeness (EXEMPLAR E3) is: after sync, every honest peer's `accepted_root` matches every other honest peer's `accepted_root`. The relay's `validated_root` MAY differ. The protocol MUST acknowledge rejected OpIds (explicit `REJECT` outcomes per DELIVERY) so a sender does not retry forever.
+
+Wire frames (M3a transcripts, `conformance/vectors/required/relay/`): ordered `{type, request_id, payload}` envelopes for `HELLO`/`CHALLENGE`/`AUTH`/`WELCOME`/`ERROR`, `SYNC_*` (direction-dependent roots + `Cursor`), and `OPS`/`OP_ACK.outcomes`. Both conformance runners walk type codes, directions, required fields, and `request_id` correlation. Dual-root **Merkle walk** messages (subtree traversal carrying both roots) remain M3a implementation, not this contract slice.
 
 Do **not** implement a relay that claims peer-root equality against its validated oplog.
 
@@ -893,6 +925,18 @@ Pruned (each removable without loss for any current milestone):
 - **Snapshot-sync obligation** — no snapshot messages existed; contracts M0f, shipping M4 (ISSUES C7).
 - **Per-message envelope `version` field** — version lives in `HELLO`/`WELCOME` only (ISSUES H7).
 - **Metrics table / OTLP section** — condensed to operational guidance.
+
+### 0.2.2-draft (2026-08-14)
+
+- `HELLO`/`WELCOME.capabilities` — sorted intersection of `dual-root`, `resume-cursor`, `reject-ack`.
+- Claimed `HELLO.peer_id` MUST equal `BLAKE3(public_key)` or AUTH fails with `0x201` (RELAY-HELLO-003).
+- L2 publishes `validated_root` / `accepted_root` (not a single `merkle_root`).
+- `SYNC_REQUEST` / `SYNC_RESPONSE` required root is direction-dependent: peer messages carry `accepted_root`; relay messages carry `validated_root`. Peers MUST NOT invent a relay validated root.
+- `SYNC_REQUEST.cursor` is DELIVERY `{frontier, epoch}`.
+- `OP_ACK.outcomes` with non-retryable `REJECT`.
+- `relay-transcript` vectors carry ordered `{type, request_id, payload, cbor_hex}` frames. Binary fields (`peer_id`, `public_key`, `nonce`, `signature`, `validated_root`, `accepted_root`, `op_id`, `author`) encode as CBOR bytes. RELAY-HELLO-001/002/003, RELAY-ROOT-001, RELAY-RESUME-001, RELAY-REJECT-001.
+
+### 0.2.1-draft
 
 Added / fixed:
 

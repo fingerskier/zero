@@ -1,0 +1,96 @@
+{
+  "id": "RELAY-HELLO-001",
+  "type": "relay-transcript",
+  "kind": "handshake",
+  "invariants": [
+    "I-9"
+  ],
+  "description": "HELLO/CHALLENGE/AUTH/WELCOME: claimed HELLO.peer_id MUST equal BLAKE3(pk); AUTH signs domain(relay_auth)||nonce; WELCOME capabilities are the sorted intersection (RELAY §4.1 / §5).",
+  "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
+  "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
+  "secret_key": "560295411cb3771a4892c53fab032abaa0dc96b7a6ed7be6c64865551d062dfa",
+  "nonce": "0707070707070707070707070707070707070707070707070707070707070707",
+  "hello_capabilities": [
+    "reject-ack",
+    "dual-root",
+    "resume-cursor",
+    "unknown-cap"
+  ],
+  "relay_capabilities": [
+    "dual-root",
+    "resume-cursor",
+    "reject-ack"
+  ],
+  "relay_level": 2,
+  "protocol_version": 1,
+  "frames": [
+    {
+      "dir": "P→R",
+      "type": 1,
+      "request_id": 1,
+      "payload": {
+        "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
+        "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
+        "protocol_version": 1,
+        "capabilities": [
+          "reject-ack",
+          "dual-root",
+          "resume-cursor",
+          "unknown-cap"
+        ]
+      },
+      "cbor_hex": "a3647479706501677061796c6f6164a467706565725f696458203ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe6a7075626c69635f6b6579582026b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e16c6361706162696c6974696573846a72656a6563742d61636b696475616c2d726f6f746d726573756d652d637572736f726b756e6b6e6f776e2d6361707070726f746f636f6c5f76657273696f6e016a726571756573745f696401"
+    },
+    {
+      "dir": "R→P",
+      "type": 2,
+      "request_id": 1,
+      "payload": {
+        "nonce": "0707070707070707070707070707070707070707070707070707070707070707"
+      },
+      "cbor_hex": "a3647479706502677061796c6f6164a1656e6f6e6365582007070707070707070707070707070707070707070707070707070707070707076a726571756573745f696401"
+    },
+    {
+      "dir": "P→R",
+      "type": 3,
+      "request_id": 1,
+      "payload": {
+        "signature": "78ca520ac39feb33aa456fda8fdad1d0b887397382490aac652919dad57daf14e9cd8473ae3b41ba169414348a4702136d4b3ecc5a9315776e0d9471ea9a3005"
+      },
+      "cbor_hex": "a3647479706503677061796c6f6164a1697369676e6174757265584078ca520ac39feb33aa456fda8fdad1d0b887397382490aac652919dad57daf14e9cd8473ae3b41ba169414348a4702136d4b3ecc5a9315776e0d9471ea9a30056a726571756573745f696401"
+    },
+    {
+      "dir": "R→P",
+      "type": 4,
+      "request_id": 1,
+      "payload": {
+        "protocol_version": 1,
+        "relay_level": 2,
+        "capabilities": [
+          "dual-root",
+          "reject-ack",
+          "resume-cursor"
+        ],
+        "limits": {
+          "max_payload_bytes": 1048576,
+          "max_batch_ops": 64,
+          "max_batch_bytes": 16777216,
+          "max_subscriptions": 64,
+          "ops_per_second": 100,
+          "bytes_per_second": 10485760
+        }
+      },
+      "cbor_hex": "a3647479706504677061796c6f6164a4666c696d697473a66d6d61785f62617463685f6f707318406e6f70735f7065725f7365636f6e6418646f6d61785f62617463685f62797465731a010000007062797465735f7065725f7365636f6e641a00a00000716d61785f7061796c6f61645f62797465731a00100000716d61785f737562736372697074696f6e7318406b72656c61795f6c6576656c026c6361706162696c697469657383696475616c2d726f6f746a72656a6563742d61636b6d726573756d652d637572736f727070726f746f636f6c5f76657273696f6e016a726571756573745f696401"
+    }
+  ],
+  "expect": {
+    "auth_ok": true,
+    "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
+    "welcome_capabilities": [
+      "dual-root",
+      "reject-ack",
+      "resume-cursor"
+    ],
+    "signature": "78ca520ac39feb33aa456fda8fdad1d0b887397382490aac652919dad57daf14e9cd8473ae3b41ba169414348a4702136d4b3ecc5a9315776e0d9471ea9a3005"
+  }
+}
