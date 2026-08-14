@@ -1026,11 +1026,11 @@ Lean 4: **proof statements / model sketches** may be drafted anytime during M0 w
 
 **Outcome:** the TypeScript SDK runs the same exemplar and produces byte-identical core fixtures.
 
-- [ ] NAPI binding; `open`/`create`/`query`/`mutate`/`subscribe`
-- [ ] MVRegister + `resolve` flow, RGA, LWWMap
-- [ ] Schema source-of-truth pipeline implemented (one canonical, one generated — ISSUES O2)
+- [x] NAPI binding; `open`/`create`/`query`/`mutate`/`subscribe` — sync `Database` + thin `zerodb.mjs` facade (`zerodb-napi/test/m2-*.test.mjs`)
+- [ ] MVRegister + `resolve` flow, RGA, LWWMap — *deferred (app-trigger); not required for `v0.1.0-sdk` (Decision Log 2026-07-25 / 2026-08-14)*
+- [x] Schema IR + `SchemaId` + `applySchema` in the store (narrowed) — *full TS→IR / O2 compiler and secondary indexes remain open*
 
-**Exit gate:** binding parity vectors, subscription/mutation/conflict lifecycle tests, artifact-size and baseline performance budgets (**E11 provisional**).
+**Exit gate:** binding parity vectors, subscription/mutation/conflict lifecycle tests, artifact-size and baseline performance budgets (**E11 provisional**).  **Resolved 2026-08-14** (Decision Log; narrowed: schema IR + `applySchema`, edges/`listNodes`, facade, `applyCrdtVector` replay of `required/crdt/*`; subscribe/mutate/conflict covered by `m2-subscribe`/`m2-parity`/`m2-sync`. **E11 not claimed.**). Format freeze remains a separate, still-open Decision Log act — `v0.1.0-sdk` is an experimental-format release.
 
 ### M3 — Secure multi-peer sync (gates M3a → M3b → M3c)
 

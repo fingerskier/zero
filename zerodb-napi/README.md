@@ -1,6 +1,6 @@
 # `@zerodb/node` — experimental M2 NAPI SDK
 
-Node.js binding over the M1 `LocalStore` (SQLite). **Not** a format freeze and **not** M2 exit (`v0.1.0-sdk`).
+Node.js binding over the M1 `LocalStore` (SQLite). Experimental M2 exit (`v0.1.0-sdk`, 2026-08-14). **Not** a format freeze and **not** SPEC-complete M2.
 
 ## Build
 
@@ -79,10 +79,10 @@ db.unsubscribe(sub)
 and these event shapes are pre-freeze and may change without notice until a
 Decision Log format freeze. Do not persist bundles across SDK versions.
 
-## Not yet (SPEC M2 exit)
+## Not in this tag (still deferred)
 
-- MVRegister, RGA, LWWMap (deferred until an app needs them)
+- MVRegister, RGA, LWWMap (until an app needs them)
 - E11 artifact-size / performance budgets
 - query-scoped subscribe; interactive `repl`
 
-See [plan/LEDGER.md](../plan/LEDGER.md) M2 subtasks. Binding parity fixtures are in `test/m2-parity.test.mjs`.
+See [plan/LEDGER.md](../plan/LEDGER.md). Binding parity fixtures are in `test/m2-parity.test.mjs`.
