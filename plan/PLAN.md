@@ -1,10 +1,10 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
-**Date:** 2026-07-19 (refreshed after composite M0 + M1 prototype)  
-**Status:** active — composite M0 **done** (contract-model); M1 **in progress** toward `v0.1.0-local`  
+**Date:** 2026-08-14 (refreshed after M2a review)  
+**Status:** active — composite M0 **done** (contract-model, draft-1, unfrozen); M1 experimental exit **done** (`v0.1.0-local`); current work **M2a** (honesty + store leftovers + M0 implementability + schema). **Do not start M3.**  
 **Authority:** delivery/tracking only. [SPEC §10](../doc/SPEC.md) is the normative roadmap; [ISSUES.md](../doc/ISSUES.md) the issue ledger; [LEDGER.md](LEDGER.md) the live work tracker. On conflict, SPEC wins.
 
-Completed P0 readiness, M0 packages, and dispositioned review findings are recorded in the [ISSUES Decision Log](../doc/ISSUES.md) and are **not** re-listed here.
+Completed P0 readiness, M0 packages, M1 experimental exit, and dispositioned review findings are recorded in the [ISSUES Decision Log](../doc/ISSUES.md) and are **not** re-listed here. July 2026 review files live in [plan/archive/](archive/).
 
 ---
 
@@ -24,10 +24,13 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 | Gate | Status |
 |------|--------|
 | P0 readiness | **done** |
-| Composite M0 (contract-model, draft-1, 103 vectors) | **done** 2026-07-18 |
-| Format freeze | **not done** — needs explicit Decision Log freeze |
-| Experimental M1 local store + file/TCP peer exchange | **in progress** — [M1-LOCAL.md](../doc/M1-LOCAL.md); **not** M1 exit |
-| M1 exit (`v0.1.0-local`) | **open** — [LEDGER.md](LEDGER.md) |
+| Composite M0 (contract-model, draft-1, 103 vectors) | **done** 2026-07-18 — implementability holes CX-03..06 / CX-08 tracked under M2a |
+| Format freeze | **not done** — draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile |
+| Experimental M1 local store + file/TCP peer exchange | **done** (experimental) — [M1-LOCAL.md](../doc/M1-LOCAL.md) |
+| M1 exit (`v0.1.0-local`) | **done** 2026-07-25 — experimental format; EXEMPLAR E1/E4 honesty leftovers in M2a |
+| M2 Node/NAPI vertical | **in progress** — experimental sync NAPI + WS v2 shipped; `v0.1.0-sdk` blocked on M2a |
+| M2a stabilize + schema | **current** — [LEDGER.md](LEDGER.md) |
+| M3a L2 relay | **not started** — blocked on M2a contract repair + RELAY rewrite |
 
 ---
 
@@ -56,15 +59,19 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 ## 5. Immediate next actions (ordered)
 
-Current work package (adopted 2026-07-25; innate sync stages 1–4 shipped: `ce71349`, `4146f2a`, `a2b2377`):
+**Current work package: M2a** (adopted 2026-08-14). Do not start M3a against RELAY-SPEC 0.2.0-draft.
 
-1. **Sync LAN hardening** — session timeout (a slow peer currently holds the store lock for its session) + non-loopback `serve` behind an explicit unsafe flag (mirror CLI `--allow-insecure-lan`).
-2. **CI completeness** — clean-checkout CI job building zerodb-napi and running the JS test suites; binding parity vectors for the 5 shipped CRDTs vs core fixtures.
-3. **E1 hard evidence** — kill-not-shutdown and 1-hour clock-rollback store tests (durability claims the sync path now leans on).
-4. **R0.2 wire stance** — decided (Decision Log 2026-07-25): JSON wire stays v2 experimental; canonical CBOR lands with protocol v3 (one wire migration).
+1. **Honesty** — PLAN/LEDGER/M1-LOCAL/ISSUES aligned with evidence; FINDINGS archived; M2 exit scope Decision-Logged (this refresh).
+2. **Store leftovers** — conflicting/same-id CreateNode, HLC-meta-ahead recover, import-time schema pin, E1/E4 claim wording, shuffle/replay identity.
+3. **M0 implementability** — CX-03 envelope AAD cycle, CX-04 frontier late-op, CX-05 resume cursor, CX-06 WAL MUSTs + vectors. Slot-context AAD (recommended).
+4. **Relay contract (docs only)** — CX-08 accepted-set vs peer Merkle; RELAY rewrite. No relay binary.
+5. **M2-schema** — persist M0b CBOR IR + `SchemaId`; stamp `ep` / enforce `deps`; NAPI `applySchema`.
+6. **Binding parity** — edges + `listNodes` + query params on NAPI/wasm; thin promise/typed JS facade.
 
-Deferred with triggers: M2-crdts (until an app needs MVRegister/RGA), E4 crash matrix (formal M1 exit pass), CBOR wire + server-push (protocol v3), browser wasm/OPFS peer (after this package or on demand).
+**Shipped already (do not re-open as next work):** LAN hardening, clean-checkout NAPI CI (ubuntu+windows green on `3d5ae48`, [run 30178840377](https://github.com/fingerskier/zero/actions/runs/30178840377)), E1 kill/clock suites, E4 single-txn failpoint matrix, v2 push, experimental wasm peer.
 
-**M1 exit: resolved 2026-07-25** (Decision Log; tag `v0.1.0-local`, experimental format; CBOR IR/indexes/repl re-scoped to M2/M3; freeze stays a separate Decision Log act). Then: **M3a→b→c** — L2 relay, security, interop wire peer → `v0.1.0`.
+**Deferred with triggers:** M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11 budgets; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm; WebRTC. Format freeze remains a separate Decision Log act.
 
-Live rows and exit evidence: [LEDGER.md](LEDGER.md). Open review backlog: [FINDINGS.GROK.md](FINDINGS.GROK.md).
+**After M2a:** Decision Log whether `v0.1.0-sdk` closes. **Then and only then** M3a against the rewritten relay draft.
+
+Live rows: [LEDGER.md](LEDGER.md). Historical July reviews: [plan/archive/](archive/).

@@ -1,7 +1,7 @@
 # ZeroDB Merkle Sync Tree (M0c)
 
 **Version:** 0.1.0-draft
-**Status:** normative (**draft-1 profile**). The M0c exit checklist closed 2026-07-18 ([ISSUES Decision Log](ISSUES.md)): root vectors + mismatch-recovery transcripts are green in **both** conformance runners and CI-blocking. Wire framing of walk messages ships M3. Byte-level **freeze** still happens only at the composite M0 gate ([SPEC §10](SPEC.md)).
+**Status:** normative (**draft-1 profile**). The M0c exit checklist closed 2026-07-18 ([ISSUES Decision Log](ISSUES.md)): root vectors + mismatch-recovery transcripts are green in **both** conformance runners and CI-blocking. Wire framing of walk messages ships M3. All formats are **draft-1, unfrozen** until an explicit Decision Log freeze names a versioned profile.
 **Authority:** this document owns the canonical **Merkle sync tree** (derived structure for delta sync) and the abstract mismatch-recovery state machine (ISSUES C3). Operation identity and total order come from [KERNEL.md](KERNEL.md). [SPEC §2.6](SPEC.md) is the informative overview; on conflict this document wins for tree bytes and traversal.
 
 Keywords MUST/SHOULD/MAY per RFC 2119. Invariant references (I-*) per [INVARIANTS.md](INVARIANTS.md).

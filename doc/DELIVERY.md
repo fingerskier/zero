@@ -1,7 +1,7 @@
 # ZeroDB Delivery, Ack & Resume (M0e.2)
 
 **Version:** 0.1.0-draft
-**Status:** normative (**draft-1 profile**). M0e.2 contract for ISSUES H4 / H11 (contract layer). On-wire enforcement ships M3. Freeze only at composite M0.
+**Status:** normative (**draft-1 profile**). M0e.2 contract for ISSUES H4 / H11 (contract layer). On-wire enforcement ships M3. All formats are **draft-1, unfrozen** until an explicit Decision Log freeze names a versioned profile.
 **Authority:** delivery semantics, anti-replay, batch outcomes, resume cursors, receipt vs durable ack. WAL atomicity is [WAL.md](WAL.md). Relay framing is RELAY-SPEC.
 
 ---

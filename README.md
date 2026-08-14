@@ -21,11 +21,11 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [Relay Protocol Specification](doc/RELAY-SPEC.md) | Draft wire protocol for relay servers (not yet implementation-ready — see ISSUES) |
 | [Issues & Decisions](doc/ISSUES.md) | Tracked specification issues (C/H/O IDs), M0 package map, and the decision log |
 | [Exemplar](doc/EXEMPLAR.md) | Distributed ToDo app used as the end-to-end acceptance target |
-| [M1 local store](doc/M1-LOCAL.md) | Experimental M1 SQLite store + peer exchange (not exit / not freeze) |
+| [M1 local store](doc/M1-LOCAL.md) | Experimental M1 SQLite store + peer exchange (`v0.1.0-local`; not a format freeze) |
 | [M1 LAN test](doc/M1-LAN-TEST.md) | Windows ↔ Pi trusted-LAN runbook for experimental TCP path |
 | [Execution Plan](plan/PLAN.md) | Live path-to-MVP delivery plan |
 | [Delivery Ledger](plan/LEDGER.md) | Live work tracker — M1 subtasks, post-M1 milestones |
-| [Open findings](plan/FINDINGS.GROK.md) | Open review backlog (maps to LEDGER rows) |
+| [Archived reviews](plan/archive/) | Historical July 2026 FINDINGS (not the live backlog) |
 | [Node SDK (M2)](zerodb-napi/) | Experimental `@zerodb/node` NAPI binding — `npm install && npm run build && npm test` |
 | [TS→IR (M1)](tools/ts-to-ir/) | Minimal authoring JSON → schema pin IR for `schema-apply` |
 
@@ -81,4 +81,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-Composite M0 model contracts are closed; highest-value work is **M1** (SQLite durable core + peer exchange) and M3 wire enforcement. Format freezes still need an explicit Decision Log freeze.
+Composite M0 model contracts are closed at the draft-1 layer; M1 experimental local core has exited. Highest-value work is **M2a** (store leftovers, M0 implementability, schema in the store). Do not start M3 against RELAY-SPEC 0.2.0-draft. All formats are draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.

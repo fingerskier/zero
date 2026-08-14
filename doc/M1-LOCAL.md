@@ -1,8 +1,8 @@
 # M1 local durable store & peer exchange (experimental)
 
-**Status:** implementation notes for the experimental M1 path (`zerodb-storage` / `zerodb-cli`). **Not** a format freeze and **not** M1 exit (`v0.1.0-local`).  
-**Authority:** descriptive of current code. Normative contracts remain [KERNEL.md](KERNEL.md), [WAL.md](WAL.md), [AUTH.md](AUTH.md), [SCHEMA.md](SCHEMA.md). Exit criteria remain [SPEC §10](SPEC.md) M1 + [EXEMPLAR.md](EXEMPLAR.md) E1/E2/E4/E9.  
-**Evidence:** commits `1ef16d6` (local MVP CLI + TCP), `f9cc660` (peer dataflow hardening); LAN procedure in [M1-LAN-TEST.md](M1-LAN-TEST.md).
+**Status:** implementation notes for the experimental M1 path (`zerodb-storage` / `zerodb-cli`). M1 experimental exit closed 2026-07-25 (`v0.1.0-local`). **Not** a format freeze — all layouts stay draft-1 until an explicit Decision Log freeze.  
+**Authority:** descriptive of current code. Normative contracts remain [KERNEL.md](KERNEL.md), [WAL.md](WAL.md), [AUTH.md](AUTH.md), [SCHEMA.md](SCHEMA.md). Honesty leftovers (E1/E4 wording, same-id resurrection, HLC-meta) live under M2a in [LEDGER.md](../plan/LEDGER.md).  
+**Evidence:** tag `v0.1.0-local` @ `3d5ae48`; LAN procedure in [M1-LAN-TEST.md](M1-LAN-TEST.md).
 
 This document exists so plan/ review notes do not have to restate settled implementation behavior.
 
@@ -118,7 +118,7 @@ Smoke: `powershell -File scripts/test-mvp.ps1`.
 | Schema/query CLI | `schema-apply`, `query`, edges | interactive repl optional; full CBOR SchemaEpoch later |
 | Format freeze | `storage_format_version=1` written | Decision Log freeze still required |
 
-Live work tracking: [plan/LEDGER.md](../plan/LEDGER.md). Open review notes: [plan/FINDINGS.GROK.md](../plan/FINDINGS.GROK.md).
+Live work tracking: [plan/LEDGER.md](../plan/LEDGER.md). Historical July reviews: [plan/archive/](../plan/archive/).
 
 ---
 

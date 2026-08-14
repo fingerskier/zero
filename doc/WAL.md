@@ -1,7 +1,7 @@
 # ZeroDB WAL & Group Reference Model (M0e.1)
 
 **Version:** 0.1.0-draft
-**Status:** normative (**draft-1 profile**). M0e.1 exit closed 2026-07-18 (ISSUES C8 / DQ-4). WAL-001..012 green both runners. **Layer 1** pure model; **Layer 2** SQLite at M1. Freeze only at composite M0 / explicit freeze Decision Log.
+**Status:** normative (**draft-1 profile**). M0e.1 exit closed 2026-07-18 (ISSUES C8 / DQ-4). WAL-001..012 green both runners. **Layer 1** pure model; **Layer 2** SQLite at M1. All formats are **draft-1, unfrozen** until an explicit Decision Log freeze names a versioned profile.
 **Authority:** this document owns the abstract storage transaction boundary spanning oplog, materialized state, HLC durability, and group completeness (C8). Operation algebra comes from [KERNEL.md](KERNEL.md); authorization from [AUTH.md](AUTH.md). Delivery/ack/resume is M0e.2; version policy M0e.3.
 
 Keywords MUST/SHOULD/MAY per RFC 2119. Invariant references (I-*) per [INVARIANTS.md](INVARIANTS.md).

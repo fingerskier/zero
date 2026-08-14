@@ -182,4 +182,4 @@ Lifecycle per the [promotion policy](../conformance/README.md): vectors land red
 
 ---
 
-*Draft change policy: until composite M0, edits to this document require only ordinary review; after a freeze is declared (Decision Log), any byte-affecting change requires a new `operation_format_version`.*
+*Draft change policy: until an explicit Decision Log freeze names a versioned profile, edits to this document require only ordinary review; after a freeze is declared, any byte-affecting change requires a new `operation_format_version`.*

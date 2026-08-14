@@ -15,7 +15,8 @@ Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)`.
 | P0 readiness (P0-1..P0-7) | 2026-07-16 | ISSUES Decision Log; conformance + INVARIANTS + EXEMPLAR in `doc/` |
 | Composite M0a–M0f (contract-model) | 2026-07-18 | [SPEC §10](../doc/SPEC.md), package docs (KERNEL…FRONTIER), 103 vectors |
 | DQ-1..DQ-8, DQ-10 | 2026-07-16/18 | AUTH / KERNEL / SCHEMA / WAL + Decision Log |
-| Historical plan reviews (Codex 07-16, Grok plan 07-15) | dispositioned | Decision Log; work executed — review files removed from `plan/` |
+| Historical plan reviews (Codex 07-16, Grok plan 07-15) | dispositioned | Decision Log |
+| July 2026 state reviews (FINDINGS.GROK / FINDINGS.CODEX) | archived 2026-08-14 | [plan/archive/](archive/) — CX-01/CX-02 closed in tree; do not treat as live backlog |
 
 Detailed resolved-issue audit prose lives in the [ISSUES Decision Log](../doc/ISSUES.md) only (no second copy here).
 
@@ -53,10 +54,10 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M1-fix-rng | OS CSPRNG for seed/salt (`getrandom`) | done(`m1_wave1` seed test) | S | seed fill uses OS RNG; unit test | G-01 |
 | M1-fix-hlc | HLC on open/replay from durable oplog (DQ-7 backend) | done(`m1_wave1` HLC tests) | S | open/replay rewrite meta from oplog max | G-02 |
 | M1-fix-serve | Fail-closed serve defaults (loopback / unsafe flag) | done(`serve_bind` tests) | S | refuse non-loopback without `--allow-insecure-lan` | G-05 |
-| M1-e1 | Full E1 (restart, replay, larger load, HLC mono) | done(`e1_e2_acceptance` + `e1_kill_clock`) | M | 50-todo restart/import/replay; `tests/e1_kill_clock.rs` adds repeated hard-kill mid-write (child process, replay/state/sig re-verify each iteration) + 1h wall-clock rollback HLC monotonicity via `set_test_clock` hook | G-09 / G20-05a |
+| M1-e1 | Full E1 (restart, replay, larger load, HLC mono) | done(experimental; not full EXEMPLAR E1) | M | 50-todo is clean reopen (`e1_e2_acceptance`); kill and 1h clock-rollback are **separate** tests in `e1_kill_clock` (kill asserts `ops > prev_ops`, not pre-kill projection). Honesty leftovers: M2a-e1 | G-09 / G20-05a |
 | M1-e2-store | Store-level equal-ts / equivocation suite | done(`e1_e2_acceptance` e2_*) | S | same-author exclude + cross-peer total order | G-09 |
-| M1-e4 | Groups + WAL layer-2 crash injection | done(`e4_crash_matrix` + `atomic_group`) | L | named layer-2 crash matrix: 5 failpoints (before-txn / after-op-insert / before-hlc-persist / after-hlc-persist / before-commit, mapped to WAL §3) × 3 commit paths incl. mid-group seal rollback — `tests/e4_crash_matrix.rs` (`e4_commit_local_crash_matrix`, `e4_atomic_group_crash_matrix`, `e4_import_bundle_crash_matrix`); plus `e4_groups`, `m1_remainders`, `e1_kill_clock` random kills | G-03 |
-| M1-e9 | H3 derived visibility + edges + late-edge E9 | done(`e9_delete_machine`) | L | set-derived edge tombstone (kind 4 `{edge}` ref) + derived visibility, no cascade; permutations (tombstone-before-edge, late edge to dead endpoint), replay/restart identity, hidden props/query exclusion, no resurrection — `tests/e9_delete_machine.rs` (5 tests); plus `m1_remainders`, `r0_stabilize` | G-04 / G20-02 |
+| M1-e4 | Groups + WAL layer-2 crash injection | done(single-txn failpoints; not EXEMPLAR E4 / WAL SEAL-TRUNCATE) | L | 5 in-process failpoints × 3 commit paths in one SQLite txn (`e4_crash_matrix`) — rollback ≡ process death **before COMMIT**. `CRASH_AFTER_SEAL` / `CRASH_AFTER_TRUNCATE` N/A on this backend. GroupBuilder has no `create_edge`. Honesty leftovers: M2a-e4 | G-03 |
+| M1-e9 | H3 derived visibility + edges + late-edge E9 | done(derived visibility; same-id resurrection still M2a) | L | set-derived edge tombstone + derived visibility, no cascade; tombstone-before-edge, late edge to dead endpoint, replay/restart, query exclusion — `e9_delete_machine` (5). Recreate-under-**new**-id tested; same-id CreateNode after tombstone + conflicting labels: M2a-store | G-04 / G20-02 |
 | M1-schema | Schema apply / IR load; type pin; `ep` | done(JSON pin + CLI) | M | `apply_schema_json` + pin reject; `schema-apply` CLI; full CBOR IR/ep still draft | G-06/08 |
 | M1-query | O3 minimal query + repl | done(eval + CLI) | M | `LocalStore::query` + `zerodb query`; no interactive repl yet | G-08 |
 | M1-tsir | TS→IR compiler (≤ M1, O2) | done(minimal tool) | M | `tools/ts-to-ir` authoring JSON → pin IR; full CBOR SchemaId later | G-14 |
@@ -80,15 +81,31 @@ Depends: composite M0 model (done). Release: `v0.1.0-local`.
 | M2-napi-crud | Database init/open/mutate/get/inspect/export/import/close | done | `test/m2-basic.test.mjs` (3) |
 | M2-subscribe | `subscribe` / live change notifications | done (experimental) | `test/m2-subscribe.test.mjs` (3): op/import/replay events, unsubscribe |
 | M2-query | O3 query via NAPI | done (experimental) | `test/m2-query.test.mjs` (2): match/where/return + parse reject |
-| M2-ws-sync | `serve`/`connectPeer` WebSocket sync (protocol v2 two-way) | done (experimental) | `test/m2-sync.test.mjs` (3): converge both ways, stop/close, bad urls |
+| M2-ws-sync | `serve`/`connectPeer` WebSocket sync (protocol v2 two-way) | done (experimental) | `test/m2-sync.test.mjs` (6): converge both ways, stop/close, bad urls, LAN bind, timeouts |
 | M2-autosync | `autoConnect`/`disconnect` background re-sync (dirty flag + interval poll + backoff) | done (experimental) | `test/m2-autosync.test.mjs` (2): auto-converge both ways, disconnect stops, sync-error retry, clean close; `examples/webapp` two-process demo |
-| M2-lan-hardening | sync session timeout + non-loopback serve behind unsafe flag | done | 30s socket timeouts on NAPI serve/connect/autoConnect sockets; per-connection serve threads (store lock only after WS handshake); `serve(port, allowInsecureLan?)` binds 0.0.0.0 only with explicit flag (CLI unchanged); tests: loopback-default, LAN bind, stalled-raw-socket recovery in zerodb-napi/test/m2-sync.test.mjs — 21/21 npm test green |
+| M2-lan-hardening | sync session timeout + non-loopback serve behind unsafe flag | done | 30s socket timeouts; per-connection serve threads; `serve(port, allowInsecureLan?)` binds 0.0.0.0 only with explicit flag; tests in `m2-sync.test.mjs` |
 | M2-push | v2 push capability: persistent sessions (server streams new ops; client pushes on dirty) negotiated via `Hello.push`/`HelloOk.push` (serde defaults — old peers fall back to one-shot; CBOR wire still reserved for v3) | done | `zerodb_storage::sync::{serve_push,pull_push}` + `tests/sync_push.rs` (3: two-way push w/o new session, plain-serve fallback, capability field compat); NAPI `serve(port, lan?, push?)` + `autoConnect` upgrade, `test/m2-push.test.mjs` (2: push latency well under interval, push-disabled server poll fallback) |
-| M2-ci | clean-checkout CI: NAPI build + JS suites; parity vectors for 5 shipped CRDTs | done-pending-first-CI-run | `ci.yml`: napi job (ubuntu+windows, `npm ci` + `napi build --platform --release --target <host>` + `npm test`), rust job now `--locked` + clippy `-D warnings` (5 pre-existing lints fixed in zerodb-core), ts-to-ir job; `test\m2-parity.test.mjs` (5): LWW/GCounter/PNCounter/ORSet/EWFlag single-store + cross-peer convergence via exportJson/importJson both ways; local: 21/21 napi tests, clippy clean, workspace tests green; actual GH Actions run not yet observed |
-| M2-schema | schema apply / TS→IR pipeline (O2) + canonical CBOR IR/SchemaId + interactive repl (moved from M1, Decision Log 2026-07-25) | open | — |
-| M2-crdts | MVRegister + resolve, RGA, LWWMap | open | kernel + binding |
-| M2-parity | binding parity vectors vs core fixtures | open | — |
-| M2-exit | Close `v0.1.0-sdk` | blocked(above) | SPEC §10 M2 checklist |
+| M2-ci | clean-checkout CI: NAPI build + JS suites; 5-CRDT semantic parity | done([run 30178840377](https://github.com/fingerskier/zero/actions/runs/30178840377) @ `3d5ae48`) | rust `--locked` + clippy `-D warnings`; napi ubuntu+windows; ts-to-ir; conformance required. `m2-parity.test.mjs` (5) is semantic smoke, not byte-level core fixtures (that remains `M2-parity`) |
+| M2-schema | canonical CBOR IR + SchemaId + `ep`/`deps` in store + NAPI `applySchema` | open | M2a-schema; interactive `repl` deferred (Decision Log 2026-08-14) |
+| M2-crdts | MVRegister + resolve, RGA, LWWMap | deferred(app-trigger) | Decision Log 2026-07-25 / 2026-08-14 — not required for `v0.1.0-sdk` |
+| M2-parity | binding parity vectors vs core fixtures | open | byte-level replay of `conformance/vectors/required/crdt/*` — not the current semantic smoke |
+| M2-facade | thin promise/typed JS facade over sync NAPI | open | M2a-bind; SPEC §5.3 surface without pretending NAPI is async |
+| M2-exit | Close `v0.1.0-sdk` | blocked(M2a) | narrowed checklist: schema IR + applySchema + edges/listNodes parity + facade; not E11 / extra CRDTs / query-subscribe / repl |
+
+### M2a — Stabilize and schema (current)
+
+Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
+
+| ID | Work | Status | Evidence / remaining |
+|----|------|--------|----------------------|
+| M2a-honesty | Tracker alignment + M2 scope Decision Log + FINDINGS archive | done(this refresh) | PLAN/LEDGER/M1-LOCAL/ISSUES/README/registry; `plan/archive/` |
+| M2a-store | Conflicting/same-id CreateNode; HLC meta-ahead; import pin; shuffle replay | open | leftover from M1-e9 / DQ-7 / soft pin |
+| M2a-e1 | E1 honesty: pre-kill projection **or** stop claiming EXEMPLAR E1 | open | `e1_kill_clock` currently `ops > prev_ops` |
+| M2a-e4 | E4 honesty: document SEAL/TRUNCATE N/A; do not claim EXEMPLAR E4 | open | wording + LEDGER (this row) |
+| M2a-m0 | CX-03 AAD slot-hash; CX-04 frontier tip; CX-05 resume; CX-06 WAL MUSTs + vectors | open | blocks freeze and M3; not current local CRUD |
+| M2a-relay | CX-08 accepted-set + RELAY-SPEC rewrite (docs/vectors only) | open | blocks M3 start |
+| M2a-schema | persist M0b IR + SchemaId; stamp `ep`; enforce `deps`; NAPI `applySchema` | open | replaces JSON pin |
+| M2a-bind | NAPI/wasm edges + `listNodes` props parity + query params + promise facade | open | wasm `listNodes` includes `props`; NAPI does not |
 | M3a | L2 relay + offline catch-up (E3) | open | M2, M0c/M0f | L | internal |
 | M3b | Security: auth, envelope, negatives (E5–E8) | open | M3a, M0d | L | internal |
 | M3c | Interop TS wire peer + release | open | M3b | M | `v0.1.0` |

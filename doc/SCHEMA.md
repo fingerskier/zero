@@ -1,7 +1,7 @@
 # ZeroDB Schema Specification — IR, Epochs, Migrations & Query Subset (M0b)
 
 **Version:** 0.1.0-draft
-**Status:** normative (**draft-1 profile**). The M0b exit checklist closed 2026-07-18 ([ISSUES Decision Log](ISSUES.md)): every rule below is backed by golden vectors green in **both** conformance runners and CI-blocking ([conformance/](../conformance/README.md)); the corpus grows as later packages land. Byte-level **freeze** of the draft-1 profile still happens only at the composite M0 gate ([SPEC §10](SPEC.md)) — until then, a byte-affecting change re-runs the resolution checklist rather than bumping `schema_ir_format_version`. Cross-peer mixed-version migration *shipping* remains M4.
+**Status:** normative (**draft-1 profile**). The M0b exit checklist closed 2026-07-18 ([ISSUES Decision Log](ISSUES.md)): every rule below is backed by golden vectors green in **both** conformance runners and CI-blocking ([conformance/](../conformance/README.md)); the corpus grows as later packages land. All formats are **draft-1, unfrozen** until an explicit Decision Log freeze names a versioned profile — until then, a byte-affecting change re-runs the resolution checklist rather than bumping `schema_ir_format_version`. Cross-peer mixed-version migration *shipping* remains M4.
 **Authority:** this document owns the schema IR, schema epochs, the migration DSL, and the v0.1 query subset (ISSUES C2, O2, O3). Encoding primitives and the operation envelope come from [KERNEL.md](KERNEL.md) (the `ep` field and the `SchemaEpoch` variant body defined here fill KERNEL's reserved slots). [SPEC §3](SPEC.md) remains the informative overview; on conflict this document wins for schema semantics.
 
 ---

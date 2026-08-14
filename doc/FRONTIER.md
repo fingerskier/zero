@@ -1,7 +1,7 @@
 # ZeroDB Frontiers, Checkpoints & Snapshots (M0f)
 
 **Version:** 0.1.0-draft
-**Status:** normative (**draft-1 profile**). Closes ISSUES C7 / O7 at the **contract** layer. **GC remains disabled** until M5 tests pass. Snapshot shipping is M4.
+**Status:** normative (**draft-1 profile**). Closes ISSUES C7 / O7 at the **contract** layer. **GC remains disabled** until M5 tests pass. Snapshot shipping is M4. All formats are **draft-1, unfrozen** until an explicit Decision Log freeze names a versioned profile.
 **Authority:** causal frontiers, peer acks/retirement, checkpoint/snapshot identity. Merkle roots from [MERKLE.md](MERKLE.md); delivery cursors from [DELIVERY.md](DELIVERY.md).
 
 ---
@@ -65,4 +65,4 @@ GC implementation vectors are **out of scope** (M5).
 
 ---
 
-*Draft-1; freeze at composite M0.*
+*Draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
