@@ -2,20 +2,57 @@
   "id": "RELAY-ROOT-001",
   "type": "relay-transcript",
   "kind": "dual-root",
-  "invariants": ["I-11"],
+  "invariants": [
+    "I-11"
+  ],
   "description": "Relay validated oplog includes an unauthorized-but-authentic op; honest peers omit it. validated_root ≠ accepted_root; two honest peers share accepted_root. SYNC_RESPONSE required root is direction-dependent (RELAY §4.3 / §7.4 / CX-08).",
   "validated": [
-    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    { "op_id": "0303030303030303030303030303030303030303030303030303030303030303", "physical_ms": 3000, "logical": 0, "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+    {
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "physical_ms": 1000,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "physical_ms": 2000,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "op_id": "0303030303030303030303030303030303030303030303030303030303030303",
+      "physical_ms": 3000,
+      "logical": 0,
+      "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
   ],
   "accepted_a": [
-    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+    {
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "physical_ms": 1000,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "physical_ms": 2000,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
   ],
   "accepted_b": [
-    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "physical_ms": 1000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "physical_ms": 2000, "logical": 0, "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+    {
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "physical_ms": 1000,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "physical_ms": 2000,
+      "logical": 0,
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
   ],
   "frames": [
     {
@@ -25,7 +62,8 @@
       "payload": {
         "datastore": "app:main",
         "accepted_root": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097"
-      }
+      },
+      "cbor_hex": "a364747970651820677061796c6f6164a2696461746173746f7265686170703a6d61696e6d61636365707465645f726f6f74582041280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc870976a726571756573745f696401"
     },
     {
       "dir": "R→P",
@@ -34,7 +72,8 @@
       "payload": {
         "datastore": "app:main",
         "validated_root": "10fda44ab77a53fa18fd5336bc8b4a753770778b7d3067037270b42715857d0c"
-      }
+      },
+      "cbor_hex": "a364747970651821677061796c6f6164a2696461746173746f7265686170703a6d61696e6e76616c6964617465645f726f6f74582010fda44ab77a53fa18fd5336bc8b4a753770778b7d3067037270b42715857d0c6a726571756573745f696401"
     },
     {
       "dir": "R→P",
@@ -43,7 +82,8 @@
       "payload": {
         "datastore": "app:main",
         "validated_root": "10fda44ab77a53fa18fd5336bc8b4a753770778b7d3067037270b42715857d0c"
-      }
+      },
+      "cbor_hex": "a364747970651820677061796c6f6164a2696461746173746f7265686170703a6d61696e6e76616c6964617465645f726f6f74582010fda44ab77a53fa18fd5336bc8b4a753770778b7d3067037270b42715857d0c6a726571756573745f696402"
     },
     {
       "dir": "P→R",
@@ -52,7 +92,8 @@
       "payload": {
         "datastore": "app:main",
         "accepted_root": "41280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc87097"
-      }
+      },
+      "cbor_hex": "a364747970651821677061796c6f6164a2696461746173746f7265686170703a6d61696e6d61636365707465645f726f6f74582041280d9d118a34eeff54dc8a662541668d45aede255ce3a3eec530834fc870976a726571756573745f696402"
     }
   ],
   "expect": {

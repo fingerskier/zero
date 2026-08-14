@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
+use zerodb_core::cbor::{Cbor, encode};
 use zerodb_core::merkle::MerkleOp;
 use zerodb_core::relay::{
     DIR_PEER_TO_RELAY, DIR_RELAY_TO_PEER, ERR_AUTH_FAILED, FrontierTip, HeldOp, MSG_AUTH,
@@ -73,6 +74,59 @@ fn strs(v: &Json) -> Vec<&str> {
         .collect()
 }
 
+const BYTE_FIELDS: &[&str] = &[
+    "peer_id",
+    "public_key",
+    "nonce",
+    "signature",
+    "validated_root",
+    "accepted_root",
+    "op_id",
+    "author",
+];
+
+fn is_byte_field(k: &str) -> bool {
+    BYTE_FIELDS.contains(&k)
+}
+
+fn json_to_cbor(v: &Json, field: Option<&str>) -> Cbor {
+    if v.is_null() {
+        return Cbor::Null;
+    }
+    if let Some(b) = v.as_bool() {
+        return Cbor::Bool(b);
+    }
+    if let Some(n) = v.as_u64() {
+        return Cbor::Uint(n);
+    }
+    if let Some(s) = v.as_str() {
+        if field.is_some_and(is_byte_field) {
+            return Cbor::Bytes(hex_to_bytes(s));
+        }
+        return Cbor::Text(s.to_owned());
+    }
+    if let Some(arr) = v.as_array() {
+        return Cbor::Array(arr.iter().map(|x| json_to_cbor(x, None)).collect());
+    }
+    if let Some(obj) = v.as_object() {
+        return Cbor::Map(
+            obj.iter()
+                .map(|(k, val)| (k.clone(), json_to_cbor(val, Some(k.as_str()))))
+                .collect(),
+        );
+    }
+    panic!("unsupported json for envelope cbor: {v}");
+}
+
+fn encode_envelope(ty: u8, request_id: u64, payload: &Json) -> Vec<u8> {
+    let env = Cbor::Map(vec![
+        ("type".into(), Cbor::Uint(ty as u64)),
+        ("request_id".into(), Cbor::Uint(request_id)),
+        ("payload".into(), json_to_cbor(payload, None)),
+    ]);
+    encode(&env).expect("encode envelope")
+}
+
 #[test]
 fn relay_transcript_vectors() {
     let vectors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../conformance/vectors");
@@ -118,7 +172,13 @@ fn check_handshake(v: &Json, path: &Path) {
     );
     let pid = bytes_to_hex(&peer_id_from_pk(&pk));
     let honest = sign_auth(&seed, &nonce);
-    let sig = if let Some(s) = v["auth_signature"].as_str() {
+    let sig = if let Some(s) = v["frames"]
+        .as_array()
+        .and_then(|f| f.get(2))
+        .and_then(|f| f["payload"]["signature"].as_str())
+    {
+        arr64(s)
+    } else if let Some(s) = v["auth_signature"].as_str() {
         arr64(s)
     } else {
         honest
@@ -324,6 +384,12 @@ fn check_frames(v: &Json, path: &Path) {
                 }
             );
         }
+        let want_hex = f["cbor_hex"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{label}: cbor_hex required"));
+        assert!(!want_hex.is_empty(), "{label}: cbor_hex required");
+        let got = bytes_to_hex(&encode_envelope(ty, rid, &f["payload"]));
+        assert_eq!(got, want_hex, "{label}: cbor_hex mismatch");
 
         if is_request(ty, dir, rid as u32) {
             assert_ne!(rid, 0, "{label}: request must have non-zero request_id");

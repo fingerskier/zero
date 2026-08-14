@@ -2,12 +2,29 @@
   "id": "RELAY-RESUME-001",
   "type": "relay-transcript",
   "kind": "resume",
-  "invariants": ["I-12"],
+  "invariants": [
+    "I-12"
+  ],
   "description": "SYNC_REQUEST carries Cursor={frontier,epoch}. Sender retransmits only held ops not covered by the receiver frontier (DELIVERY §4 on the wire).",
   "held": [
-    { "op_id": "0101010101010101010101010101010101010101010101010101010101010101", "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "physical_ms": 50, "logical": 0 },
-    { "op_id": "0202020202020202020202020202020202020202020202020202020202020202", "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "physical_ms": 200, "logical": 0 },
-    { "op_id": "0303030303030303030303030303030303030303030303030303030303030303", "author": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "physical_ms": 80, "logical": 0 }
+    {
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "physical_ms": 50,
+      "logical": 0
+    },
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "physical_ms": 200,
+      "logical": 0
+    },
+    {
+      "op_id": "0303030303030303030303030303030303030303030303030303030303030303",
+      "author": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "physical_ms": 80,
+      "logical": 0
+    }
   ],
   "cursor": {
     "epoch": 1,
@@ -21,12 +38,12 @@
   },
   "frames": [
     {
-      "dir": "R→P",
+      "dir": "P→R",
       "type": 32,
       "request_id": 1,
       "payload": {
         "datastore": "app:main",
-        "validated_root": "e1b04de197ba195a8345f790f39c2b6370e78a8b9adfbc9f59bf8cf15afb2e5e",
+        "accepted_root": "e1b04de197ba195a8345f790f39c2b6370e78a8b9adfbc9f59bf8cf15afb2e5e",
         "cursor": {
           "epoch": 1,
           "frontier": {
@@ -37,16 +54,18 @@
             }
           }
         }
-      }
+      },
+      "cbor_hex": "a364747970651820677061796c6f6164a366637572736f72a26565706f6368016866726f6e74696572a1784061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161a3656f705f696458200202020202020202020202020202020202020202020202020202020202020202676c6f676963616c006b706879736963616c5f6d7318c8696461746173746f7265686170703a6d61696e6d61636365707465645f726f6f745820e1b04de197ba195a8345f790f39c2b6370e78a8b9adfbc9f59bf8cf15afb2e5e6a726571756573745f696401"
     },
     {
-      "dir": "P→R",
+      "dir": "R→P",
       "type": 33,
       "request_id": 1,
       "payload": {
         "datastore": "app:main",
-        "accepted_root": "e1b04de197ba195a8345f790f39c2b6370e78a8b9adfbc9f59bf8cf15afb2e5e"
-      }
+        "validated_root": "e1b04de197ba195a8345f790f39c2b6370e78a8b9adfbc9f59bf8cf15afb2e5e"
+      },
+      "cbor_hex": "a364747970651821677061796c6f6164a2696461746173746f7265686170703a6d61696e6e76616c6964617465645f726f6f745820e1b04de197ba195a8345f790f39c2b6370e78a8b9adfbc9f59bf8cf15afb2e5e6a726571756573745f696401"
     },
     {
       "dir": "P→R",
@@ -55,9 +74,12 @@
       "payload": {
         "datastore": "app:main",
         "operations": [
-          { "op_id": "0303030303030303030303030303030303030303030303030303030303030303" }
+          {
+            "op_id": "0303030303030303030303030303030303030303030303030303030303030303"
+          }
         ]
-      }
+      },
+      "cbor_hex": "a364747970651830677061796c6f6164a2696461746173746f7265686170703a6d61696e6a6f7065726174696f6e7381a1656f705f6964582003030303030303030303030303030303030303030303030303030303030303036a726571756573745f696402"
     },
     {
       "dir": "R→P",
@@ -65,12 +87,18 @@
       "request_id": 2,
       "payload": {
         "outcomes": [
-          { "op_id": "0303030303030303030303030303030303030303030303030303030303030303", "outcome": "ACCEPT" }
+          {
+            "op_id": "0303030303030303030303030303030303030303030303030303030303030303",
+            "outcome": "ACCEPT"
+          }
         ]
-      }
+      },
+      "cbor_hex": "a364747970651831677061796c6f6164a1686f7574636f6d657381a2656f705f696458200303030303030303030303030303030303030303030303030303030303030303676f7574636f6d65664143434550546a726571756573745f696402"
     }
   ],
   "expect": {
-    "retransmit": ["0303030303030303030303030303030303030303030303030303030303030303"]
+    "retransmit": [
+      "0303030303030303030303030303030303030303030303030303030303030303"
+    ]
   }
 }

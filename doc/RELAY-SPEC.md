@@ -282,11 +282,13 @@ A Level 2 relay participates in sync as a peer — it has its own Merkle tree an
 ```
 {
   datastore:       string
-  accepted_root:   MerkleRoot      // Sender's accepted-set root (peer)
-  validated_root:  MerkleRoot?     // Relay→peer only
+  accepted_root:   MerkleRoot?     // required when the sender is a peer (P→R / peer→peer)
+  validated_root:  MerkleRoot?     // required when the sender is a relay (R→P)
   cursor:          Cursor?         // { frontier: PeerId → {op_id, physical_ms, logical}, epoch } when resume-cursor is on
 }
 ```
+
+Required root is **direction-dependent** on both `SYNC_REQUEST` and `SYNC_RESPONSE`. A peer MUST publish `accepted_root` and MUST NOT invent a relay `validated_root`. A relay MUST publish `validated_root` and MAY omit `accepted_root` unless the relay itself accepted.
 
 #### `SYNC_RESPONSE` (0x21) — ↔ [L2]
 
@@ -298,7 +300,7 @@ A Level 2 relay participates in sync as a peer — it has its own Merkle tree an
 }
 ```
 
-Required root is **direction-dependent**. A peer answering a relay-initiated `SYNC_REQUEST` MUST include `accepted_root` and MUST NOT be required to fabricate `validated_root` (the relay owns the validated oplog). A relay answering a peer-initiated `SYNC_REQUEST` MUST include `validated_root` and MAY omit `accepted_root` unless the relay itself accepted.
+Required root is **direction-dependent**. A peer answering a relay-initiated `SYNC_REQUEST` MUST include `accepted_root` and MUST NOT be required to fabricate `validated_root` (the relay owns the validated oplog). A relay answering a peer-initiated `SYNC_REQUEST` MUST include `validated_root` and MAY omit `accepted_root` unless the relay itself accepted. Peers MUST NOT invent a relay validated root.
 
 Equal `accepted_root` values between honest peers mean catch-up is complete. Equal `validated_root` vs `accepted_root` is **not** required. A late op covered by `cursor.frontier` MUST NOT be retransmitted (DELIVERY §4).
 
@@ -929,10 +931,10 @@ Pruned (each removable without loss for any current milestone):
 - `HELLO`/`WELCOME.capabilities` — sorted intersection of `dual-root`, `resume-cursor`, `reject-ack`.
 - Claimed `HELLO.peer_id` MUST equal `BLAKE3(public_key)` or AUTH fails with `0x201` (RELAY-HELLO-003).
 - L2 publishes `validated_root` / `accepted_root` (not a single `merkle_root`).
-- `SYNC_RESPONSE` required root is direction-dependent: peer responses carry `accepted_root`; relay responses carry `validated_root`.
+- `SYNC_REQUEST` / `SYNC_RESPONSE` required root is direction-dependent: peer messages carry `accepted_root`; relay messages carry `validated_root`. Peers MUST NOT invent a relay validated root.
 - `SYNC_REQUEST.cursor` is DELIVERY `{frontier, epoch}`.
 - `OP_ACK.outcomes` with non-retryable `REJECT`.
-- `relay-transcript` vectors carry ordered `{type, request_id, payload}` frames. RELAY-HELLO-001/002/003, RELAY-ROOT-001, RELAY-RESUME-001, RELAY-REJECT-001.
+- `relay-transcript` vectors carry ordered `{type, request_id, payload, cbor_hex}` frames. Binary fields (`peer_id`, `public_key`, `nonce`, `signature`, `validated_root`, `accepted_root`, `op_id`, `author`) encode as CBOR bytes. RELAY-HELLO-001/002/003, RELAY-ROOT-001, RELAY-RESUME-001, RELAY-REJECT-001.
 
 ### 0.2.1-draft
 

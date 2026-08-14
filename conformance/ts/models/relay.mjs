@@ -5,7 +5,7 @@
 import { createPrivateKey, createPublicKey, sign as edSign, verify as edVerify } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 
-import { hexToBytes, bytesToHex } from './cbor.mjs';
+import { hexToBytes, bytesToHex, encode } from './cbor.mjs';
 import { blake3 } from './blake3.mjs';
 import { merkleRootOnce } from './merkle.mjs';
 
@@ -25,6 +25,18 @@ export const MSG_ERROR = 0xff;
 
 export const DIR_PEER_TO_RELAY = 'P→R';
 export const DIR_RELAY_TO_PEER = 'R→P';
+
+/** Payload fields that are CBOR bytes on the wire (JSON stores lowercase hex). */
+export const BYTE_FIELDS = new Set([
+  'peer_id',
+  'public_key',
+  'nonce',
+  'signature',
+  'validated_root',
+  'accepted_root',
+  'op_id',
+  'author',
+]);
 
 const SPKI_PREFIX = hexToBytes('302a300506032b6570032100');
 const PKCS8_PREFIX = hexToBytes('302e020100300506032b657004220420');
@@ -156,6 +168,46 @@ export function expectedResponseTypes(requestTy) {
     default:
       return [];
   }
+}
+
+/** JSON payload → tagged CBOR. Hex strings on BYTE_FIELDS become major-type-2 bytes. */
+export function jsonToTagged(value, field) {
+  if (value === null || value === undefined) return { t: 'null' };
+  if (typeof value === 'boolean') return { t: 'bool', v: value };
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value < 0) throw new Error(`non-uint ${value}`);
+    return { t: 'uint', v: value };
+  }
+  if (typeof value === 'string') {
+    if (BYTE_FIELDS.has(field)) {
+      if (!/^[0-9a-f]*$/i.test(value) || value.length % 2 !== 0) {
+        throw new Error(`byte field ${field} must be even hex`);
+      }
+      return { t: 'bytes', hex: value.toLowerCase() };
+    }
+    return { t: 'text', v: value };
+  }
+  if (Array.isArray(value)) {
+    return { t: 'array', v: value.map((item) => jsonToTagged(item)) };
+  }
+  if (typeof value === 'object') {
+    const v = {};
+    for (const [k, val] of Object.entries(value)) v[k] = jsonToTagged(val, k);
+    return { t: 'map', v };
+  }
+  throw new Error(`unsupported json ${typeof value}`);
+}
+
+/** Deterministic CBOR of the wire envelope `{type, request_id, payload}`. */
+export function encodeEnvelope(type, requestId, payload) {
+  return encode({
+    t: 'map',
+    v: {
+      type: { t: 'uint', v: type },
+      request_id: { t: 'uint', v: requestId },
+      payload: jsonToTagged(payload),
+    },
+  });
 }
 
 function merkleOps(list) {
@@ -305,6 +357,13 @@ export function checkFrames(v) {
         throw new Error(`${label}: ${who} SYNC must carry ${root}`);
       }
     }
+    if (typeof f.cbor_hex !== 'string' || f.cbor_hex.length === 0) {
+      throw new Error(`${label}: cbor_hex required`);
+    }
+    const got = bytesToHex(encodeEnvelope(f.type, f.request_id, f.payload));
+    if (got !== f.cbor_hex) {
+      throw new Error(`${label}: cbor_hex mismatch\n  expected ${f.cbor_hex}\n  got      ${got}`);
+    }
 
     if (isRequest(f.type, f.dir, f.request_id)) {
       if (f.request_id === 0) throw new Error(`${label}: request must have non-zero request_id`);
@@ -350,7 +409,8 @@ function runHandshake(v) {
   if (!v.peer_id) throw new Error('claimed HELLO.peer_id required');
   const pid = bytesToHex(peerIdFromPk(pk));
   const honest = signAuth(seed, nonce);
-  const sig = v.auth_signature ? hex64(v.auth_signature) : honest;
+  const wireSig = v.frames?.[2]?.payload?.signature;
+  const sig = wireSig ? hex64(wireSig) : v.auth_signature ? hex64(v.auth_signature) : honest;
   const err = authenticate(v.peer_id, pk, nonce, sig);
   const authOk = err === null;
   const expect = v.expect;
