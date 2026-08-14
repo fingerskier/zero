@@ -99,9 +99,9 @@ Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
 | ID | Work | Status | Evidence / remaining |
 |----|------|--------|----------------------|
 | M2a-honesty | Tracker alignment + M2 scope Decision Log + FINDINGS archive | done(this refresh) | PLAN/LEDGER/M1-LOCAL/ISSUES/README/registry; `plan/archive/` |
-| M2a-store | Conflicting/same-id CreateNode; HLC meta-ahead; import pin; shuffle replay | open | leftover from M1-e9 / DQ-7 / soft pin |
-| M2a-e1 | E1 honesty: pre-kill projection **or** stop claiming EXEMPLAR E1 | open | `e1_kill_clock` currently `ops > prev_ops` |
-| M2a-e4 | E4 honesty: document SEAL/TRUNCATE N/A; do not claim EXEMPLAR E4 | open | wording + LEDGER (this row) |
+| M2a-store | Conflicting/same-id CreateNode; HLC meta-ahead; import pin; shuffle replay | done(`r0_stabilize` + `m1_wave1`) | same-id no resurrection; HLC-order labels; inflated meta rewritten; import pin; shuffle replay identity |
+| M2a-e1 | E1 honesty: do not claim EXEMPLAR E1 | done(LEDGER M1-e1 wording) | kill + clock remain separate suites; no pre-kill projection |
+| M2a-e4 | E4 honesty: SEAL/TRUNCATE N/A on single-txn backend | done(LEDGER M1-e4 wording) | failpoint matrix kept; not EXEMPLAR E4 |
 | M2a-m0 | CX-03 AAD slot-hash; CX-04 frontier tip; CX-05 resume; CX-06 WAL MUSTs + vectors | open | blocks freeze and M3; not current local CRUD |
 | M2a-relay | CX-08 accepted-set + RELAY-SPEC rewrite (docs/vectors only) | open | blocks M3 start |
 | M2a-schema | persist M0b IR + SchemaId; stamp `ep`; enforce `deps`; NAPI `applySchema` | open | replaces JSON pin |

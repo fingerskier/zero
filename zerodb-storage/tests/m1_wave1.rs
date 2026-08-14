@@ -147,6 +147,28 @@ fn open_recovers_hlc_from_oplog_when_meta_is_stale() {
 }
 
 #[test]
+fn open_rewrites_inflated_hlc_meta_down_to_oplog_max() {
+    let path = tmp_db("hlc-inflated");
+    let mut store = LocalStore::init(&path).unwrap();
+    let node = store.create_node("Todo").unwrap();
+    store.set_lww(&node, "title", "only").unwrap();
+    let (max_p, max_l) = max_op_ts(&path);
+    drop(store);
+
+    set_meta_u64(&path, "hlc_p", max_p.saturating_add(86_400_000));
+    set_meta_u64(&path, "hlc_l", 9);
+
+    let _ = LocalStore::open(&path).unwrap();
+    let meta_p = meta_u64(&path, "hlc_p").unwrap_or(0);
+    let meta_l = meta_u64(&path, "hlc_l").unwrap_or(0) as u16;
+    assert_eq!(
+        (meta_p, meta_l),
+        (max_p, max_l),
+        "inflated meta must not stay ahead of the oplog (DQ-7 / WAL recover)"
+    );
+}
+
+#[test]
 fn replay_all_restores_hlc_high_water_from_oplog() {
     let path = tmp_db("hlc-replay");
     let mut store = LocalStore::init(&path).unwrap();

@@ -224,3 +224,99 @@ fn create_tombstone_permutations_converge_and_survive_replay() {
         normalized_nodes(&b, &dest_tc)
     );
 }
+
+#[test]
+fn same_id_create_after_tombstone_does_not_resurrect() {
+    let path = tmp_db("same-id");
+    let mut store = LocalStore::init(&path).unwrap();
+    let (node, _) = store.create_node_with_op("Todo").unwrap();
+    store.set_lww(&node, "title", "v1").unwrap();
+    store.delete_node(&node).unwrap();
+    assert!(store.is_deleted(&node).unwrap());
+
+    store.create_node_at(&node, "Todo").unwrap();
+    assert!(
+        store.is_deleted(&node).unwrap(),
+        "a second CreateNode of the same id must not clear the tombstone"
+    );
+    assert!(
+        store.get_lww(&node, "title").unwrap().is_none(),
+        "deleted node properties stay hidden"
+    );
+
+    store.replay_all().unwrap();
+    assert!(store.is_deleted(&node).unwrap());
+}
+
+#[test]
+fn conflicting_create_labels_converge_on_hlc_order() {
+    let source_path = tmp_db("label-src");
+    let dest_path = tmp_db("label-dest");
+    let mut source = LocalStore::init(&source_path).unwrap();
+    let (node, _) = source.create_node_with_op("Alpha").unwrap();
+    source.create_node_at(&node, "Beta").unwrap();
+
+    let report = source.inspect(&source_path).unwrap();
+    let row = report.nodes.iter().find(|n| n.id == node).unwrap();
+    assert_eq!(row.label, "Beta", "later CreateNode wins the label");
+
+    let mut bundle = source.export_all().unwrap();
+    bundle.ops.reverse();
+    let mut dest = LocalStore::init(&dest_path).unwrap();
+    dest.import_bundle(&bundle).unwrap();
+    dest.replay_all().unwrap();
+    let dest_report = dest.inspect(&dest_path).unwrap();
+    let dest_row = dest_report.nodes.iter().find(|n| n.id == node).unwrap();
+    assert_eq!(
+        dest_row.label, "Beta",
+        "label must be set-derived from HLC order, not import order"
+    );
+}
+
+#[test]
+fn shuffled_import_matches_source_after_replay() {
+    let source_path = tmp_db("shuffle-src");
+    let dest_path = tmp_db("shuffle-dest");
+    let mut source = LocalStore::init(&source_path).unwrap();
+    let a = source.create_node("Todo").unwrap();
+    let b = source.create_node("Note").unwrap();
+    source.set_lww(&a, "title", "milk").unwrap();
+    source.flag_enable(&a, "done").unwrap();
+    source.set_add(&a, "tags", "errand").unwrap();
+    source.set_lww(&b, "title", "aside").unwrap();
+    source.delete_node(&b).unwrap();
+
+    let mut bundle = source.export_all().unwrap();
+    // Deterministic shuffle: rotate by 3, then reverse.
+    let n = bundle.ops.len();
+    bundle.ops.rotate_left(n.min(3));
+    bundle.ops.reverse();
+
+    let mut dest = LocalStore::init(&dest_path).unwrap();
+    dest.import_bundle(&bundle).unwrap();
+    dest.replay_all().unwrap();
+    assert_eq!(
+        normalized_nodes(&dest, &dest_path),
+        normalized_nodes(&source, &source_path)
+    );
+}
+
+#[test]
+fn import_rejects_crdt_that_breaks_schema_pin() {
+    let src_path = tmp_db("pin-src");
+    let dst_path = tmp_db("pin-dst");
+    let mut src = LocalStore::init(&src_path).unwrap();
+    let node = src.create_node("Todo").unwrap();
+    src.gcounter_inc(&node, "title", 1).unwrap();
+
+    let mut dst = LocalStore::init(&dst_path).unwrap();
+    dst.apply_schema_json(r#"{"nodes":{"Todo":{"props":{"title":"lww"}}}}"#)
+        .unwrap();
+    let err = dst
+        .import_bundle(&src.export_all().unwrap())
+        .expect_err("pinned title:lww must reject a remote gcounter on title");
+    assert!(
+        err.to_string().contains("schema pin"),
+        "got: {err}"
+    );
+}

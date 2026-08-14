@@ -297,11 +297,23 @@ impl<B: StoreBackend> LocalStore<B> {
     /// Create a node, returning `(node_hex, op_id_hex)`.
     pub fn create_node_with_op(&mut self, label: &str) -> Result<(String, String), StoreError> {
         let node = Uuid::now_v7();
-        let node_bytes = *node.as_bytes();
-        let node_hex = hex::encode(node_bytes);
+        self.create_node_at(&hex::encode(*node.as_bytes()), label)
+    }
+
+    /// Test/replay helper: CreateNode for a chosen 16-byte hex id.
+    /// Same rematerialize rules as [`create_node`] — a later create of a
+    /// tombstoned id does **not** resurrect it (any tombstone still deletes).
+    #[doc(hidden)]
+    pub fn create_node_at(
+        &mut self,
+        node_hex: &str,
+        label: &str,
+    ) -> Result<(String, String), StoreError> {
+        let node_bytes = decode_node(node_hex)?;
+        let node_hex = hex::encode(&node_bytes);
         let body = Cbor::Map(vec![
             ("label".into(), Cbor::Text(label.into())),
-            ("node".into(), Cbor::Bytes(node_bytes.to_vec())),
+            ("node".into(), Cbor::Bytes(node_bytes)),
         ]);
         let body_json = serde_json::json!({ "label": label, "node": node_hex });
         let op = self.commit_local(KIND_CREATE_NODE, body, body_json, |tx, _| {
@@ -558,7 +570,7 @@ impl<B: StoreBackend> LocalStore<B> {
             Some(true) => return Err(StoreError::Invalid("node is deleted".into())),
             Some(false) => {}
         }
-        self.check_schema_pin(node_hex, path, crdt)?;
+        check_schema_pin_tx(&self.backend, node_hex, path, crdt)?;
         let mut body_json = extra;
         let obj = body_json
             .as_object_mut()
@@ -653,34 +665,6 @@ impl<B: StoreBackend> LocalStore<B> {
             nodes,
             edges,
         })
-    }
-
-    fn check_schema_pin(&self, node_hex: &str, path: &str, crdt: &str) -> Result<(), StoreError> {
-        let Some(raw) = self.schema_json()? else {
-            return Ok(());
-        };
-        let v: serde_json::Value =
-            serde_json::from_str(&raw).map_err(|e| StoreError::Invalid(e.to_string()))?;
-        let label = self
-            .list_nodes()?
-            .into_iter()
-            .find(|(id, _, del)| id == node_hex && !*del)
-            .map(|(_, l, _)| l);
-        let Some(label) = label else {
-            return Ok(());
-        };
-        let Some(expected) = v
-            .pointer(&format!("/nodes/{label}/props/{path}"))
-            .and_then(|x| x.as_str())
-        else {
-            return Ok(()); // undeclared paths allowed in soft pin mode
-        };
-        if expected != crdt {
-            return Err(StoreError::Invalid(format!(
-                "schema pin: {label}.{path} expects crdt {expected}, got {crdt}"
-            )));
-        }
-        Ok(())
     }
 
     pub fn op_count(&self) -> Result<u64, StoreError> {
@@ -1219,6 +1203,10 @@ fn apply_wire(
             let path = wire.body["path"]
                 .as_str()
                 .ok_or_else(|| StoreError::Invalid("body.path".into()))?;
+            let crdt = wire.body["crdt"]
+                .as_str()
+                .ok_or_else(|| StoreError::Invalid("body.crdt".into()))?;
+            check_schema_pin_tx(tx, node, path, crdt)?;
             rematerialize_prop(tx, node, path)?;
         }
         _ => unreachable!("wire kind was validated"),
@@ -1533,6 +1521,10 @@ fn already_initialized(b: &dyn BackendTxn) -> Result<bool, StoreError> {
 /// Set-derived (SEC / I-1 / I-16): presence requires at least one CreateNode;
 /// `deleted` is true if any Tombstone exists for the node, independent of arrival order.
 /// Orphan tombstones (no create) leave no node row.
+/// Conflicting CreateNode labels: last create in HLC/`id` scan order wins
+/// (`op_scan_node_kinds` is ordered by physical, logical, id). A later
+/// CreateNode of a tombstoned id updates the label but does **not** clear
+/// `deleted`.
 fn rematerialize_node(tx: &dyn BackendTxn, node: &str) -> Result<(), StoreError> {
     let mut label: Option<String> = None;
     let mut tombstoned = false;
@@ -1906,21 +1898,59 @@ fn qvalue_to_json(v: &QValue) -> serde_json::Value {
     }
 }
 
-/// Durable HLC high-water = max over oplog timestamps; rewrite meta if stale (DQ-7).
+/// Durable HLC high-water = max over oplog timestamps. Meta is a cache:
+/// both stale-low **and** inflated-high meta are rewritten to the oplog max
+/// (WAL recover / DQ-7). An empty oplog leaves meta as-is.
 fn recover_hlc_from_oplog(b: &dyn BackendTxn) -> Result<(u64, u16), StoreError> {
-    let (max_p, max_l) = b.op_max_hlc()?.unwrap_or((0, 0));
+    let Some((p, l)) = b.op_max_hlc()? else {
+        let meta_p = meta_get_u64(b, "hlc_p")?.unwrap_or(0);
+        let meta_l = meta_get_u64(b, "hlc_l")?.unwrap_or(0) as u16;
+        return Ok((meta_p, meta_l));
+    };
     let meta_p = meta_get_u64(b, "hlc_p")?.unwrap_or(0);
     let meta_l = meta_get_u64(b, "hlc_l")?.unwrap_or(0) as u16;
-    let (p, l) = if (max_p, max_l) > (meta_p, meta_l) {
-        (max_p, max_l)
-    } else {
-        (meta_p, meta_l)
-    };
     if (p, l) != (meta_p, meta_l) {
         meta_set_u64(b, "hlc_p", p)?;
         meta_set_u64(b, "hlc_l", l as u64)?;
     }
     Ok((p, l))
+}
+
+/// Soft schema pin: declared (label, path) must match CRDT. Undeclared
+/// paths and unknown/deleted nodes are allowed. Enforced on local mutate
+/// **and** import (`apply_wire`).
+fn check_schema_pin_tx(
+    tx: &dyn BackendTxn,
+    node_hex: &str,
+    path: &str,
+    crdt: &str,
+) -> Result<(), StoreError> {
+    let Some(raw) = tx.meta_get("schema_json")? else {
+        return Ok(());
+    };
+    let raw = String::from_utf8_lossy(&raw);
+    let v: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let label = tx
+        .node_list()?
+        .into_iter()
+        .find(|(id, _, del)| id == node_hex && !*del)
+        .map(|(_, l, _)| l);
+    let Some(label) = label else {
+        return Ok(());
+    };
+    let Some(expected) = v
+        .pointer(&format!("/nodes/{label}/props/{path}"))
+        .and_then(|x| x.as_str())
+    else {
+        return Ok(());
+    };
+    if expected != crdt {
+        return Err(StoreError::Invalid(format!(
+            "schema pin: {label}.{path} expects crdt {expected}, got {crdt}"
+        )));
+    }
+    Ok(())
 }
 
 fn ensure_storage_format_version(b: &dyn BackendTxn) -> Result<(), StoreError> {

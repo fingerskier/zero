@@ -1,5 +1,10 @@
 //! E1 hard evidence: kill-not-shutdown durability + HLC monotonicity under
-//! wall-clock rollback across restart (doc/EXEMPLAR.md E1; plan/PLAN.md §5.3).
+//! wall-clock rollback across restart.
+//!
+//! Honesty (M2a-e1): this is **not** the single EXEMPLAR E1 scenario.
+//! Kill and 1h clock-rollback are separate tests. The kill loop asserts
+//! `ops > prev_ops` plus replay/import identity — it does not snapshot a
+//! pre-kill committed projection.
 
 use std::path::PathBuf;
 use std::process::Command;
