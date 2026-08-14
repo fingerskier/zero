@@ -4,9 +4,9 @@
 use ed25519_dalek::{Signer, SigningKey};
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::relay::{
-    authenticate, peer_id_from_pk, DIR_RELAY_TO_PEER, DOMAIN_RELAY_AUTH, ERR_AUTH_FAILED, MSG_AUTH,
-    MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OPS, MSG_OP_ACK, MSG_SUBSCRIBE, MSG_SUBSCRIBED,
-    MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME,
+    DIR_RELAY_TO_PEER, DOMAIN_RELAY_AUTH, ERR_AUTH_FAILED, MSG_AUTH, MSG_CHALLENGE, MSG_ERROR,
+    MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
+    MSG_SYNC_RESPONSE, MSG_WELCOME, authenticate, peer_id_from_pk,
 };
 use zerodb_relay::{Relay, RelaySession};
 

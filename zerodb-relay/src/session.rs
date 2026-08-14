@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::relay::{
-    authenticate, negotiate_capabilities, retransmit, FrontierTip, HeldOp, ERR_AUTH_FAILED,
-    MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OPS, MSG_OP_ACK, MSG_SUBSCRIBE,
-    MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS,
+    ERR_AUTH_FAILED, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO,
+    MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE,
+    MSG_WELCOME, RELAY_CAPS, authenticate, negotiate_capabilities, retransmit,
 };
 
-use crate::store::{validated_root_hex, OpStore, StoredOp};
+use crate::store::{OpStore, StoredOp, validated_root_hex};
 
 #[derive(Debug, Error)]
 pub enum RelayError {
