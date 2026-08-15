@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use ed25519_dalek::SigningKey;
 use zerodb_core::cbor::{self, Cbor};
+use zerodb_core::merkle::{MerkleOp, merkle_root};
 use zerodb_core::relay::{
     MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST,
     MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth,
@@ -109,7 +110,10 @@ where
         request_id,
         Cbor::Map(vec![
             ("datastore".into(), Cbor::Text(ds.clone())),
-            ("accepted_root".into(), Cbor::Bytes(vec![0; 32])),
+            (
+                "accepted_root".into(),
+                Cbor::Bytes(accepted_root(&to_send)?),
+            ),
             ("cursor".into(), local_frontier(store, &ds)?),
         ]),
     );
@@ -136,10 +140,10 @@ where
     }
     summary.received = incoming.len() as u32;
     if incoming.is_empty() {
-        if let Some(join) = join_ds {
-            if store.op_count()? == 0 {
-                store.adopt_empty_datastore(join)?;
-            }
+        if let Some(join) = join_ds
+            && store.op_count()? == 0
+        {
+            store.adopt_empty_datastore(join)?;
         }
         return Ok(summary);
     }
@@ -334,6 +338,24 @@ fn relay_to_wire(op: &Cbor) -> Result<WireOp, StoreError> {
         Cbor::Text(s) => serde_json::from_str(s).map_err(|e| err(&e.to_string())),
         _ => Err(err("catch-up op missing wire payload")),
     }
+}
+
+fn accepted_root(ops: &[WireOp]) -> Result<Vec<u8>, StoreError> {
+    if ops.is_empty() {
+        return Ok(vec![0; 32]);
+    }
+    let merkle: Vec<MerkleOp> = ops
+        .iter()
+        .map(|w| {
+            Ok(MerkleOp {
+                op_id: hex32(&w.id)?.try_into().map_err(|_| err("op_id"))?,
+                author: hex32(&w.author)?.try_into().map_err(|_| err("author"))?,
+                physical_ms: w.ts.p,
+                logical: w.ts.l,
+            })
+        })
+        .collect::<Result<_, StoreError>>()?;
+    Ok(merkle_root(&merkle).to_vec())
 }
 
 fn local_frontier<B: StoreBackend>(store: &LocalStore<B>, ds: &str) -> Result<Cbor, StoreError> {

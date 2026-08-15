@@ -1,7 +1,8 @@
 //! M3a RELAY 0.2.2 client: handshake, push signed LocalStore ops, catch-up.
 
 use zerodb_core::cbor::{self, Cbor};
-use zerodb_core::relay::MSG_OPS;
+use zerodb_core::merkle::{MerkleOp, merkle_root};
+use zerodb_core::relay::{MSG_OPS, MSG_SYNC_REQUEST};
 use zerodb_relay::Relay;
 use zerodb_storage::relay_client;
 use zerodb_storage::{LocalStore, MemoryBackend, StoreError};
@@ -19,6 +20,52 @@ fn frame_type(frame: &[u8]) -> u8 {
             .expect("envelope type"),
         _ => panic!("envelope is not a map"),
     }
+}
+
+fn map_get<'a>(c: &'a Cbor, k: &str) -> &'a Cbor {
+    static NULL: Cbor = Cbor::Null;
+    match c {
+        Cbor::Map(ents) => ents
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v)
+            .unwrap_or(&NULL),
+        _ => &NULL,
+    }
+}
+
+fn hex32(s: &str) -> [u8; 32] {
+    assert_eq!(s.len(), 64, "expected 32-byte hex");
+    let mut out = [0u8; 32];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("hex");
+    }
+    out
+}
+
+fn sync_accepted_root(frame: &[u8]) -> Vec<u8> {
+    assert_eq!(frame_type(frame), MSG_SYNC_REQUEST);
+    let c = cbor::decode(frame).expect("envelope cbor");
+    match map_get(map_get(&c, "payload"), "accepted_root") {
+        Cbor::Bytes(b) => b.clone(),
+        other => panic!("accepted_root not bytes: {other:?}"),
+    }
+}
+
+fn merkle_of_ds(store: &LocalStore<MemoryBackend>, ds: &str) -> [u8; 32] {
+    let bundle = store.export_all().unwrap();
+    let ops: Vec<MerkleOp> = bundle
+        .ops
+        .iter()
+        .filter(|w| w.ds == ds)
+        .map(|w| MerkleOp {
+            op_id: hex32(&w.id),
+            author: hex32(&w.author),
+            physical_ms: w.ts.p,
+            logical: w.ts.l,
+        })
+        .collect();
+    merkle_root(&ops)
 }
 
 fn drive(
@@ -186,4 +233,65 @@ fn empty_join_adopts_target_ds_when_relay_has_no_ops() {
         "A must catch up B's write, {caught:?}"
     );
     assert_eq!(a.get_lww(&node, "title").unwrap().as_deref(), Some("seed"));
+}
+
+#[test]
+fn nonempty_store_sends_merkle_accepted_root() {
+    let mut a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    let node = a.create_node("Todo").unwrap();
+    a.set_lww(&node, "title", "milk").unwrap();
+    let ds = a.datastore_id_hex();
+    let expected = merkle_of_ds(&a, &ds);
+    assert_ne!(
+        expected, [0u8; 32],
+        "fixture must have a nonzero merkle root"
+    );
+
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    let mut seen = None;
+    relay_client::sync(&mut a, None, |frame| {
+        if frame_type(frame) == MSG_SYNC_REQUEST {
+            seen = Some(sync_accepted_root(frame));
+        }
+        sess.handle(frame)
+            .map_err(|e| StoreError::Invalid(e.to_string()))
+    })
+    .expect("relay client session");
+
+    let root = seen.expect("SYNC_REQUEST");
+    assert_eq!(root.len(), 32);
+    assert_ne!(
+        root,
+        vec![0u8; 32],
+        "nonempty store must not send the zero sentinel"
+    );
+    assert_eq!(root.as_slice(), expected.as_slice());
+}
+
+#[test]
+fn empty_store_sends_zero_accepted_root() {
+    let a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    let mut b = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    let ds = a.datastore_id_hex();
+    assert_eq!(b.op_count().unwrap(), 0);
+
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    let mut seen = None;
+    relay_client::sync(&mut b, Some(&ds), |frame| {
+        if frame_type(frame) == MSG_SYNC_REQUEST {
+            seen = Some(sync_accepted_root(frame));
+        }
+        sess.handle(frame)
+            .map_err(|e| StoreError::Invalid(e.to_string()))
+    })
+    .expect("relay client session");
+
+    let root = seen.expect("SYNC_REQUEST");
+    assert_eq!(
+        root,
+        vec![0u8; 32],
+        "empty join must still send the zero sentinel"
+    );
 }
