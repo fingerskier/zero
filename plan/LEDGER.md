@@ -109,7 +109,8 @@ Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
 | M3a | L2 relay + offline catch-up (E3) | in-progress | M2, M0c/M0f | L | internal |
 | M3a-transcripts | RELAY 0.2.2 handshake / dual-root / resume / reject-ack frames | done(`relay-transcript` 6) | two-language vectors RELAY-HELLO-001/002/003, ROOT-001, RESUME-001, REJECT-001 |
 | M3a-relay | L2 `zerodb-relay` process | done(`9603a6c` / `m3a_process`) | handshake, SQLite validated oplog, dual-root SYNC (no accepted_root), cursor catch-up, REJECT DECODE, E3-lite; `zerodb-relay --bind`; no Merkle walk, no authz |
-| M3a-client | LocalStore + NAPI RELAY client | done(`relay_client` 3 + `m3a-relay.test.mjs`) | handshake, signed-op push, catch-up adopt, resume cursor; `Database.connectRelay`; no Merkle walk, no authz, not EXEMPLAR E3 |
+| M3a-client | LocalStore + NAPI RELAY client | done(`relay_client` 7 + `m3a-relay.test.mjs`) | handshake, signed-op push, catch-up adopt, resume cursor; `Database.connectRelay`; no Merkle walk, no authz, not EXEMPLAR E3 |
+| M3a-e2-live | E2-live CRDT matrix + E3-lite 3-peer catch-up | done(`relay_client` concurrent_crdts + three_peer + `m3a-relay.test.mjs` 3) | same `sync()` / `connectRelay`; concurrent LWW/ORSet/Flag/PNCounter; C offline while A/B write; B sqlite close/reopen (not process death); C catch-up from R alone; merkle/op-id match; resume `received=0`. ~20–70 ops. **Not** EXEMPLAR E2 equal-ts, **not** 1000-op E3, no Merkle walk, no authz |
 | M3b | Security: auth, envelope, negatives (E5–E8) | open | M3a, M0d | L | internal |
 | M3c | Interop TS wire peer + release | open | M3b | M | `v0.1.0` |
 | M4a | Browser/WASM/WebRTC/React | open | M3c | L | feature |
