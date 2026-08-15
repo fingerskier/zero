@@ -69,11 +69,18 @@ function startRelay(dbPath) {
       buf += chunk.toString()
       const m = buf.match(/listening on (ws:\/\/\S+)/)
       if (m) {
+        const port = m[1].match(/:(\d+)\/?$/)
+        if (!port) {
+          proc.kill()
+          reject(new Error(`zerodb-relay listen line had no port: ${m[1]}`))
+          return
+        }
         ready = true
         clearTimeout(timer)
         proc.stderr.off('data', onData)
         proc.stdout.off('data', onData)
-        resolve({ proc, url: m[1].replace(/\/$/, '') })
+        // Never feed the printed host to tungstenite (Windows IPv6 / mapped Display).
+        resolve({ proc, url: `ws://127.0.0.1:${port[1]}` })
       }
     }
     proc.stderr.on('data', onData)

@@ -70,11 +70,13 @@ where
             Cbor::Bytes(sign_auth(&seed, &nonce).to_vec()),
         )]),
     );
-    expect_type(
+    let welcome = expect_type(
         first_reply(handle(&auth).map_err(map_h)?)?,
         MSG_WELCOME,
         "WELCOME",
     )?;
+    let (_, _, welcome_pl) = decode_env(&welcome)?;
+    let (max_batch_ops, max_batch_bytes) = welcome_limits(&welcome_pl);
 
     let ds = join_ds
         .map(str::to_string)
@@ -82,41 +84,29 @@ where
 
     let local = store.export_all()?;
     let to_send: Vec<WireOp> = local.ops.into_iter().filter(|w| w.ds == ds).collect();
+    let mut request_id = 3u32;
     if !to_send.is_empty() {
         summary.sent = to_send.len() as u32;
         let ops_cbor = to_send
             .iter()
             .map(wire_to_relay)
             .collect::<Result<Vec<_>, _>>()?;
-        let frame = encode_env(
-            MSG_OPS,
-            3,
-            Cbor::Map(vec![
-                ("datastore".into(), Cbor::Text(ds.clone())),
-                ("operations".into(), Cbor::Array(ops_cbor)),
-            ]),
-        );
-        let ack = expect_type(
-            first_reply(handle(&frame).map_err(map_h)?)?,
-            MSG_OP_ACK,
-            "OP_ACK",
-        )?;
-        let (_, _, ack_pl) = decode_env(&ack)?;
-        if let Cbor::Array(outcomes) = map_get(&ack_pl, "outcomes") {
-            for o in outcomes {
-                match text(map_get(o, "outcome")) {
-                    Some("ACCEPT") => summary.ack_accepted += 1,
-                    Some("DUPLICATE") => summary.ack_duplicate += 1,
-                    Some("REJECT") => summary.ack_rejected += 1,
-                    _ => {}
-                }
-            }
+        for batch in split_ops_batches(&ds, &ops_cbor, max_batch_ops, max_batch_bytes)? {
+            let frame = encode_env(MSG_OPS, request_id, ops_payload(&ds, &batch));
+            request_id = request_id.saturating_add(1);
+            let ack = expect_type(
+                first_reply(handle(&frame).map_err(map_h)?)?,
+                MSG_OP_ACK,
+                "OP_ACK",
+            )?;
+            let (_, _, ack_pl) = decode_env(&ack)?;
+            tally_ack(&mut summary, &ack_pl);
         }
     }
 
     let sync_req = encode_env(
         MSG_SYNC_REQUEST,
-        4,
+        request_id,
         Cbor::Map(vec![
             ("datastore".into(), Cbor::Text(ds.clone())),
             ("accepted_root".into(), Cbor::Bytes(vec![0; 32])),
@@ -146,6 +136,11 @@ where
     }
     summary.received = incoming.len() as u32;
     if incoming.is_empty() {
+        if let Some(join) = join_ds {
+            if store.op_count()? == 0 {
+                store.adopt_empty_datastore(join)?;
+            }
+        }
         return Ok(summary);
     }
     let bundle = ExportBundle {
@@ -171,6 +166,73 @@ where
     summary.applied = applied;
     summary.skipped = skipped;
     Ok(summary)
+}
+
+const DEFAULT_MAX_BATCH_OPS: usize = 64;
+const DEFAULT_MAX_BATCH_BYTES: usize = 16_777_216;
+
+fn welcome_limits(welcome: &Cbor) -> (usize, usize) {
+    let limits = map_get(welcome, "limits");
+    let ops = match map_get(limits, "max_batch_ops") {
+        Cbor::Uint(n) if *n > 0 => *n as usize,
+        _ => DEFAULT_MAX_BATCH_OPS,
+    };
+    let bytes = match map_get(limits, "max_batch_bytes") {
+        Cbor::Uint(n) if *n > 0 => *n as usize,
+        _ => DEFAULT_MAX_BATCH_BYTES,
+    };
+    (ops, bytes)
+}
+
+fn ops_payload(ds: &str, ops: &[Cbor]) -> Cbor {
+    Cbor::Map(vec![
+        ("datastore".into(), Cbor::Text(ds.into())),
+        ("operations".into(), Cbor::Array(ops.to_vec())),
+    ])
+}
+
+fn split_ops_batches(
+    ds: &str,
+    ops: &[Cbor],
+    max_ops: usize,
+    max_bytes: usize,
+) -> Result<Vec<Vec<Cbor>>, StoreError> {
+    let max_ops = max_ops.max(1);
+    let mut out = Vec::new();
+    let mut cur: Vec<Cbor> = Vec::new();
+    for op in ops {
+        cur.push(op.clone());
+        let over_ops = cur.len() > max_ops;
+        let over_bytes = encode_env(MSG_OPS, 0, ops_payload(ds, &cur)).len() > max_bytes;
+        if over_ops || over_bytes {
+            if cur.len() == 1 {
+                return Err(err("single op exceeds WELCOME batch limits"));
+            }
+            let last = cur.pop().expect("batch had more than one op");
+            out.push(std::mem::take(&mut cur));
+            cur.push(last);
+            if encode_env(MSG_OPS, 0, ops_payload(ds, &cur)).len() > max_bytes {
+                return Err(err("single op exceeds max_batch_bytes"));
+            }
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    Ok(out)
+}
+
+fn tally_ack(summary: &mut RelaySyncSummary, ack_pl: &Cbor) {
+    if let Cbor::Array(outcomes) = map_get(ack_pl, "outcomes") {
+        for o in outcomes {
+            match text(map_get(o, "outcome")) {
+                Some("ACCEPT") => summary.ack_accepted += 1,
+                Some("DUPLICATE") => summary.ack_duplicate += 1,
+                Some("REJECT") => summary.ack_rejected += 1,
+                _ => {}
+            }
+        }
+    }
 }
 
 fn map_h<E: std::fmt::Display>(e: E) -> StoreError {

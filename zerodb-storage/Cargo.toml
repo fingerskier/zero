@@ -29,6 +29,7 @@ uuid.workspace = true
 getrandom.workspace = true
 
 [dev-dependencies]
+zerodb-core = { path = "../zerodb-core" }
 zerodb-relay = { path = "../zerodb-relay" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
