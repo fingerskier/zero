@@ -5,10 +5,13 @@ use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 use zerodb_core::cbor::{self, Cbor};
+use zerodb_core::merkle::{BUCKET_WIDTH_MS, MERKLE_FORMAT_VERSION, MerkleTree};
 use zerodb_core::relay::{
-    ERR_AUTH_FAILED, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO,
-    MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE,
-    MSG_WELCOME, RELAY_CAPS, authenticate, negotiate_capabilities, retransmit,
+    ERR_AUTH_FAILED, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH,
+    MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE,
+    MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE,
+    MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, authenticate,
+    negotiate_capabilities, retransmit,
 };
 
 use crate::store::{OpStore, StoredOp, validated_root_hex};
@@ -81,6 +84,7 @@ impl Relay {
             nonce,
             session_id,
             subscriptions: HashSet::new(),
+            walk_snapshots: HashMap::new(),
         }
     }
 
@@ -107,7 +111,9 @@ enum Phase {
         pk: [u8; 32],
         hello_caps: Vec<String>,
     },
-    Authed,
+    Authed {
+        caps: Vec<String>,
+    },
     Closed,
 }
 
@@ -117,11 +123,12 @@ pub struct RelaySession {
     nonce: [u8; 32],
     session_id: u64,
     subscriptions: HashSet<String>,
+    walk_snapshots: HashMap<String, Vec<StoredOp>>,
 }
 
 impl RelaySession {
     pub fn is_authed(&self) -> bool {
-        matches!(self.phase, Phase::Authed)
+        matches!(self.phase, Phase::Authed { .. })
     }
 
     pub fn is_closed(&self) -> bool {
@@ -156,6 +163,9 @@ impl RelaySession {
             MSG_AUTH => self.on_auth(&env),
             MSG_OPS => self.require_auth(&env, |s, e| s.on_ops(e)),
             MSG_SYNC_REQUEST => self.require_auth(&env, |s, e| s.on_sync(e)),
+            MSG_MERKLE_NODE_REQUEST => self.require_auth(&env, |s, e| s.on_merkle_node(e)),
+            MSG_MERKLE_LEAF_REQUEST => self.require_auth(&env, |s, e| s.on_merkle_leaf(e)),
+            MSG_DELTA_REQUEST => self.require_auth(&env, |s, e| s.on_delta(e)),
             MSG_SUBSCRIBE => self.require_auth(&env, |s, e| s.on_subscribe(e)),
             _ => Ok(vec![error_frame(
                 env.request_id,
@@ -243,7 +253,9 @@ impl RelaySession {
         }
         let offered: Vec<&str> = hello_caps.iter().map(|s| s.as_str()).collect();
         let caps = negotiate_capabilities(&offered, RELAY_CAPS);
-        self.phase = Phase::Authed;
+        self.phase = Phase::Authed {
+            caps: caps.iter().map(|c| (*c).to_string()).collect(),
+        };
         Ok(vec![encode_env(
             MSG_WELCOME,
             request_id,
@@ -299,43 +311,150 @@ impl RelaySession {
         )])
     }
 
+    fn has_cap(&self, cap: &str) -> bool {
+        matches!(&self.phase, Phase::Authed { caps } if caps.iter().any(|c| c == cap))
+    }
+
     fn on_sync(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
         let ds = text(map_get(&env.payload, "datastore"))?;
         let cursor = map_get(&env.payload, "cursor");
         let frontier = parse_frontier(cursor);
         let guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         let stored = guard.store.list(&ds)?;
-        let root = hex::decode(validated_root_hex(&stored)).unwrap_or(vec![0; 32]);
         drop(guard);
+        let tree = MerkleTree::build(&stored.iter().map(StoredOp::merkle).collect::<Vec<_>>());
+        let root = tree.root().to_vec();
+        let merkle_walk = self.has_cap("merkle-walk-v1");
+        let mut response = vec![
+            ("datastore".into(), Cbor::Text(ds.clone())),
+            ("validated_root".into(), Cbor::Bytes(root)),
+        ];
+        if merkle_walk {
+            response.extend([
+                (
+                    "merkle_format_version".into(),
+                    Cbor::Uint(MERKLE_FORMAT_VERSION as u64),
+                ),
+                ("bucket_width_ms".into(), Cbor::Uint(BUCKET_WIDTH_MS)),
+                (
+                    "bucket_indices".into(),
+                    Cbor::Array(
+                        tree.active_bucket_indices()
+                            .into_iter()
+                            .map(Cbor::Uint)
+                            .collect(),
+                    ),
+                ),
+            ]);
+            // Freeze the responder view for all node/leaf/delta requests in this walk.
+            self.walk_snapshots.insert(ds.clone(), stored);
+            return Ok(vec![encode_env(
+                MSG_SYNC_RESPONSE,
+                env.request_id,
+                Cbor::Map(response),
+            )]);
+        }
+
         let mut out = vec![encode_env(
             MSG_SYNC_RESPONSE,
             env.request_id,
-            Cbor::Map(vec![
-                ("datastore".into(), Cbor::Text(ds.clone())),
-                ("validated_root".into(), Cbor::Bytes(root)),
-            ]),
+            Cbor::Map(response),
         )];
+        // Compatibility path for clients that did not negotiate merkle-walk-v1.
         let held: Vec<HeldOp> = stored.iter().map(StoredOp::held).collect();
         let want: HashSet<String> = retransmit(&held, &frontier, &[]).into_iter().collect();
-        let send: Vec<StoredOp> = stored
+        let operations = stored
             .into_iter()
             .filter(|o| want.contains(&hex::encode(o.op_id)))
-            .collect();
-        let operations: Vec<Cbor> = send
-            .into_iter()
-            .map(|o| {
-                cbor::decode(&o.body).unwrap_or_else(|_| {
-                    Cbor::Map(vec![
-                        ("op_id".into(), Cbor::Bytes(o.op_id.to_vec())),
-                        ("author".into(), Cbor::Bytes(o.author.to_vec())),
-                        ("physical_ms".into(), Cbor::Uint(o.physical_ms)),
-                        ("logical".into(), Cbor::Uint(o.logical as u64)),
-                    ])
-                })
-            })
+            .map(stored_to_cbor)
             .collect();
         out.extend(chunk_ops_frames(&ds, operations));
         Ok(out)
+    }
+
+    fn on_merkle_node(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        let ds = text(map_get(&env.payload, "datastore"))?;
+        let level = uint(map_get(&env.payload, "level"))? as usize;
+        let index = uint(map_get(&env.payload, "index"))? as usize;
+        let stored = self
+            .walk_snapshots
+            .get(&ds)
+            .ok_or_else(|| RelayError::Protocol("no frozen merkle walk".into()))?;
+        let tree = MerkleTree::build(&stored.iter().map(StoredOp::merkle).collect::<Vec<_>>());
+        let hash = tree
+            .levels
+            .get(level)
+            .and_then(|nodes| nodes.get(index))
+            .ok_or_else(|| RelayError::Protocol("merkle node out of range".into()))?;
+        let (left, right) = tree
+            .node_children(level, index)
+            .ok_or_else(|| RelayError::Protocol("merkle node has no children".into()))?;
+        Ok(vec![encode_env(
+            MSG_MERKLE_NODE_RESPONSE,
+            env.request_id,
+            Cbor::Map(vec![
+                ("datastore".into(), Cbor::Text(ds)),
+                ("level".into(), Cbor::Uint(level as u64)),
+                ("index".into(), Cbor::Uint(index as u64)),
+                ("hash".into(), Cbor::Bytes(hash.to_vec())),
+                ("left".into(), Cbor::Bytes(left.to_vec())),
+                ("right".into(), Cbor::Bytes(right.to_vec())),
+            ]),
+        )])
+    }
+
+    fn on_merkle_leaf(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        let ds = text(map_get(&env.payload, "datastore"))?;
+        let leaf_index = uint(map_get(&env.payload, "leaf_index"))? as usize;
+        let stored = self
+            .walk_snapshots
+            .get(&ds)
+            .ok_or_else(|| RelayError::Protocol("no frozen merkle walk".into()))?;
+        let tree = MerkleTree::build(&stored.iter().map(StoredOp::merkle).collect::<Vec<_>>());
+        let leaf = tree
+            .leaves
+            .get(leaf_index)
+            .ok_or_else(|| RelayError::Protocol("merkle leaf out of range".into()))?;
+        Ok(vec![encode_env(
+            MSG_MERKLE_LEAF_RESPONSE,
+            env.request_id,
+            Cbor::Map(vec![
+                ("datastore".into(), Cbor::Text(ds)),
+                ("leaf_index".into(), Cbor::Uint(leaf_index as u64)),
+                (
+                    "bucket_index".into(),
+                    leaf.bucket_index.map(Cbor::Uint).unwrap_or(Cbor::Null),
+                ),
+                (
+                    "op_ids".into(),
+                    Cbor::Array(
+                        leaf.op_ids
+                            .iter()
+                            .map(|id| Cbor::Bytes(id.to_vec()))
+                            .collect(),
+                    ),
+                ),
+            ]),
+        )])
+    }
+
+    fn on_delta(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        let ds = text(map_get(&env.payload, "datastore"))?;
+        let wanted: HashSet<[u8; 32]> = match map_get(&env.payload, "op_ids") {
+            Cbor::Array(ids) => ids.iter().filter_map(|id| take32(id).ok()).collect(),
+            _ => return Err(RelayError::Protocol("delta op_ids".into())),
+        };
+        let stored = self
+            .walk_snapshots
+            .get(&ds)
+            .ok_or_else(|| RelayError::Protocol("no frozen merkle walk".into()))?;
+        let operations: Vec<Cbor> = stored
+            .iter()
+            .filter(|op| wanted.contains(&op.op_id))
+            .cloned()
+            .map(stored_to_cbor)
+            .collect();
+        Ok(chunk_delta_frames(&ds, env.request_id, operations))
     }
 
     fn on_subscribe(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
@@ -423,6 +542,17 @@ fn error_frame(request_id: u32, code: u16, message: &str, fatal: bool) -> Vec<u8
     )
 }
 
+fn stored_to_cbor(o: StoredOp) -> Cbor {
+    cbor::decode(&o.body).unwrap_or_else(|_| {
+        Cbor::Map(vec![
+            ("op_id".into(), Cbor::Bytes(o.op_id.to_vec())),
+            ("author".into(), Cbor::Bytes(o.author.to_vec())),
+            ("physical_ms".into(), Cbor::Uint(o.physical_ms)),
+            ("logical".into(), Cbor::Uint(o.logical as u64)),
+        ])
+    })
+}
+
 fn ops_forward_frame(ds: &str, operations: Vec<Cbor>) -> Vec<u8> {
     encode_env(
         MSG_OPS,
@@ -456,6 +586,47 @@ fn chunk_ops_frames(ds: &str, operations: Vec<Cbor>) -> Vec<Vec<u8>> {
         frames.push(ops_forward_frame(ds, chunk));
     }
     frames
+}
+
+fn delta_frame(ds: &str, request_id: u32, operations: Vec<Cbor>, remaining: usize) -> Vec<u8> {
+    encode_env(
+        MSG_DELTA_BATCH,
+        request_id,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text(ds.into())),
+            ("operations".into(), Cbor::Array(operations)),
+            ("remaining".into(), Cbor::Uint(remaining as u64)),
+        ]),
+    )
+}
+
+fn chunk_delta_frames(ds: &str, request_id: u32, operations: Vec<Cbor>) -> Vec<Vec<u8>> {
+    if operations.is_empty() {
+        return vec![delta_frame(ds, request_id, vec![], 0)];
+    }
+    let mut chunks: Vec<Vec<Cbor>> = Vec::new();
+    let mut chunk = Vec::new();
+    for op in operations {
+        if !chunk.is_empty() {
+            let mut trial = chunk.clone();
+            trial.push(op.clone());
+            if chunk.len() >= MAX_BATCH_OPS
+                || delta_frame(ds, request_id, trial, 0).len() > MAX_BATCH_BYTES
+            {
+                chunks.push(std::mem::take(&mut chunk));
+            }
+        }
+        chunk.push(op);
+    }
+    if !chunk.is_empty() {
+        chunks.push(chunk);
+    }
+    let total = chunks.len();
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(i, chunk)| delta_frame(ds, request_id, chunk, total - i - 1))
+        .collect()
 }
 
 fn default_limits() -> Cbor {

@@ -84,7 +84,8 @@ export declare class Database {
    * Handshake, submit local ops for `datastore` (default: this store's
    * id), then SYNC catch-up. An empty store may pass a peer's
    * `datastoreId()` to join that datastore. Returns
-   * `{ sent, ackAccepted, ackDuplicate, ackRejected, received, applied, skipped }`.
+   * `{ sent, ackAccepted, ackDuplicate, ackRejected, received, applied,
+   * skipped, merkleNodes, merkleLeaves }`.
    */
   connectRelay(url: string, datastore?: string | undefined | null): any
   /**

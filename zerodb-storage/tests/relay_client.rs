@@ -1,10 +1,12 @@
 //! M3a RELAY 0.2.2 client: handshake, push signed LocalStore ops, catch-up.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use zerodb_core::cbor::{self, Cbor};
-use zerodb_core::merkle::{MerkleOp, merkle_root};
+use zerodb_core::merkle::{MerkleOp, empty_leaf, merkle_root};
 use zerodb_core::relay::{MSG_OPS, MSG_SYNC_REQUEST};
 use zerodb_relay::Relay;
 use zerodb_storage::relay_client;
@@ -101,6 +103,12 @@ fn remove_sqlite(path: &Path) {
     let _ = std::fs::remove_file(format!("{}-shm", path.display()));
 }
 
+static MERKLE_CLOCK_MS: AtomicU64 = AtomicU64::new(0);
+
+fn merkle_clock() -> u64 {
+    MERKLE_CLOCK_MS.load(Ordering::SeqCst)
+}
+
 #[test]
 fn two_stores_converge_through_in_process_relay() {
     let mut a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
@@ -126,6 +134,10 @@ fn two_stores_converge_through_in_process_relay() {
         caught.received >= 2,
         "B must receive A's ops, received={}",
         caught.received
+    );
+    assert!(
+        caught.merkle_leaves >= 1,
+        "catch-up must walk a Merkle leaf"
     );
     assert_eq!(b.datastore_id_hex(), ds);
     assert_eq!(b.get_lww(&node, "title").unwrap().as_deref(), Some("milk"));
@@ -291,7 +303,7 @@ fn nonempty_store_sends_merkle_accepted_root() {
 }
 
 #[test]
-fn empty_store_sends_zero_accepted_root() {
+fn empty_store_sends_canonical_empty_accepted_root() {
     let a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
     let mut b = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
     let ds = a.datastore_id_hex();
@@ -312,9 +324,45 @@ fn empty_store_sends_zero_accepted_root() {
     let root = seen.expect("SYNC_REQUEST");
     assert_eq!(
         root,
-        vec![0u8; 32],
-        "empty join must still send the zero sentinel"
+        empty_leaf().to_vec(),
+        "empty join must send the canonical empty-tree root"
     );
+}
+
+#[test]
+fn merkle_walk_prunes_matching_subtrees() {
+    let mut a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    a.set_test_clock(merkle_clock);
+    let base = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        - 240_000;
+    MERKLE_CLOCK_MS.store(base, Ordering::SeqCst);
+    let node = a.create_node("Todo").unwrap();
+    for bucket in 0..4u64 {
+        MERKLE_CLOCK_MS.store(base + bucket * 60_000, Ordering::SeqCst);
+        a.set_lww(&node, "bucketed", &format!("v{bucket}")).unwrap();
+    }
+
+    let relay = Relay::memory();
+    drive(&mut a, &mut relay.accept(), None);
+    let ds = a.datastore_id_hex();
+    let mut b = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    drive(&mut b, &mut relay.accept(), Some(&ds));
+
+    MERKLE_CLOCK_MS.store(base + 3 * 60_000 + 1, Ordering::SeqCst);
+    a.set_lww(&node, "bucketed", "tail").unwrap();
+    drive(&mut a, &mut relay.accept(), None);
+    let caught = drive(&mut b, &mut relay.accept(), Some(&ds));
+
+    assert_eq!(caught.merkle_leaves, 1, "only the changed leaf is fetched");
+    assert_eq!(
+        caught.merkle_nodes, 2,
+        "only the root-to-leaf path is walked"
+    );
+    assert_eq!(caught.received, 1);
+    assert_eq!(merkle_of_ds(&a, &ds), merkle_of_ds(&b, &ds));
 }
 
 /// E2-live (not full EXEMPLAR E2): concurrent LWW / ORSet / Flag / PNCounter
@@ -520,4 +568,86 @@ fn three_peer_offline_catchup_after_sqlite_reopen() {
     );
 
     remove_sqlite(&path_b);
+}
+
+/// Full EXEMPLAR E3: C is offline for the complete 1,000-write window; A and
+/// B publish interleaved quarters through the durable relay; B is hard-aborted
+/// after committing its third quarter and reopened; C then catches up from R
+/// alone. The child-mode branch deliberately never returns.
+#[test]
+fn full_exemplar_e3_1000_ops_hard_crash_and_relay_only_catchup() {
+    if std::env::var_os("ZERODB_E3_CRASH_CHILD").is_some() {
+        let path = PathBuf::from(std::env::var("ZERODB_E3_DB").unwrap());
+        let node = std::env::var("ZERODB_E3_NODE").unwrap();
+        let mut b = LocalStore::open(&path).unwrap();
+        for i in 0..250 {
+            b.set_add(&node, "events", &format!("b-crash-{i}")).unwrap();
+        }
+        std::process::abort();
+    }
+
+    let mut a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    let node = a.create_node("Todo").unwrap();
+    a.set_lww(&node, "title", "E3").unwrap();
+    let path_r = tmp_db("e3-full-relay");
+    let relay = Relay::open(&path_r).unwrap();
+    drive(&mut a, &mut relay.accept(), None);
+    let ds = a.datastore_id_hex();
+
+    let path_b = tmp_db("e3-full-b");
+    let mut b = LocalStore::init(&path_b).unwrap();
+    drive(&mut b, &mut relay.accept(), Some(&ds));
+    let mut c = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    drive(&mut c, &mut relay.accept(), Some(&ds));
+    let c_before = c.op_count().unwrap();
+
+    // Simulated one-hour partition: no C relay session occurs during this window.
+    for i in 0..250 {
+        a.set_add(&node, "events", &format!("a-first-{i}")).unwrap();
+        b.set_add(&node, "events", &format!("b-first-{i}")).unwrap();
+    }
+    drive(&mut a, &mut relay.accept(), None);
+    drive(&mut b, &mut relay.accept(), None);
+
+    drop(b);
+    let child = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("full_exemplar_e3_1000_ops_hard_crash_and_relay_only_catchup")
+        .arg("--nocapture")
+        .env("ZERODB_E3_CRASH_CHILD", "1")
+        .env("ZERODB_E3_DB", &path_b)
+        .env("ZERODB_E3_NODE", &node)
+        .status()
+        .expect("spawn B crash writer");
+    assert!(!child.success(), "B helper must terminate by hard abort");
+
+    let mut b = LocalStore::open(&path_b).unwrap();
+    assert_eq!(b.datastore_id_hex(), ds);
+    for i in 0..250 {
+        a.set_add(&node, "events", &format!("a-second-{i}"))
+            .unwrap();
+    }
+    drive(&mut a, &mut relay.accept(), None);
+    drive(&mut b, &mut relay.accept(), None);
+    drive(&mut a, &mut relay.accept(), None);
+
+    // A and B are now conceptually offline. C's only source is the relay snapshot.
+    let caught = drive(&mut c, &mut relay.accept(), Some(&ds));
+    assert_eq!(
+        caught.received, 1_000,
+        "C must receive the complete partition window"
+    );
+    assert_eq!(c.op_count().unwrap(), c_before + 1_000);
+    let events = c.get_prop(&node, "events").unwrap().unwrap();
+    assert_eq!(events.as_array().unwrap().len(), 1_000);
+
+    let root_a = merkle_of_ds(&a, &ds);
+    assert_eq!(root_a, merkle_of_ds(&b, &ds));
+    assert_eq!(root_a, merkle_of_ds(&c, &ds));
+    let resume = drive(&mut c, &mut relay.accept(), Some(&ds));
+    assert_eq!(resume.received, 0, "resume must not redeliver effects");
+
+    remove_sqlite(&path_b);
+    drop(relay);
+    remove_sqlite(&path_r);
 }

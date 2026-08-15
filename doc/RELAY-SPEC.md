@@ -3,7 +3,7 @@
 **Version:** 0.2.2-draft
 **Date:** 2026-08-14
 **Author:** Matt / Turing Automations
-**Status:** Draft — handshake, dual-root, resume-cursor, and reject-ack frames are specified and exercised by `relay-transcript` vectors. **No relay binary.** Canonical CBOR wire is still protocol v3.
+**Status:** Draft — handshake, dual-root, resume-cursor, reject-ack, and the experimental `merkle-walk-v1` traversal are implemented. Canonical CBOR wire is still protocol v3; no format freeze.
 **Companion to:** [ZeroDB Technical Specification](SPEC.md), [MERKLE.md](MERKLE.md), [AUTH.md](AUTH.md), [DELIVERY.md](DELIVERY.md), [KERNEL.md](KERNEL.md)
 
 ---
@@ -198,6 +198,7 @@ Known capability tokens (registry `relay_capabilities`; unknown tokens are ignor
 | Token | Meaning |
 |-------|---------|
 | `dual-root` | L2 messages carry `validated_root` and `accepted_root` separately (§7.4) |
+| `merkle-walk-v1` | Frozen-snapshot node/leaf traversal followed by an OpId delta (§4.3) |
 | `resume-cursor` | `SYNC_REQUEST` / `SUBSCRIBE` may carry `Cursor = { frontier, epoch }` (DELIVERY §4) |
 | `reject-ack` | `OP_ACK` lists per-op `ACCEPT` / `DUPLICATE` / `REJECT`; rejected OpIds are not retried |
 
@@ -273,7 +274,7 @@ A Level 2 relay that negotiated `dual-root` MUST include `validated_root`. It MU
 
 ### 4.3 Sync Protocol (L2)
 
-> **Provisional.** This message set is a placeholder pending ISSUES C3 (canonical Merkle tree, subtree traversal). As written it supports only the degenerate cases: roots already match, or the requester independently knows which hashes it lacks. **M0c** defines the canonical tree and sync state-machine transcripts; the complete traversal wire protocol ships M3 and will extend or replace `DELTA_REQUEST`.
+When `merkle-walk-v1` is negotiated, the responder freezes its datastore op set at `SYNC_RESPONSE`. The requester walks only mismatched subtrees, compares OpIds at mismatched leaves, and asks for the missing full operations. Concurrent writes land after the frozen walk and are discovered by a later root comparison/session.
 
 A Level 2 relay participates in sync as a peer — it has its own Merkle tree and oplog. Level 0 and Level 1 relays MUST reject these messages with `ERROR` (code `0x401`).
 
@@ -297,6 +298,9 @@ Required root is **direction-dependent** on both `SYNC_REQUEST` and `SYNC_RESPON
   datastore:       string
   validated_root:  MerkleRoot?     // required when the responder is the relay (R→P)
   accepted_root:   MerkleRoot?     // required when the responder is a peer (P→R)
+  merkle_format_version: uint8?    // required with merkle-walk-v1
+  bucket_width_ms: uint64?         // required with merkle-walk-v1
+  bucket_indices: [uint64]?        // responder active leaves, sorted ascending
 }
 ```
 
@@ -309,7 +313,7 @@ Equal `accepted_root` values between honest peers mean catch-up is complete. Equ
 ```
 {
   datastore:        string
-  missing_hashes:   [Hash]      // Subtree hashes the sender does not have
+  op_ids:           [OpId]      // Missing ids discovered from mismatched leaves
 }
 ```
 
@@ -335,6 +339,24 @@ Confirms convergence after delta exchange.
   merkle_root:  MerkleRoot      // Sender's updated Merkle root (should now match)
 }
 ```
+
+#### `MERKLE_NODE_REQUEST` (0x25) / `MERKLE_NODE_RESPONSE` (0x26) — ↔ [L2]
+
+The requester names a canonical padded-tree `(level, index)`. The responder returns that node's hash and two child hashes from the frozen snapshot. Level 0 is a leaf and is requested with `MERKLE_LEAF_REQUEST` instead.
+
+```text
+request:  { datastore, level: uint32, index: uint32 }
+response: { datastore, level, index, hash, left, right }
+```
+
+#### `MERKLE_LEAF_REQUEST` (0x27) / `MERKLE_LEAF_RESPONSE` (0x28) — ↔ [L2]
+
+```text
+request:  { datastore, leaf_index: uint32 }
+response: { datastore, leaf_index, bucket_index: uint64?, op_ids: [OpId] }
+```
+
+The requester computes `remote op_ids − local op_ids` and sends those ids in `DELTA_REQUEST`. Implementations MUST bound a walk and fail or restart if the responder cannot serve the frozen snapshot.
 
 ### 4.4 Operations
 
@@ -772,6 +794,10 @@ For relay-facilitated P2P upgrade or environments without WebSocket.
 | `0x22` | `DELTA_REQUEST` | ↔ | L2 |
 | `0x23` | `DELTA_BATCH` | ↔ | L2 |
 | `0x24` | `SYNC_ACK` | ↔ | L2 |
+| `0x25` | `MERKLE_NODE_REQUEST` | ↔ | L2 |
+| `0x26` | `MERKLE_NODE_RESPONSE` | ↔ | L2 |
+| `0x27` | `MERKLE_LEAF_REQUEST` | ↔ | L2 |
+| `0x28` | `MERKLE_LEAF_RESPONSE` | ↔ | L2 |
 | `0x30` | `OPS` | ↔ | L1 |
 | `0x31` | `OP_ACK` | R→P | L1 |
 | `0x40` | `PEER_LIST_REQUEST` | P→R | L0 |

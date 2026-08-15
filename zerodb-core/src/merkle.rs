@@ -161,6 +161,64 @@ impl MerkleTree {
         }
     }
 
+    /// Build a tree whose leaf positions are fixed by a remote active-bucket
+    /// manifest. A bucket absent locally is represented by the canonical empty
+    /// leaf, so missing buckets do not shift every later leaf position.
+    pub fn build_aligned(ops: &[MerkleOp], bucket_indices: &[u64]) -> Self {
+        if bucket_indices.is_empty() {
+            return Self::build(&[]);
+        }
+        let mut buckets: BTreeMap<u64, Vec<&MerkleOp>> = BTreeMap::new();
+        for op in ops {
+            buckets.entry(op.bucket_index()).or_default().push(op);
+        }
+        let empty = empty_leaf();
+        let mut leaves = Vec::with_capacity(bucket_indices.len().next_power_of_two());
+        for idx in bucket_indices {
+            let mut members = buckets.remove(idx).unwrap_or_default();
+            members.sort_by_key(|o| o.order_key());
+            let ids: Vec<[u8; 32]> = members.iter().map(|o| o.op_id).collect();
+            leaves.push(LeafSlot {
+                hash: if ids.is_empty() {
+                    empty
+                } else {
+                    leaf_hash(*idx, &ids)
+                },
+                bucket_index: Some(*idx),
+                op_ids: ids,
+            });
+        }
+        while !leaves.len().is_power_of_two() {
+            leaves.push(LeafSlot {
+                hash: empty,
+                bucket_index: None,
+                op_ids: vec![],
+            });
+        }
+        let mut level: Vec<[u8; 32]> = leaves.iter().map(|l| l.hash).collect();
+        let mut levels = vec![level.clone()];
+        while level.len() > 1 {
+            let next: Vec<[u8; 32]> = level
+                .chunks(2)
+                .map(|pair| node_hash(&pair[0], &pair[1]))
+                .collect();
+            levels.push(next.clone());
+            level = next;
+        }
+        Self {
+            levels,
+            leaves,
+            ops: ops.to_vec(),
+        }
+    }
+
+    pub fn active_bucket_indices(&self) -> Vec<u64> {
+        self.leaves
+            .iter()
+            .filter_map(|leaf| leaf.bucket_index)
+            .collect()
+    }
+
     pub fn node_children(&self, level: usize, index: usize) -> Option<([u8; 32], [u8; 32])> {
         if level == 0 {
             return None;
@@ -401,6 +459,14 @@ mod tests {
         let same = merkle_root(&[op(1, 0), op(2, 0)]);
         let multi = merkle_root(&[op(1, 0), op(2, 60_000)]);
         assert_ne!(same, multi);
+    }
+
+    #[test]
+    fn aligned_tree_preserves_remote_bucket_positions() {
+        let remote = MerkleTree::build(&[op(1, 60_000), op(2, 120_000)]);
+        let local = MerkleTree::build_aligned(&[op(2, 120_000)], &[1, 2]);
+        assert_ne!(remote.leaves[0].hash, local.leaves[0].hash);
+        assert_eq!(remote.leaves[1].hash, local.leaves[1].hash);
     }
 
     #[test]

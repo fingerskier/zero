@@ -10,7 +10,7 @@ import { blake3 } from './blake3.mjs';
 import { merkleRootOnce } from './merkle.mjs';
 
 export const DOMAIN_RELAY_AUTH = new TextEncoder().encode('zerodb-relay-auth-v1');
-export const RELAY_CAPS = ['dual-root', 'reject-ack', 'resume-cursor'];
+export const RELAY_CAPS = ['dual-root', 'merkle-walk-v1', 'reject-ack', 'resume-cursor'];
 export const ERR_AUTH_FAILED = 0x201;
 
 export const MSG_HELLO = 0x01;
@@ -19,6 +19,13 @@ export const MSG_AUTH = 0x03;
 export const MSG_WELCOME = 0x04;
 export const MSG_SYNC_REQUEST = 0x20;
 export const MSG_SYNC_RESPONSE = 0x21;
+export const MSG_DELTA_REQUEST = 0x22;
+export const MSG_DELTA_BATCH = 0x23;
+export const MSG_SYNC_ACK = 0x24;
+export const MSG_MERKLE_NODE_REQUEST = 0x25;
+export const MSG_MERKLE_NODE_RESPONSE = 0x26;
+export const MSG_MERKLE_LEAF_REQUEST = 0x27;
+export const MSG_MERKLE_LEAF_RESPONSE = 0x28;
 export const MSG_OPS = 0x30;
 export const MSG_OP_ACK = 0x31;
 export const MSG_ERROR = 0xff;
@@ -36,6 +43,9 @@ export const BYTE_FIELDS = new Set([
   'accepted_root',
   'op_id',
   'author',
+  'hash',
+  'left',
+  'right',
 ]);
 
 const SPKI_PREFIX = hexToBytes('302a300506032b6570032100');
@@ -104,6 +114,13 @@ export function knownMessageType(ty) {
     ty === MSG_ERROR ||
     ty === MSG_SYNC_REQUEST ||
     ty === MSG_SYNC_RESPONSE ||
+    ty === MSG_DELTA_REQUEST ||
+    ty === MSG_DELTA_BATCH ||
+    ty === MSG_SYNC_ACK ||
+    ty === MSG_MERKLE_NODE_REQUEST ||
+    ty === MSG_MERKLE_NODE_RESPONSE ||
+    ty === MSG_MERKLE_LEAF_REQUEST ||
+    ty === MSG_MERKLE_LEAF_RESPONSE ||
     ty === MSG_OPS ||
     ty === MSG_OP_ACK
   );
@@ -130,6 +147,18 @@ export function requiredPayloadKeys(ty) {
     case MSG_SYNC_REQUEST:
     case MSG_SYNC_RESPONSE:
       return ['datastore'];
+    case MSG_DELTA_REQUEST:
+      return ['datastore', 'op_ids'];
+    case MSG_DELTA_BATCH:
+      return ['datastore', 'operations', 'remaining'];
+    case MSG_MERKLE_NODE_REQUEST:
+      return ['datastore', 'level', 'index'];
+    case MSG_MERKLE_NODE_RESPONSE:
+      return ['datastore', 'level', 'index', 'hash', 'left', 'right'];
+    case MSG_MERKLE_LEAF_REQUEST:
+      return ['datastore', 'leaf_index'];
+    case MSG_MERKLE_LEAF_RESPONSE:
+      return ['datastore', 'leaf_index', 'bucket_index', 'op_ids'];
     case MSG_OPS:
       return ['datastore', 'operations'];
     case MSG_OP_ACK:
@@ -147,11 +176,13 @@ export function requiredSyncRoot(dir) {
 
 export function isRequest(ty, dir, requestId) {
   return ty === MSG_HELLO || ty === MSG_AUTH || ty === MSG_SYNC_REQUEST ||
+    ty === MSG_DELTA_REQUEST || ty === MSG_MERKLE_NODE_REQUEST || ty === MSG_MERKLE_LEAF_REQUEST ||
     (ty === MSG_OPS && dir === DIR_PEER_TO_RELAY && requestId !== 0);
 }
 
 export function isResponse(ty, requestId) {
-  return ty === MSG_CHALLENGE || ty === MSG_WELCOME || ty === MSG_SYNC_RESPONSE || ty === MSG_OP_ACK ||
+  return ty === MSG_CHALLENGE || ty === MSG_WELCOME || ty === MSG_SYNC_RESPONSE ||
+    ty === MSG_DELTA_BATCH || ty === MSG_MERKLE_NODE_RESPONSE || ty === MSG_MERKLE_LEAF_RESPONSE || ty === MSG_OP_ACK ||
     (ty === MSG_ERROR && requestId !== 0);
 }
 
@@ -163,6 +194,12 @@ export function expectedResponseTypes(requestTy) {
       return [MSG_WELCOME, MSG_ERROR];
     case MSG_SYNC_REQUEST:
       return [MSG_SYNC_RESPONSE];
+    case MSG_DELTA_REQUEST:
+      return [MSG_DELTA_BATCH];
+    case MSG_MERKLE_NODE_REQUEST:
+      return [MSG_MERKLE_NODE_RESPONSE];
+    case MSG_MERKLE_LEAF_REQUEST:
+      return [MSG_MERKLE_LEAF_RESPONSE];
     case MSG_OPS:
       return [MSG_OP_ACK];
     default:
@@ -188,7 +225,8 @@ export function jsonToTagged(value, field) {
     return { t: 'text', v: value };
   }
   if (Array.isArray(value)) {
-    return { t: 'array', v: value.map((item) => jsonToTagged(item)) };
+    const itemField = field === 'op_ids' ? 'op_id' : undefined;
+    return { t: 'array', v: value.map((item) => jsonToTagged(item, itemField)) };
   }
   if (typeof value === 'object') {
     const v = {};

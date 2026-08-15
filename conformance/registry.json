@@ -68,7 +68,7 @@
 
   "relay_capabilities": {
     "authority": "doc/RELAY-SPEC.md §4.1.1",
-    "tokens": ["dual-root", "reject-ack", "resume-cursor"],
+    "tokens": ["dual-root", "merkle-walk-v1", "reject-ack", "resume-cursor"],
     "status": "draft (RELAY-SPEC 0.2.2-draft)"
   },
 
