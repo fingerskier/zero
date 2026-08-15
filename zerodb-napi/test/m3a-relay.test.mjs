@@ -210,7 +210,7 @@ test('concurrent CRDTs converge through zerodb-relay', async (t) => {
   assert.deepEqual(opIds(dbA), opIds(dbB))
 })
 
-test('three NAPI peers: C catch-up after B crash/reopen', async (t) => {
+test('three NAPI peers: C catch-up after B close/reopen', async (t) => {
   ensureRelayBuilt()
   const relayDb = tempPath('relay-e3')
   const pathA = tempPath('e3-a')
@@ -261,12 +261,12 @@ test('three NAPI peers: C catch-up after B crash/reopen', async (t) => {
   dbA.connectRelay(relay.url)
 
   dbB.counterInc(node, 'voteScore', 5)
-  dbB.setLww(node, 'crash', 'unsynced')
+  dbB.setLww(node, 'pending', 'unsynced')
   dbB.close()
   dbB = Database.open(pathB)
   assert.equal(dbB.datastoreId(), ds)
   dbB.replay()
-  assert.equal(dbB.getLww(node, 'crash'), 'unsynced')
+  assert.equal(dbB.getLww(node, 'pending'), 'unsynced')
   const pushed = dbB.connectRelay(relay.url)
   assert.ok(pushed.sent >= 2, `reopened B sent ${pushed.sent}`)
   assert.equal(pushed.ackAccepted + pushed.ackDuplicate, pushed.sent)
@@ -274,14 +274,14 @@ test('three NAPI peers: C catch-up after B crash/reopen', async (t) => {
   const caught = dbC.connectRelay(relay.url, ds)
   assert.ok(caught.received >= 20, `C catch-up received ${caught.received}`)
   dbC.replay()
-  assert.equal(dbC.getLww(node, 'crash'), 'unsynced')
+  assert.equal(dbC.getLww(node, 'pending'), 'unsynced')
   assert.equal(dbC.getProp(node, 'voteScore'), 5)
   assert.deepEqual(opIds(dbB), opIds(dbC))
 
   const aCaught = dbA.connectRelay(relay.url)
   assert.ok(aCaught.received >= 10, `A catch-up received ${aCaught.received}`)
   dbA.replay()
-  assert.equal(dbA.getLww(node, 'crash'), 'unsynced')
+  assert.equal(dbA.getLww(node, 'pending'), 'unsynced')
   assert.deepEqual(opIds(dbA), opIds(dbB))
   assert.deepEqual(opIds(dbA), opIds(dbC))
 

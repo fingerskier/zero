@@ -64,7 +64,7 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 1. ~~Golden two-language frames~~ **done**.
 2. ~~L2 relay process (`zerodb-relay`)~~ **done** (`9603a6c`).
 3. ~~RELAY 0.2.2 client (`connectRelay`)~~ **done** (`73a6b6d`).
-4. ~~E2-live / E3-lite on that client~~ **done** (`relay_client` + `m3a-relay.test.mjs`). Concurrent LWW/ORSet/Flag/PNCounter; 3-peer C-offline catch-up; B sqlite crash/reopen; resume `received=0`.
+4. ~~E2-live / E3-lite on that client~~ **done** (`relay_client` + `m3a-relay.test.mjs`). Concurrent LWW/ORSet/Flag/PNCounter; 3-peer C-offline catch-up; B sqlite close/reopen (not process death); resume `received=0`.
 5. Merkle *walk* still later. Full EXEMPLAR E2 equal-ts and 1000-op E3 still later.
 
 **Shipped already (do not re-open as next work):** M1 experimental exit; M2a; M2-parity; `v0.1.0-sdk` (CI [run 31836860347](https://github.com/fingerskier/zero/actions/runs/31836860347) @ `b352ca4`); M3a-client; this E2-live / E3-lite slice.

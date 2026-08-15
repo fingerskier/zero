@@ -405,10 +405,11 @@ fn concurrent_crdts_converge_through_in_process_relay() {
     assert_eq!(merkle_of_ds(&a, &ds), merkle_of_ds(&b, &ds));
 }
 
-/// E3-lite (not EXEMPLAR E3): 3 peers, C offline, B sqlite crash/reopen,
-/// C catch-up from R alone, roots match, resume is a no-op.
+/// E3-lite (not EXEMPLAR E3): 3 peers, C offline, B sqlite close/reopen
+/// (not process death), C catch-up from R alone, roots match, resume is a
+/// no-op.
 #[test]
-fn three_peer_offline_catchup_after_sqlite_crash() {
+fn three_peer_offline_catchup_after_sqlite_reopen() {
     let mut a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
     let node = a.create_node("Todo").unwrap();
     a.set_lww(&node, "title", "seed").unwrap();
@@ -435,7 +436,7 @@ fn three_peer_offline_catchup_after_sqlite_crash() {
     );
     assert_eq!(c.datastore_id_hex(), ds);
 
-    // C goes offline. A/B write through R; B crashes before pushing the tail.
+    // C goes offline. A/B write through R; B closes before pushing the tail.
     for i in 0..10 {
         a.set_lww(&node, "note", &format!("a-live-{i}")).unwrap();
     }
@@ -446,13 +447,13 @@ fn three_peer_offline_catchup_after_sqlite_crash() {
     drive(&mut a, &mut sess_a2, None);
 
     b.counter_inc(&node, "voteScore", 5).unwrap();
-    b.set_lww(&node, "crash", "unsynced").unwrap();
+    b.set_lww(&node, "pending", "unsynced").unwrap();
     drop(b);
 
     let mut b = LocalStore::open(&path_b).unwrap();
     assert_eq!(b.datastore_id_hex(), ds);
     assert_eq!(
-        b.get_lww(&node, "crash").unwrap().as_deref(),
+        b.get_lww(&node, "pending").unwrap().as_deref(),
         Some("unsynced"),
         "sqlite reopen must keep B's unsent tail"
     );
@@ -460,7 +461,7 @@ fn three_peer_offline_catchup_after_sqlite_crash() {
     let pushed = drive(&mut b, &mut sess_b2, None);
     assert!(
         pushed.sent >= 2,
-        "reopened B must submit the crash-window tail, {pushed:?}"
+        "reopened B must submit the unsent tail, {pushed:?}"
     );
     assert_eq!(
         pushed.ack_accepted + pushed.ack_duplicate,
@@ -476,9 +477,9 @@ fn three_peer_offline_catchup_after_sqlite_crash() {
         "C must receive the partition window from R alone, {caught:?}"
     );
     assert_eq!(
-        c.get_lww(&node, "crash").unwrap().as_deref(),
+        c.get_lww(&node, "pending").unwrap().as_deref(),
         Some("unsynced"),
-        "C must materialize B's crash-window write from R alone"
+        "C must materialize B's unsent write from R alone"
     );
     assert_eq!(
         c.get_prop(&node, "voteScore").unwrap(),
@@ -498,7 +499,7 @@ fn three_peer_offline_catchup_after_sqlite_crash() {
         "A must catch B's partition writes, {a_caught:?}"
     );
     assert_eq!(
-        a.get_lww(&node, "crash").unwrap().as_deref(),
+        a.get_lww(&node, "pending").unwrap().as_deref(),
         Some("unsynced")
     );
     assert_eq!(
