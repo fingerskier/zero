@@ -131,6 +131,7 @@ test('two NAPI peers converge through zerodb-relay', async (t) => {
   dbB = Database.init(pathB)
   const caught = dbB.connectRelay(relay.url, dbA.datastoreId())
   assert.ok(caught.received >= 2, `B received ${caught.received}`)
+  assert.ok(caught.merkleLeaves >= 1, `B walked ${caught.merkleLeaves} leaves`)
   assert.equal(dbB.datastoreId(), dbA.datastoreId())
   dbB.replay()
   assert.equal(dbB.getLww(node, 'title'), 'milk')

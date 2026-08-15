@@ -2,7 +2,7 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** **Composite M0 closed** (contract model). **M1 exit resolved 2026-07-25** — `v0.1.0-local` (experimental format). **M2 exit resolved 2026-08-14** — `v0.1.0-sdk` (experimental format): `@zerodb/node` CRUD/subscribe/query/schema + CRDT fixture parity; not SPEC-complete M2 (no extra CRDTs, no E11). **Browser peer (experimental):** `zerodb-wasm` in-memory store + WS sync driver, `examples/browser-peer`. Conformance **115** vectors CI-blocking. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
+**Status:** M0 contracts, M1 local core, M2 Node SDK, and experimental **M3a durable convergence are complete**. M3a includes the L2 relay/client, frozen-snapshot Merkle mismatch walk, and full 1,000-write three-peer E3 relay-only catch-up. Current gate: **M3b security**. **Browser peer (experimental):** `zerodb-wasm` in-memory store + WS sync driver. Conformance **115** vectors CI-blocking. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
 
 
 ## Documents
@@ -18,7 +18,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [Version Policy](doc/VERSIONS.md) | M0e.3 (draft-1): version namespaces + decode limits |
 | [Frontier Specification](doc/FRONTIER.md) | M0f (draft-1): frontiers, snapshots; GC disabled (C7) |
 | [Merkle Specification](doc/MERKLE.md) | M0c (draft-1): canonical sync tree + mismatch walk (C3) |
-| [Relay Protocol Specification](doc/RELAY-SPEC.md) | Draft wire protocol for relay servers (not yet implementation-ready — see ISSUES) |
+| [Relay Protocol Specification](doc/RELAY-SPEC.md) | Implemented experimental L2 wire protocol; security remains M3b |
 | [Issues & Decisions](doc/ISSUES.md) | Tracked specification issues (C/H/O IDs), M0 package map, and the decision log |
 | [Exemplar](doc/EXEMPLAR.md) | Distributed ToDo app used as the end-to-end acceptance target |
 | [M1 local store](doc/M1-LOCAL.md) | Experimental M1 SQLite store + peer exchange (`v0.1.0-local`; not a format freeze) |
@@ -44,7 +44,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
   - **115** two-language conformance vectors CI-blocking
 - **M1** — local durable core: Rust + SQLite + CLI (`v0.1.0-local`)
 - **M2** — Node/NAPI TypeScript SDK vertical, byte-identical to the core (`v0.1.0-sdk`)
-- **M3** — secure multi-peer sync in three gates: **M3a** durable convergence (L2 relay + offline catch-up), **M3b** security (signatures, admission, E2E encryption), **M3c** interop TS wire peer + release (`v0.1.0`)
+- **M3** — secure multi-peer sync in three gates: **M3a durable convergence done**, **M3b** security (signatures, admission, E2E encryption), **M3c** interop TS wire peer + release (`v0.1.0`)
 - **M4** — browser storage, WebRTC P2P, cross-peer schema migration, snapshot bootstrap
 - **M5** — production readiness & GA: compaction/GC, backup/restore, fuzzing, Lean 4 proofs, external audit
 - **M6** — ecosystem: mobile/Flutter bindings over a shared C ABI, plugins, hosted relay, tooling
@@ -81,4 +81,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-Composite M0 model contracts are closed at the draft-1 layer; M1 experimental local core has exited. Highest-value work is **M2a** (store leftovers, M0 implementability, schema in the store). Do not start M3 against RELAY-SPEC 0.2.0-draft. All formats are draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.
+M3a durable convergence has exited experimentally. Highest-value work is now **M3b security**: membership/admission, signature enforcement, encrypted envelopes, and E5–E8 negatives. All formats remain draft-1 and unfrozen.

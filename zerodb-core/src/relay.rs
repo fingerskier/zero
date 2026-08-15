@@ -12,7 +12,7 @@ use crate::merkle::{MerkleOp, merkle_root};
 pub const DOMAIN_RELAY_AUTH: &[u8] = b"zerodb-relay-auth-v1";
 
 /// Negotiable session capabilities (sorted).
-pub const RELAY_CAPS: &[&str] = &["dual-root", "reject-ack", "resume-cursor"];
+pub const RELAY_CAPS: &[&str] = &["dual-root", "merkle-walk-v1", "reject-ack", "resume-cursor"];
 
 /// RELAY §10 `AUTH_FAILED`.
 pub const ERR_AUTH_FAILED: u16 = 0x201;
@@ -30,6 +30,13 @@ pub const MSG_SUBSCRIBE: u8 = 0x10;
 pub const MSG_SUBSCRIBED: u8 = 0x11;
 pub const MSG_SYNC_REQUEST: u8 = 0x20;
 pub const MSG_SYNC_RESPONSE: u8 = 0x21;
+pub const MSG_DELTA_REQUEST: u8 = 0x22;
+pub const MSG_DELTA_BATCH: u8 = 0x23;
+pub const MSG_SYNC_ACK: u8 = 0x24;
+pub const MSG_MERKLE_NODE_REQUEST: u8 = 0x25;
+pub const MSG_MERKLE_NODE_RESPONSE: u8 = 0x26;
+pub const MSG_MERKLE_LEAF_REQUEST: u8 = 0x27;
+pub const MSG_MERKLE_LEAF_RESPONSE: u8 = 0x28;
 pub const MSG_OPS: u8 = 0x30;
 pub const MSG_OP_ACK: u8 = 0x31;
 pub const MSG_ERROR: u8 = 0xff;
@@ -90,6 +97,13 @@ pub fn known_message_type(ty: u8) -> bool {
             | MSG_ERROR
             | MSG_SYNC_REQUEST
             | MSG_SYNC_RESPONSE
+            | MSG_DELTA_REQUEST
+            | MSG_DELTA_BATCH
+            | MSG_SYNC_ACK
+            | MSG_MERKLE_NODE_REQUEST
+            | MSG_MERKLE_NODE_RESPONSE
+            | MSG_MERKLE_LEAF_REQUEST
+            | MSG_MERKLE_LEAF_RESPONSE
             | MSG_OPS
             | MSG_OP_ACK
     )
@@ -112,6 +126,12 @@ pub fn required_payload_keys(ty: u8) -> &'static [&'static str] {
         MSG_WELCOME => &["protocol_version", "relay_level", "capabilities", "limits"],
         MSG_ERROR => &["code", "message", "fatal"],
         MSG_SYNC_REQUEST | MSG_SYNC_RESPONSE => &["datastore"],
+        MSG_DELTA_REQUEST => &["datastore", "op_ids"],
+        MSG_DELTA_BATCH => &["datastore", "operations", "remaining"],
+        MSG_MERKLE_NODE_REQUEST => &["datastore", "level", "index"],
+        MSG_MERKLE_NODE_RESPONSE => &["datastore", "level", "index", "hash", "left", "right"],
+        MSG_MERKLE_LEAF_REQUEST => &["datastore", "leaf_index"],
+        MSG_MERKLE_LEAF_RESPONSE => &["datastore", "leaf_index", "bucket_index", "op_ids"],
         MSG_OPS => &["datastore", "operations"],
         MSG_OP_ACK => &["outcomes"],
         _ => &[],
@@ -129,14 +149,27 @@ pub fn required_sync_root(dir: &str) -> Option<&'static str> {
 }
 
 pub fn is_request(ty: u8, dir: &str, request_id: u32) -> bool {
-    matches!(ty, MSG_HELLO | MSG_AUTH | MSG_SYNC_REQUEST)
-        || (ty == MSG_OPS && dir == DIR_PEER_TO_RELAY && request_id != 0)
+    matches!(
+        ty,
+        MSG_HELLO
+            | MSG_AUTH
+            | MSG_SYNC_REQUEST
+            | MSG_DELTA_REQUEST
+            | MSG_MERKLE_NODE_REQUEST
+            | MSG_MERKLE_LEAF_REQUEST
+    ) || (ty == MSG_OPS && dir == DIR_PEER_TO_RELAY && request_id != 0)
 }
 
 pub fn is_response(ty: u8, request_id: u32) -> bool {
     matches!(
         ty,
-        MSG_CHALLENGE | MSG_WELCOME | MSG_SYNC_RESPONSE | MSG_OP_ACK
+        MSG_CHALLENGE
+            | MSG_WELCOME
+            | MSG_SYNC_RESPONSE
+            | MSG_DELTA_BATCH
+            | MSG_MERKLE_NODE_RESPONSE
+            | MSG_MERKLE_LEAF_RESPONSE
+            | MSG_OP_ACK
     ) || (ty == MSG_ERROR && request_id != 0)
 }
 
@@ -145,6 +178,9 @@ pub fn expected_response_types(request_ty: u8) -> &'static [u8] {
         MSG_HELLO => &[MSG_CHALLENGE, MSG_ERROR],
         MSG_AUTH => &[MSG_WELCOME, MSG_ERROR],
         MSG_SYNC_REQUEST => &[MSG_SYNC_RESPONSE],
+        MSG_DELTA_REQUEST => &[MSG_DELTA_BATCH],
+        MSG_MERKLE_NODE_REQUEST => &[MSG_MERKLE_NODE_RESPONSE],
+        MSG_MERKLE_LEAF_REQUEST => &[MSG_MERKLE_LEAF_RESPONSE],
         MSG_OPS => &[MSG_OP_ACK],
         _ => &[],
     }

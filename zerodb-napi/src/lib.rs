@@ -823,7 +823,8 @@ impl Database {
     /// Handshake, submit local ops for `datastore` (default: this store's
     /// id), then SYNC catch-up. An empty store may pass a peer's
     /// `datastoreId()` to join that datastore. Returns
-    /// `{ sent, ackAccepted, ackDuplicate, ackRejected, received, applied, skipped }`.
+    /// `{ sent, ackAccepted, ackDuplicate, ackRejected, received, applied,
+    /// skipped, merkleNodes, merkleLeaves }`.
     #[napi]
     pub fn connect_relay(
         &self,
@@ -847,6 +848,8 @@ impl Database {
             "received": summary.received,
             "applied": summary.applied,
             "skipped": summary.skipped,
+            "merkleNodes": summary.merkle_nodes,
+            "merkleLeaves": summary.merkle_leaves,
         });
         let mut event = result.clone();
         event["kind"] = "relay".into();

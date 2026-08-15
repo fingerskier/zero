@@ -2,17 +2,21 @@
 //!
 //! Transport-agnostic: the caller supplies a `handle` that takes one peer
 //! envelope and returns the relay's reply frames (in-process `RelaySession`
-//! or one WebSocket binary per envelope). Not a format freeze. No Merkle
-//! walk and no AUTH membership (M3b).
+//! or one WebSocket binary per envelope). Not a format freeze. Implements the
+//! negotiated frozen-snapshot Merkle walk; no AUTH membership (M3b).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::SigningKey;
 use zerodb_core::cbor::{self, Cbor};
-use zerodb_core::merkle::{MerkleOp, merkle_root};
+use zerodb_core::merkle::{
+    BUCKET_WIDTH_MS, MERKLE_FORMAT_VERSION, MerkleOp, MerkleTree, merkle_root,
+};
 use zerodb_core::relay::{
-    MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST,
-    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth,
+    MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO,
+    MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST,
+    MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE,
+    MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth,
 };
 
 use crate::{ExportBundle, LocalStore, StoreBackend, StoreError, WireOp};
@@ -26,6 +30,8 @@ pub struct RelaySyncSummary {
     pub received: u32,
     pub applied: u32,
     pub skipped: u32,
+    pub merkle_nodes: u32,
+    pub merkle_leaves: u32,
 }
 
 pub fn sync<B, H, E>(
@@ -119,24 +125,58 @@ where
     );
     let replies = handle(&sync_req).map_err(map_h)?;
     let mut incoming: Vec<WireOp> = Vec::new();
-    let mut saw_sync = false;
+    let mut sync_payload = None;
     for frame in &replies {
         let (ty, _, pl) = decode_env(frame)?;
         match ty {
-            MSG_SYNC_RESPONSE => saw_sync = true,
-            MSG_OPS => {
-                if let Cbor::Array(ops) = map_get(&pl, "operations") {
-                    for op in ops {
-                        incoming.push(relay_to_wire(op)?);
-                    }
-                }
-            }
+            MSG_SYNC_RESPONSE => sync_payload = Some(pl),
+            MSG_OPS => collect_wire_ops(&pl, &mut incoming)?,
             MSG_ERROR => return Err(err(&format!("SYNC error: {pl:?}"))),
             _ => {}
         }
     }
-    if !saw_sync {
-        return Err(err("expected SYNC_RESPONSE"));
+    let sync_payload = sync_payload.ok_or_else(|| err("expected SYNC_RESPONSE"))?;
+    if let Some(bucket_indices) = parse_bucket_indices(&sync_payload)? {
+        let remote_root = take32(map_get(&sync_payload, "validated_root"))?;
+        let local_merkle = wire_merkle_ops(&to_send)?;
+        let local_tree = MerkleTree::build_aligned(&local_merkle, &bucket_indices);
+        if local_tree.root() != remote_root {
+            let mut missing = BTreeSet::new();
+            let root_level = local_tree.levels.len().saturating_sub(1);
+            walk_remote(
+                &mut handle,
+                &ds,
+                &local_tree,
+                root_level,
+                0,
+                &mut request_id,
+                &mut missing,
+                &mut summary,
+            )?;
+            if !missing.is_empty() {
+                let delta = encode_env(
+                    MSG_DELTA_REQUEST,
+                    request_id,
+                    Cbor::Map(vec![
+                        ("datastore".into(), Cbor::Text(ds.clone())),
+                        (
+                            "op_ids".into(),
+                            Cbor::Array(
+                                missing.iter().map(|id| Cbor::Bytes(id.to_vec())).collect(),
+                            ),
+                        ),
+                    ]),
+                );
+                for frame in handle(&delta).map_err(map_h)? {
+                    let (ty, _, pl) = decode_env(&frame)?;
+                    match ty {
+                        MSG_DELTA_BATCH => collect_wire_ops(&pl, &mut incoming)?,
+                        MSG_ERROR => return Err(err(&format!("DELTA error: {pl:?}"))),
+                        _ => return Err(err("expected DELTA_BATCH")),
+                    }
+                }
+            }
+        }
     }
     summary.received = incoming.len() as u32;
     if incoming.is_empty() {
@@ -170,6 +210,140 @@ where
     summary.applied = applied;
     summary.skipped = skipped;
     Ok(summary)
+}
+
+fn collect_wire_ops(payload: &Cbor, incoming: &mut Vec<WireOp>) -> Result<(), StoreError> {
+    if let Cbor::Array(ops) = map_get(payload, "operations") {
+        for op in ops {
+            incoming.push(relay_to_wire(op)?);
+        }
+    }
+    Ok(())
+}
+
+fn parse_bucket_indices(payload: &Cbor) -> Result<Option<Vec<u64>>, StoreError> {
+    let version = map_get(payload, "merkle_format_version");
+    if matches!(version, Cbor::Null) {
+        return Ok(None);
+    }
+    if uint(version)? != MERKLE_FORMAT_VERSION as u64 {
+        return Err(err("unsupported merkle_format_version"));
+    }
+    if uint(map_get(payload, "bucket_width_ms"))? != BUCKET_WIDTH_MS {
+        return Err(err("unsupported merkle bucket_width_ms"));
+    }
+    match map_get(payload, "bucket_indices") {
+        Cbor::Array(items) => {
+            const MAX_WALK_BUCKETS: usize = 65_536;
+            if items.len() > MAX_WALK_BUCKETS {
+                return Err(err("merkle bucket manifest exceeds limit"));
+            }
+            let indices = items.iter().map(uint).collect::<Result<Vec<_>, _>>()?;
+            if indices.windows(2).any(|pair| pair[0] >= pair[1]) {
+                return Err(err("merkle bucket manifest must be strictly sorted"));
+            }
+            Ok(Some(indices))
+        }
+        _ => Err(err("missing bucket_indices")),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_remote<H, E>(
+    handle: &mut H,
+    ds: &str,
+    local: &MerkleTree,
+    level: usize,
+    index: usize,
+    request_id: &mut u32,
+    missing: &mut BTreeSet<[u8; 32]>,
+    summary: &mut RelaySyncSummary,
+) -> Result<(), StoreError>
+where
+    H: FnMut(&[u8]) -> Result<Vec<Vec<u8>>, E>,
+    E: std::fmt::Display,
+{
+    if level == 0 {
+        let frame = encode_env(
+            MSG_MERKLE_LEAF_REQUEST,
+            *request_id,
+            Cbor::Map(vec![
+                ("datastore".into(), Cbor::Text(ds.into())),
+                ("leaf_index".into(), Cbor::Uint(index as u64)),
+            ]),
+        );
+        *request_id = request_id.saturating_add(1);
+        let response = expect_type(
+            first_reply(handle(&frame).map_err(map_h)?)?,
+            MSG_MERKLE_LEAF_RESPONSE,
+            "MERKLE_LEAF_RESPONSE",
+        )?;
+        let (_, _, payload) = decode_env(&response)?;
+        let local_ids: BTreeSet<[u8; 32]> = local
+            .leaves
+            .get(index)
+            .map(|leaf| leaf.op_ids.iter().copied().collect())
+            .unwrap_or_default();
+        let Cbor::Array(ids) = map_get(&payload, "op_ids") else {
+            return Err(err("leaf response missing op_ids"));
+        };
+        for id in ids {
+            let id = take32(id)?;
+            if !local_ids.contains(&id) {
+                missing.insert(id);
+            }
+        }
+        summary.merkle_leaves += 1;
+        return Ok(());
+    }
+
+    let frame = encode_env(
+        MSG_MERKLE_NODE_REQUEST,
+        *request_id,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text(ds.into())),
+            ("level".into(), Cbor::Uint(level as u64)),
+            ("index".into(), Cbor::Uint(index as u64)),
+        ]),
+    );
+    *request_id = request_id.saturating_add(1);
+    let response = expect_type(
+        first_reply(handle(&frame).map_err(map_h)?)?,
+        MSG_MERKLE_NODE_RESPONSE,
+        "MERKLE_NODE_RESPONSE",
+    )?;
+    let (_, _, payload) = decode_env(&response)?;
+    let remote_left = take32(map_get(&payload, "left"))?;
+    let remote_right = take32(map_get(&payload, "right"))?;
+    let (local_left, local_right) = local
+        .node_children(level, index)
+        .ok_or_else(|| err("local merkle node missing children"))?;
+    summary.merkle_nodes += 1;
+    if remote_left != local_left {
+        walk_remote(
+            handle,
+            ds,
+            local,
+            level - 1,
+            index * 2,
+            request_id,
+            missing,
+            summary,
+        )?;
+    }
+    if remote_right != local_right {
+        walk_remote(
+            handle,
+            ds,
+            local,
+            level - 1,
+            index * 2 + 1,
+            request_id,
+            missing,
+            summary,
+        )?;
+    }
+    Ok(())
 }
 
 const DEFAULT_MAX_BATCH_OPS: usize = 64;
@@ -340,12 +514,8 @@ fn relay_to_wire(op: &Cbor) -> Result<WireOp, StoreError> {
     }
 }
 
-fn accepted_root(ops: &[WireOp]) -> Result<Vec<u8>, StoreError> {
-    if ops.is_empty() {
-        return Ok(vec![0; 32]);
-    }
-    let merkle: Vec<MerkleOp> = ops
-        .iter()
+fn wire_merkle_ops(ops: &[WireOp]) -> Result<Vec<MerkleOp>, StoreError> {
+    ops.iter()
         .map(|w| {
             Ok(MerkleOp {
                 op_id: hex32(&w.id)?.try_into().map_err(|_| err("op_id"))?,
@@ -354,8 +524,11 @@ fn accepted_root(ops: &[WireOp]) -> Result<Vec<u8>, StoreError> {
                 logical: w.ts.l,
             })
         })
-        .collect::<Result<_, StoreError>>()?;
-    Ok(merkle_root(&merkle).to_vec())
+        .collect()
+}
+
+fn accepted_root(ops: &[WireOp]) -> Result<Vec<u8>, StoreError> {
+    Ok(merkle_root(&wire_merkle_ops(ops)?).to_vec())
 }
 
 fn local_frontier<B: StoreBackend>(store: &LocalStore<B>, ds: &str) -> Result<Cbor, StoreError> {
