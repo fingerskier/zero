@@ -28,7 +28,10 @@ fn main() {
     let args = Args::parse();
     let relay = Arc::new(Relay::open(&args.path).expect("open relay store"));
     let listener = TcpListener::bind(&args.bind).expect("bind");
-    eprintln!("zerodb-relay listening on ws://{}", args.bind);
+    let addr = listener.local_addr().expect("local_addr");
+    // Always print IPv4 loopback: Windows Display of mapped/IPv6 addrs is not
+    // a host tungstenite can resolve (`No such host is known`).
+    eprintln!("zerodb-relay listening on ws://127.0.0.1:{}", addr.port());
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {

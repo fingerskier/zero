@@ -10,6 +10,7 @@
 
 mod backend;
 mod memory_backend;
+pub mod relay_client;
 #[cfg(feature = "sqlite")]
 mod sqlite_backend;
 pub mod sync;
@@ -255,6 +256,24 @@ impl<B: StoreBackend> LocalStore<B> {
     pub fn datastore_id_hex(&self) -> String {
         hex::encode(self.ds)
     }
+
+    /// Adopt `ds_hex` when this store has no ops. M3a explicit join: an empty
+    /// peer must take the requested datastore id even if the relay has none.
+    pub fn adopt_empty_datastore(&mut self, ds_hex: &str) -> Result<(), StoreError> {
+        if self.op_count()? != 0 {
+            return Err(StoreError::Invalid(
+                "cannot adopt datastore: local store is not empty".into(),
+            ));
+        }
+        let ds = decode32(ds_hex)?;
+        if ds == self.ds {
+            return Ok(());
+        }
+        self.backend.meta_set("ds", &ds)?;
+        self.ds = ds;
+        Ok(())
+    }
+
     pub fn author_hex(&self) -> String {
         hex::encode(self.author)
     }

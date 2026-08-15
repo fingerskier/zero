@@ -52,6 +52,55 @@ fn connect_ws(url: &str) -> std::result::Result<WebSocket<MaybeTlsStream<TcpStre
     Ok(ws)
 }
 
+fn set_ws_read_timeout(
+    ws: &WebSocket<MaybeTlsStream<TcpStream>>,
+    timeout: Option<Duration>,
+) -> std::io::Result<()> {
+    if let MaybeTlsStream::Plain(stream) = ws.get_ref() {
+        stream.set_read_timeout(timeout)?;
+    }
+    Ok(())
+}
+
+/// After each client frame the relay writes one or more binary envelopes
+/// then waits. Read the first (blocking), then drain extras with a short
+/// timeout so catch-up `OPS` after `SYNC_RESPONSE` are collected.
+fn collect_ws_replies(
+    ws: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+) -> std::result::Result<Vec<Vec<u8>>, String> {
+    const DRAIN: Duration = Duration::from_millis(200);
+    let mut out = Vec::new();
+    let _ = set_ws_read_timeout(ws, Some(SYNC_TIMEOUT));
+    loop {
+        match ws.read() {
+            Ok(Message::Binary(data)) => {
+                out.push(data);
+                let _ = set_ws_read_timeout(ws, Some(DRAIN));
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(_) => continue,
+            Err(tungstenite::Error::ConnectionClosed) => break,
+            Err(tungstenite::Error::Io(e))
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                break;
+            }
+            Err(e) => {
+                let _ = set_ws_read_timeout(ws, Some(SYNC_TIMEOUT));
+                return Err(e.to_string());
+            }
+        }
+    }
+    let _ = set_ws_read_timeout(ws, Some(SYNC_TIMEOUT));
+    if out.is_empty() {
+        return Err("relay sent no reply".into());
+    }
+    Ok(out)
+}
+
 type Subscriber = ThreadsafeFunction<serde_json::Value, (), serde_json::Value, Status, false, true>;
 
 type SharedStore = Arc<Mutex<Option<LocalStore>>>;
@@ -765,6 +814,42 @@ impl Database {
         let mut event = result.clone();
         event["kind"] = "sync".into();
         event["role"] = "connect".into();
+        event["url"] = url.into();
+        self.emit(event);
+        Ok(result)
+    }
+
+    /// One RELAY 0.2.2 session against `zerodb-relay` (`ws://host:port`).
+    /// Handshake, submit local ops for `datastore` (default: this store's
+    /// id), then SYNC catch-up. An empty store may pass a peer's
+    /// `datastoreId()` to join that datastore. Returns
+    /// `{ sent, ackAccepted, ackDuplicate, ackRejected, received, applied, skipped }`.
+    #[napi]
+    pub fn connect_relay(
+        &self,
+        url: String,
+        datastore: Option<String>,
+    ) -> Result<serde_json::Value> {
+        let mut ws = connect_ws(&url).map_err(map_err)?;
+        let summary = self.with_store_mut(|store| {
+            zerodb_storage::relay_client::sync(store, datastore.as_deref(), |frame| {
+                ws.send(Message::Binary(frame.to_vec()))
+                    .map_err(|e| e.to_string())?;
+                collect_ws_replies(&mut ws)
+            })
+            .map_err(map_err)
+        })?;
+        let result = serde_json::json!({
+            "sent": summary.sent,
+            "ackAccepted": summary.ack_accepted,
+            "ackDuplicate": summary.ack_duplicate,
+            "ackRejected": summary.ack_rejected,
+            "received": summary.received,
+            "applied": summary.applied,
+            "skipped": summary.skipped,
+        });
+        let mut event = result.clone();
+        event["kind"] = "relay".into();
         event["url"] = url.into();
         self.emit(event);
         Ok(result)

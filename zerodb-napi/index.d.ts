@@ -80,6 +80,14 @@ export declare class Database {
    */
   connectPeer(url: string): any
   /**
+   * One RELAY 0.2.2 session against `zerodb-relay` (`ws://host:port`).
+   * Handshake, submit local ops for `datastore` (default: this store's
+   * id), then SYNC catch-up. An empty store may pass a peer's
+   * `datastoreId()` to join that datastore. Returns
+   * `{ sent, ackAccepted, ackDuplicate, ackRejected, received, applied, skipped }`.
+   */
+  connectRelay(url: string, datastore?: string | undefined | null): any
+  /**
    * Keep this store converged with a peer (`ws://host:port`) from a
    * background thread: one session immediately, then re-sync whenever a
    * local mutation lands (dirty flag) or `intervalMs` elapses (poll floor
