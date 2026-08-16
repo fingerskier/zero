@@ -3,7 +3,9 @@
 //! Transport-agnostic: the caller supplies a `handle` that takes one peer
 //! envelope and returns the relay's reply frames (in-process `RelaySession`
 //! or one WebSocket binary per envelope). Not a format freeze. Implements the
-//! negotiated frozen-snapshot Merkle walk; no AUTH membership (M3b).
+//! negotiated frozen-snapshot Merkle walk. M3b-sig: the relay admits
+//! signed ops only (signature, OpId preimage, datastore bind). AUTH
+//! membership grants remain later.
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -1,12 +1,16 @@
-//! RELAY 0.2.2-draft wire-transcript model (M3a).
+//! RELAY 0.2.2-draft wire-transcript model (M3a) plus M3b-sig admission.
 //!
 //! Handshake (HELLO/AUTH/WELCOME capabilities), dual-root catch-up
 //! invariant (CX-08), resume cursor, reject-ack, and ordered envelope
-//! frames. No relay process.
+//! frames. `admit_experimental_op` is the relay-side signature / OpId /
+//! datastore-binding check (M3b-sig). AUTH membership grants remain later.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
+use crate::cbor::Cbor;
 use crate::merkle::{MerkleOp, merkle_root};
+use crate::op::{OpEnvelope, OpTs, json_to_cbor_body};
+use crate::sign::verify_op;
 
 /// Domain-separation prefix (registry `domain_separation.relay_auth`).
 pub const DOMAIN_RELAY_AUTH: &[u8] = b"zerodb-relay-auth-v1";
@@ -16,6 +20,13 @@ pub const RELAY_CAPS: &[&str] = &["dual-root", "merkle-walk-v1", "reject-ack", "
 
 /// RELAY §10 `AUTH_FAILED`.
 pub const ERR_AUTH_FAILED: u16 = 0x201;
+/// RELAY §9.1 unsigned / bad signature (frame-level; per-op uses `REJECT`/`SIG`).
+pub const ERR_SIG_INVALID: u16 = 0x301;
+
+/// `OP_ACK` reject reasons (RELAY §4.4).
+pub const REJECT_DECODE: &str = "DECODE";
+pub const REJECT_SIG: &str = "SIG";
+pub const REJECT_AUTHZ: &str = "AUTHZ";
 
 /// Envelope direction (RELAY §4).
 pub const DIR_PEER_TO_RELAY: &str = "P→R";
@@ -234,4 +245,328 @@ pub fn root_hex(ops: &[MerkleOp]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// Header fields the relay persists after admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedOp {
+    pub op_id: [u8; 32],
+    pub author: [u8; 32],
+    pub physical_ms: u64,
+    pub logical: u16,
+}
+
+/// Per-op admission failure (maps to `OP_ACK` `REJECT.reason`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmitReject {
+    Decode,
+    Sig,
+    Authz,
+}
+
+impl AdmitReject {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Decode => REJECT_DECODE,
+            Self::Sig => REJECT_SIG,
+            Self::Authz => REJECT_AUTHZ,
+        }
+    }
+}
+
+fn map_get<'a>(c: &'a Cbor, k: &str) -> &'a Cbor {
+    static NULL: Cbor = Cbor::Null;
+    match c {
+        Cbor::Map(ents) => ents
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v)
+            .unwrap_or(&NULL),
+        _ => &NULL,
+    }
+}
+
+fn take_bytes<const N: usize>(c: &Cbor) -> Option<[u8; N]> {
+    match c {
+        Cbor::Bytes(b) if b.len() == N => b.as_slice().try_into().ok(),
+        _ => None,
+    }
+}
+
+fn hex32(s: &str) -> Result<[u8; 32], AdmitReject> {
+    let b = hex::decode(s).map_err(|_| AdmitReject::Decode)?;
+    b.try_into().map_err(|_| AdmitReject::Decode)
+}
+
+fn hex64(s: &str) -> Result<[u8; 64], AdmitReject> {
+    let b = hex::decode(s).map_err(|_| AdmitReject::Decode)?;
+    b.try_into().map_err(|_| AdmitReject::Decode)
+}
+
+/// Admit an experimental relay op (`wire` JSON + header).
+///
+/// Checks: decode, datastore bind, author = BLAKE3(pk), OpId = preimage hash,
+/// Ed25519 signature over the OpId. Transport sender MAY differ from author.
+pub fn admit_experimental_op(op: &Cbor, datastore: &str) -> Result<AdmittedOp, AdmitReject> {
+    if !matches!(op, Cbor::Map(_)) {
+        return Err(AdmitReject::Decode);
+    }
+    let header_id = take_bytes::<32>(map_get(op, "op_id")).ok_or(AdmitReject::Decode)?;
+    let header_author = take_bytes::<32>(map_get(op, "author")).ok_or(AdmitReject::Decode)?;
+    let physical_ms = match map_get(op, "physical_ms") {
+        Cbor::Uint(n) => *n,
+        _ => return Err(AdmitReject::Decode),
+    };
+    let logical = match map_get(op, "logical") {
+        Cbor::Uint(n) => *n as u16,
+        _ => return Err(AdmitReject::Decode),
+    };
+    let wire_txt = match map_get(op, "wire") {
+        Cbor::Text(s) => s,
+        Cbor::Null => return Err(AdmitReject::Sig),
+        _ => return Err(AdmitReject::Decode),
+    };
+    let wire: serde_json::Value =
+        serde_json::from_str(wire_txt).map_err(|_| AdmitReject::Decode)?;
+    let get_str = |k: &str| {
+        wire.get(k)
+            .and_then(|v| v.as_str())
+            .ok_or(AdmitReject::Decode)
+    };
+    if get_str("ds")? != datastore {
+        return Err(AdmitReject::Authz);
+    }
+    let claimed_id = hex32(get_str("id")?)?;
+    let author = hex32(get_str("author")?)?;
+    let author_pk = hex32(get_str("author_pk")?)?;
+    let sig = hex64(get_str("sig")?)?;
+    if claimed_id != header_id || author != header_author {
+        return Err(AdmitReject::Sig);
+    }
+    if peer_id_from_pk(&author_pk) != author {
+        return Err(AdmitReject::Sig);
+    }
+    let ts = wire.get("ts").ok_or(AdmitReject::Decode)?;
+    let ts_p = ts
+        .get("p")
+        .and_then(|v| v.as_u64())
+        .ok_or(AdmitReject::Decode)?;
+    let ts_l = ts
+        .get("l")
+        .and_then(|v| v.as_u64())
+        .ok_or(AdmitReject::Decode)? as u16;
+    if ts_p != physical_ms || ts_l != logical {
+        return Err(AdmitReject::Sig);
+    }
+    let v = wire
+        .get("v")
+        .and_then(|x| x.as_u64())
+        .ok_or(AdmitReject::Decode)?;
+    let ep = wire
+        .get("ep")
+        .and_then(|x| x.as_u64())
+        .ok_or(AdmitReject::Decode)?;
+    let kind = wire
+        .get("kind")
+        .and_then(|x| x.as_u64())
+        .ok_or(AdmitReject::Decode)?;
+    let deps = match wire.get("deps") {
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|d| hex32(d.as_str().ok_or(AdmitReject::Decode)?))
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(serde_json::Value::Null) | None => Vec::new(),
+        _ => return Err(AdmitReject::Decode),
+    };
+    let grp = match wire.get("grp") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(h)) => {
+            let b = hex::decode(h).map_err(|_| AdmitReject::Decode)?;
+            Some(<[u8; 16]>::try_from(b).map_err(|_| AdmitReject::Decode)?)
+        }
+        _ => return Err(AdmitReject::Decode),
+    };
+    let ds = hex32(get_str("ds")?).unwrap_or([0u8; 32]);
+    // Experimental LocalStore stamps hex datastore ids. Protocol tests may use
+    // a non-hex label (`app:main`); bind by string above and hash as bytes only
+    // when the field is 32-byte hex so OpId still covers a stable ds slot.
+    let ds_bytes = if get_str("ds")?.len() == 64 {
+        hex32(get_str("ds")?)?
+    } else {
+        ds
+    };
+    let body = json_to_cbor_body(wire.get("body").unwrap_or(&serde_json::Value::Null))
+        .map_err(|_| AdmitReject::Decode)?;
+    let envelope = OpEnvelope {
+        v,
+        ds: ds_bytes,
+        ep,
+        author,
+        ts: OpTs {
+            physical_ms,
+            logical,
+        },
+        deps,
+        grp,
+        kind,
+        body,
+    };
+    let computed = envelope.op_id().map_err(|_| AdmitReject::Decode)?;
+    if computed != claimed_id {
+        return Err(AdmitReject::Sig);
+    }
+    if !verify_op(&author_pk, &claimed_id, &sig) {
+        return Err(AdmitReject::Sig);
+    }
+    Ok(AdmittedOp {
+        op_id: claimed_id,
+        author,
+        physical_ms,
+        logical,
+    })
+}
+
+/// Mint a signed experimental CreateNode relay op (tests / protocol fixtures).
+pub fn mint_experimental_relay_op(
+    seed: &[u8; 32],
+    datastore: &str,
+    physical_ms: u64,
+    logical: u16,
+    tag: u16,
+) -> Cbor {
+    let key = SigningKey::from_bytes(seed);
+    let author_pk = key.verifying_key().to_bytes();
+    let author = peer_id_from_pk(&author_pk);
+    let mut node = [0u8; 16];
+    node[14] = (tag >> 8) as u8;
+    node[15] = tag as u8;
+    let body_json = serde_json::json!({
+        "label": format!("n{tag}"),
+        "node": hex::encode(node),
+    });
+    let ds_bytes = if datastore.len() == 64 {
+        hex32(datastore).unwrap_or([0u8; 32])
+    } else {
+        [0u8; 32]
+    };
+    let envelope = OpEnvelope {
+        v: 1,
+        ds: ds_bytes,
+        ep: 0,
+        author,
+        ts: OpTs {
+            physical_ms,
+            logical,
+        },
+        deps: vec![],
+        grp: None,
+        kind: 1,
+        body: json_to_cbor_body(&body_json).expect("body"),
+    };
+    let op_id = envelope.op_id().expect("op_id");
+    let (_, sig) = crate::sign::sign_op(seed, &op_id);
+    let wire = serde_json::json!({
+        "id": hex::encode(op_id),
+        "v": 1,
+        "ds": datastore,
+        "ep": 0,
+        "author": hex::encode(author),
+        "author_pk": hex::encode(author_pk),
+        "ts": { "p": physical_ms, "l": logical },
+        "deps": [],
+        "kind": 1,
+        "body": body_json,
+        "sig": hex::encode(sig),
+    });
+    Cbor::Map(vec![
+        ("op_id".into(), Cbor::Bytes(op_id.to_vec())),
+        ("author".into(), Cbor::Bytes(author.to_vec())),
+        ("physical_ms".into(), Cbor::Uint(physical_ms)),
+        ("logical".into(), Cbor::Uint(logical as u64)),
+        ("wire".into(), Cbor::Text(wire.to_string())),
+    ])
+}
+
+#[cfg(test)]
+mod admit_tests {
+    use super::*;
+
+    const SEED: [u8; 32] = [7u8; 32];
+
+    fn take_map(c: &Cbor) -> &[(String, Cbor)] {
+        match c {
+            Cbor::Map(m) => m,
+            _ => panic!("map"),
+        }
+    }
+
+    fn set_field(op: &Cbor, key: &str, val: Cbor) -> Cbor {
+        let ents: Vec<(String, Cbor)> = take_map(op)
+            .iter()
+            .map(|(k, v)| {
+                if k == key {
+                    (k.clone(), val.clone())
+                } else {
+                    (k.clone(), v.clone())
+                }
+            })
+            .collect();
+        Cbor::Map(ents)
+    }
+
+    #[test]
+    fn minted_op_is_admitted() {
+        let op = mint_experimental_relay_op(&SEED, "app:main", 10, 0, 1);
+        admit_experimental_op(&op, "app:main").expect("admit");
+    }
+
+    #[test]
+    fn unsigned_is_sig() {
+        let op = mint_experimental_relay_op(&SEED, "app:main", 10, 0, 1);
+        let op = set_field(&op, "wire", Cbor::Null);
+        assert_eq!(
+            admit_experimental_op(&op, "app:main"),
+            Err(AdmitReject::Sig)
+        );
+    }
+
+    #[test]
+    fn wrong_datastore_is_authz() {
+        let op = mint_experimental_relay_op(&SEED, "app:main", 10, 0, 1);
+        assert_eq!(admit_experimental_op(&op, "other"), Err(AdmitReject::Authz));
+    }
+
+    #[test]
+    fn flipped_signature_is_sig() {
+        let op = mint_experimental_relay_op(&SEED, "app:main", 10, 0, 1);
+        let wire = match map_get(&op, "wire") {
+            Cbor::Text(s) => s.clone(),
+            _ => panic!("wire"),
+        };
+        let mut v: serde_json::Value = serde_json::from_str(&wire).unwrap();
+        let mut sig = hex::decode(v["sig"].as_str().unwrap()).unwrap();
+        sig[0] ^= 1;
+        v["sig"] = serde_json::Value::String(hex::encode(sig));
+        let op = set_field(&op, "wire", Cbor::Text(v.to_string()));
+        assert_eq!(
+            admit_experimental_op(&op, "app:main"),
+            Err(AdmitReject::Sig)
+        );
+    }
+
+    #[test]
+    fn flipped_body_breaks_opid() {
+        let op = mint_experimental_relay_op(&SEED, "app:main", 10, 0, 1);
+        let wire = match map_get(&op, "wire") {
+            Cbor::Text(s) => s.clone(),
+            _ => panic!("wire"),
+        };
+        let mut v: serde_json::Value = serde_json::from_str(&wire).unwrap();
+        v["body"]["label"] = serde_json::Value::String("tampered".into());
+        let op = set_field(&op, "wire", Cbor::Text(v.to_string()));
+        assert_eq!(
+            admit_experimental_op(&op, "app:main"),
+            Err(AdmitReject::Sig)
+        );
+    }
 }

@@ -1946,42 +1946,7 @@ fn json_value_to_cbor(v: &serde_json::Value) -> Result<Cbor, StoreError> {
 }
 
 fn json_to_cbor_body(v: &serde_json::Value) -> Result<Cbor, StoreError> {
-    // Store a simplified CBOR map for preimage stability
-    let mut entries = Vec::new();
-    if let Some(obj) = v.as_object() {
-        for (k, val) in obj {
-            let c = match val {
-                serde_json::Value::String(s) => {
-                    if k == "node" || k == "edge" || k == "src" || k == "dst" {
-                        let b = hex::decode(s).map_err(|e| StoreError::Invalid(e.to_string()))?;
-                        Cbor::Bytes(b)
-                    } else {
-                        Cbor::Text(s.clone())
-                    }
-                }
-                serde_json::Value::Number(n) => {
-                    if let Some(u) = n.as_u64() {
-                        Cbor::Uint(u)
-                    } else {
-                        Cbor::Text(n.to_string())
-                    }
-                }
-                serde_json::Value::Bool(b) => Cbor::Bool(*b),
-                serde_json::Value::Array(a) => Cbor::Array(
-                    a.iter()
-                        .map(|x| match x {
-                            serde_json::Value::String(s) => Cbor::Text(s.clone()),
-                            _ => Cbor::Text(x.to_string()),
-                        })
-                        .collect(),
-                ),
-                serde_json::Value::Null => Cbor::Null,
-                other => Cbor::Text(other.to_string()),
-            };
-            entries.push((k.clone(), c));
-        }
-    }
-    Ok(Cbor::Map(entries))
+    zerodb_core::op::json_to_cbor_body(v).map_err(StoreError::Invalid)
 }
 
 fn meta_get_u64(b: &dyn BackendTxn, k: &str) -> Result<Option<u64>, StoreError> {
