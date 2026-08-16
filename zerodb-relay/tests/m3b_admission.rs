@@ -17,6 +17,8 @@ const SK: [u8; 32] = [
     0x56, 0x02, 0x95, 0x41, 0x1c, 0xb3, 0x77, 0x1a, 0x48, 0x92, 0xc5, 0x3f, 0xab, 0x03, 0x2a, 0xba,
     0xa0, 0xdc, 0x96, 0xb7, 0xa6, 0xed, 0x7b, 0xe6, 0xc6, 0x48, 0x65, 0x55, 0x1d, 0x06, 0x2d, 0xfa,
 ];
+const DS: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+const OTHER_DS: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
 fn map_get<'a>(m: &'a Cbor, k: &str) -> &'a Cbor {
     match m {
@@ -47,6 +49,24 @@ fn as_text(v: &Cbor) -> &str {
     match v {
         Cbor::Text(s) => s,
         _ => panic!("not text"),
+    }
+}
+
+fn set_field(op: &Cbor, key: &str, value: Cbor) -> Cbor {
+    match op {
+        Cbor::Map(entries) => Cbor::Map(
+            entries
+                .iter()
+                .map(|(name, current)| {
+                    if name == key {
+                        (name.clone(), value.clone())
+                    } else {
+                        (name.clone(), current.clone())
+                    }
+                })
+                .collect(),
+        ),
+        _ => panic!("not a map"),
     }
 }
 
@@ -133,10 +153,10 @@ fn signed_op_is_accepted() {
     let relay = Relay::memory();
     let mut sess = relay.accept();
     handshake(&mut sess);
-    let op = mint_experimental_relay_op(&SK, "app:main", 10, 0, 1);
-    let out = submit(&mut sess, "app:main", vec![op]);
+    let op = mint_experimental_relay_op(&SK, DS, 10, 0, 1);
+    let out = submit(&mut sess, DS, vec![op]);
     assert_eq!(outcome(&out[0]), ("ACCEPT", None));
-    assert_eq!(relay.op_count("app:main").unwrap(), 1);
+    assert_eq!(relay.op_count(DS).unwrap(), 1);
 }
 
 #[test]
@@ -150,9 +170,9 @@ fn unsigned_op_is_rejected_sig() {
         ("physical_ms".into(), Cbor::Uint(1)),
         ("logical".into(), Cbor::Uint(0)),
     ]);
-    let out = submit(&mut sess, "app:main", vec![unsigned]);
+    let out = submit(&mut sess, DS, vec![unsigned]);
     assert_eq!(outcome(&out[0]), ("REJECT", Some("SIG")));
-    assert_eq!(relay.op_count("app:main").unwrap(), 0);
+    assert_eq!(relay.op_count(DS).unwrap(), 0);
 }
 
 #[test]
@@ -160,7 +180,7 @@ fn forged_signature_is_rejected_sig() {
     let relay = Relay::memory();
     let mut sess = relay.accept();
     handshake(&mut sess);
-    let op = mint_experimental_relay_op(&SK, "app:main", 10, 0, 1);
+    let op = mint_experimental_relay_op(&SK, DS, 10, 0, 1);
     let wire = match map_get(&op, "wire") {
         Cbor::Text(s) => s.clone(),
         _ => panic!("wire"),
@@ -176,9 +196,9 @@ fn forged_signature_is_rejected_sig() {
         ("logical".into(), Cbor::Uint(0)),
         ("wire".into(), Cbor::Text(v.to_string())),
     ]);
-    let out = submit(&mut sess, "app:main", vec![forged]);
+    let out = submit(&mut sess, DS, vec![forged]);
     assert_eq!(outcome(&out[0]), ("REJECT", Some("SIG")));
-    assert_eq!(relay.op_count("app:main").unwrap(), 0);
+    assert_eq!(relay.op_count(DS).unwrap(), 0);
 }
 
 #[test]
@@ -186,11 +206,11 @@ fn wrong_datastore_is_rejected_authz() {
     let relay = Relay::memory();
     let mut sess = relay.accept();
     handshake(&mut sess);
-    let op = mint_experimental_relay_op(&SK, "app:other", 10, 0, 1);
-    let out = submit(&mut sess, "app:main", vec![op]);
+    let op = mint_experimental_relay_op(&SK, OTHER_DS, 10, 0, 1);
+    let out = submit(&mut sess, DS, vec![op]);
     assert_eq!(outcome(&out[0]), ("REJECT", Some("AUTHZ")));
-    assert_eq!(relay.op_count("app:main").unwrap(), 0);
-    assert_eq!(relay.op_count("app:other").unwrap(), 0);
+    assert_eq!(relay.op_count(DS).unwrap(), 0);
+    assert_eq!(relay.op_count(OTHER_DS).unwrap(), 0);
 }
 
 #[test]
@@ -198,7 +218,7 @@ fn tampered_body_is_rejected_sig() {
     let relay = Relay::memory();
     let mut sess = relay.accept();
     handshake(&mut sess);
-    let op = mint_experimental_relay_op(&SK, "app:main", 10, 0, 1);
+    let op = mint_experimental_relay_op(&SK, DS, 10, 0, 1);
     let wire = match map_get(&op, "wire") {
         Cbor::Text(s) => s.clone(),
         _ => panic!("wire"),
@@ -212,7 +232,53 @@ fn tampered_body_is_rejected_sig() {
         ("logical".into(), Cbor::Uint(0)),
         ("wire".into(), Cbor::Text(v.to_string())),
     ]);
-    let out = submit(&mut sess, "app:main", vec![tampered]);
+    let out = submit(&mut sess, DS, vec![tampered]);
     assert_eq!(outcome(&out[0]), ("REJECT", Some("SIG")));
+    assert_eq!(relay.op_count(DS).unwrap(), 0);
+}
+
+#[test]
+fn changed_datastore_cannot_reuse_signature() {
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    handshake(&mut sess);
+    let op = mint_experimental_relay_op(&SK, DS, 10, 0, 1);
+    let wire = as_text(map_get(&op, "wire"));
+    let mut v: serde_json::Value = serde_json::from_str(wire).unwrap();
+    v["ds"] = serde_json::Value::String(OTHER_DS.into());
+    let tampered = set_field(&op, "wire", Cbor::Text(v.to_string()));
+    let out = submit(&mut sess, OTHER_DS, vec![tampered]);
+    assert_eq!(outcome(&out[0]), ("REJECT", Some("SIG")));
+    assert_eq!(relay.op_count(OTHER_DS).unwrap(), 0);
+}
+
+#[test]
+fn non_hex_datastore_is_rejected_decode() {
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    handshake(&mut sess);
+    let op = mint_experimental_relay_op(&SK, DS, 10, 0, 1);
+    let wire = as_text(map_get(&op, "wire"));
+    let mut v: serde_json::Value = serde_json::from_str(wire).unwrap();
+    v["ds"] = serde_json::Value::String("app:main".into());
+    let tampered = set_field(&op, "wire", Cbor::Text(v.to_string()));
+    let out = submit(&mut sess, "app:main", vec![tampered]);
+    assert_eq!(outcome(&out[0]), ("REJECT", Some("DECODE")));
     assert_eq!(relay.op_count("app:main").unwrap(), 0);
+}
+
+#[test]
+fn logical_overflow_is_rejected_decode() {
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    handshake(&mut sess);
+    let op = mint_experimental_relay_op(&SK, DS, 10, 0, 1);
+    let wire = as_text(map_get(&op, "wire"));
+    let mut v: serde_json::Value = serde_json::from_str(wire).unwrap();
+    v["ts"]["l"] = serde_json::json!(65536_u64);
+    let tampered = set_field(&op, "wire", Cbor::Text(v.to_string()));
+    let tampered = set_field(&tampered, "logical", Cbor::Uint(65536));
+    let out = submit(&mut sess, DS, vec![tampered]);
+    assert_eq!(outcome(&out[0]), ("REJECT", Some("DECODE")));
+    assert_eq!(relay.op_count(DS).unwrap(), 0);
 }

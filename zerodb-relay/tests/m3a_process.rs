@@ -121,9 +121,10 @@ fn handshake(sess: &mut RelaySession) {
 }
 
 const SK_B: [u8; 32] = [8u8; 32];
+const TEST_DS: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
 fn signed_op(seed: &[u8; 32], tag: u16, ms: u64) -> Cbor {
-    mint_experimental_relay_op(seed, "app:main", ms, 0, tag)
+    mint_experimental_relay_op(seed, TEST_DS, ms, 0, tag)
 }
 
 fn op_id_of(op: &Cbor) -> Vec<u8> {
@@ -140,7 +141,7 @@ fn subscribe_frame(request_id: u32) -> Vec<u8> {
         request_id,
         Cbor::Map(vec![(
             "datastores".into(),
-            Cbor::Array(vec![Cbor::Text("app:main".into())]),
+            Cbor::Array(vec![Cbor::Text(TEST_DS.into())]),
         )]),
     )
 }
@@ -247,7 +248,7 @@ fn unauthenticated_ops_emits_fatal_and_closes() {
         MSG_OPS,
         7,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             (
                 "operations".into(),
                 Cbor::Array(vec![signed_op(&SK, 1, 10)]),
@@ -305,7 +306,7 @@ fn persist_ops_and_duplicate() {
         MSG_OPS,
         7,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             (
                 "operations".into(),
                 Cbor::Array(vec![signed_op(&SK, 1, 10)]),
@@ -340,7 +341,7 @@ fn reject_op_without_id() {
         MSG_OPS,
         2,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             (
                 "operations".into(),
                 Cbor::Array(vec![Cbor::Map(vec![(
@@ -368,7 +369,7 @@ fn sync_response_carries_validated_root_not_accepted() {
         MSG_OPS,
         3,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             (
                 "operations".into(),
                 Cbor::Array(vec![signed_op(&SK, 1, 1000), signed_op(&SK, 2, 2000)]),
@@ -380,7 +381,7 @@ fn sync_response_carries_validated_root_not_accepted() {
         MSG_SYNC_REQUEST,
         4,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             ("accepted_root".into(), Cbor::Bytes(vec![0u8; 32])),
         ]),
     );
@@ -408,7 +409,7 @@ fn catch_up_sends_ops_not_covered_by_cursor() {
         MSG_OPS,
         5,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             (
                 "operations".into(),
                 Cbor::Array(vec![a1.clone(), a2.clone(), b1.clone()]),
@@ -431,7 +432,7 @@ fn catch_up_sends_ops_not_covered_by_cursor() {
         MSG_SYNC_REQUEST,
         8,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             ("accepted_root".into(), Cbor::Bytes(vec![0u8; 32])),
             (
                 "cursor".into(),
@@ -471,7 +472,7 @@ fn catch_up_chunks_ops_to_batch_limit() {
         MSG_OPS,
         20,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             ("operations".into(), Cbor::Array(operations)),
         ]),
     ))
@@ -484,7 +485,7 @@ fn catch_up_chunks_ops_to_batch_limit() {
             MSG_SYNC_REQUEST,
             21,
             Cbor::Map(vec![
-                ("datastore".into(), Cbor::Text("app:main".into())),
+                ("datastore".into(), Cbor::Text(TEST_DS.into())),
                 ("accepted_root".into(), Cbor::Bytes(vec![0u8; 32])),
             ]),
         ))
@@ -532,14 +533,14 @@ fn durable_reopen_keeps_validated_ops() {
             MSG_OPS,
             9,
             Cbor::Map(vec![
-                ("datastore".into(), Cbor::Text("app:main".into())),
+                ("datastore".into(), Cbor::Text(TEST_DS.into())),
                 ("operations".into(), Cbor::Array(vec![signed_op(&SK, 9, 1)])),
             ]),
         ))
         .unwrap();
     }
     let relay = Relay::open(&path).unwrap();
-    assert_eq!(relay.op_count("app:main").unwrap(), 1);
+    assert_eq!(relay.op_count(TEST_DS).unwrap(), 1);
     let _ = std::fs::remove_file(&path);
 }
 
@@ -552,7 +553,7 @@ fn e3_lite_offline_peer_catchup_from_relay_only() {
         MSG_OPS,
         10,
         Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text("app:main".into())),
+            ("datastore".into(), Cbor::Text(TEST_DS.into())),
             (
                 "operations".into(),
                 Cbor::Array(vec![signed_op(&SK, 1, 1), signed_op(&SK, 2, 2)]),
@@ -568,7 +569,7 @@ fn e3_lite_offline_peer_catchup_from_relay_only() {
             MSG_SYNC_REQUEST,
             11,
             Cbor::Map(vec![
-                ("datastore".into(), Cbor::Text("app:main".into())),
+                ("datastore".into(), Cbor::Text(TEST_DS.into())),
                 ("accepted_root".into(), Cbor::Bytes(vec![0u8; 32])),
             ]),
         ))
@@ -596,7 +597,7 @@ fn subscribe_reports_validated_root() {
             12,
             Cbor::Map(vec![(
                 "datastores".into(),
-                Cbor::Array(vec![Cbor::Text("app:main".into())]),
+                Cbor::Array(vec![Cbor::Text(TEST_DS.into())]),
             )]),
         ))
         .unwrap();
