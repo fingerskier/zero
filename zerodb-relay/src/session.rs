@@ -10,8 +10,8 @@ use zerodb_core::relay::{
     ERR_AUTH_FAILED, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH,
     MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE,
     MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE,
-    MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, authenticate,
-    negotiate_capabilities, retransmit,
+    MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS,
+    admit_experimental_op, authenticate, negotiate_capabilities, retransmit,
 };
 
 use crate::store::{OpStore, StoredOp, validated_root_hex};
@@ -282,7 +282,7 @@ impl RelaySession {
         let mut outcomes = Vec::new();
         let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         for op in operations {
-            let (outcome, reason, parsed) = parse_stored(op);
+            let (outcome, reason, parsed) = parse_stored(op, &ds);
             if outcome == "REJECT" {
                 let mut m = vec![
                     ("op_id".into(), op_id_cbor(op)),
@@ -693,32 +693,27 @@ fn text_array(c: &Cbor) -> Vec<String> {
     }
 }
 
-fn parse_stored(op: &Cbor) -> (&'static str, Option<&'static str>, Option<StoredOp>) {
-    let Cbor::Map(_) = op else {
-        return ("REJECT", Some("DECODE"), None);
-    };
-    let id = match take32(map_get(op, "op_id")) {
-        Ok(id) => id,
-        Err(_) => return ("REJECT", Some("DECODE"), None),
-    };
-    let author = match take32(map_get(op, "author")) {
-        Ok(a) => a,
-        Err(_) => return ("REJECT", Some("DECODE"), None),
-    };
-    let physical_ms = uint(map_get(op, "physical_ms")).unwrap_or_default();
-    let logical = uint(map_get(op, "logical")).unwrap_or_default() as u16;
-    let body = cbor::encode(op).unwrap_or_default();
-    (
-        "ACCEPT",
-        None,
-        Some(StoredOp {
-            op_id: id,
-            author,
-            physical_ms,
-            logical,
-            body,
-        }),
-    )
+fn parse_stored(
+    op: &Cbor,
+    datastore: &str,
+) -> (&'static str, Option<&'static str>, Option<StoredOp>) {
+    match admit_experimental_op(op, datastore) {
+        Ok(admitted) => {
+            let body = cbor::encode(op).unwrap_or_default();
+            (
+                "ACCEPT",
+                None,
+                Some(StoredOp {
+                    op_id: admitted.op_id,
+                    author: admitted.author,
+                    physical_ms: admitted.physical_ms,
+                    logical: admitted.logical,
+                    body,
+                }),
+            )
+        }
+        Err(reason) => ("REJECT", Some(reason.reason()), None),
+    }
 }
 
 fn op_id_cbor(op: &Cbor) -> Cbor {

@@ -81,4 +81,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-M3a durable convergence has exited experimentally. Highest-value work is now **M3b security**: membership/admission, signature enforcement, encrypted envelopes, and E5–E8 negatives. All formats remain draft-1 and unfrozen.
+M3a durable convergence has exited experimentally. M3b-sig (relay signature / OpId / datastore admission) is on. Highest-value remaining work is AUTH membership + E5, then E7/E8/E6. All formats remain draft-1 and unfrozen.

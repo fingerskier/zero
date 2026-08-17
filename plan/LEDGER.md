@@ -112,6 +112,7 @@ Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
 | M3a-client | LocalStore + NAPI RELAY client | done(`relay_client` + `m3a-relay.test.mjs`) | handshake, signed-op push, aligned local tree, mismatch pruning, leaf OpId difference, delta apply; `Database.connectRelay` reports walk counts |
 | M3a-e2-live | E2-live CRDT matrix + E3-lite 3-peer catch-up | done(`relay_client` concurrent_crdts + three_peer + `m3a-relay.test.mjs` 3) | Historical smaller slice: concurrent LWW/ORSet/Flag/PNCounter; C offline; B clean close/reopen; C catches up from R alone; resume `received=0`. Full E3 and Merkle walk are evidenced by the next row. |
 | M3a-merkle-e3 | Merkle wire walk + full E3 | done(`merkle_walk_prunes_matching_subtrees` + `full_exemplar_e3_1000_ops_hard_crash_and_relay_only_catchup`) | `merkle-walk-v1`; frozen responder snapshot; matching-subtree pruning; 1,000 partition writes; B hard-abort/reopen; C catches up from R alone; roots equal; resume receives 0 |
+| M3b-sig | Relay signature + OpId + datastore bind | done(`admit_experimental_op` + `m3b_admission`) | unsigned/forged/tampered → `REJECT/SIG`; wrong `ds` → `REJECT/AUTHZ`; author = BLAKE3(pk); OpId = KERNEL preimage. Not AUTH membership / E5–E8 |
 | M3b | Security: auth, envelope, negatives (E5–E8) | open | M3a, M0d | L | internal |
 | M3c | Interop TS wire peer + release | open | M3b | M | `v0.1.0` |
 | M4a | Browser/WASM/WebRTC/React | open | M3c | L | feature |

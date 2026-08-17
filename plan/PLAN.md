@@ -67,6 +67,7 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 4. ~~E2-live / E3-lite on that client~~ **done** (`relay_client` + `m3a-relay.test.mjs`). Concurrent LWW/ORSet/Flag/PNCounter; 3-peer C-offline catch-up; B sqlite close/reopen (not process death); resume `received=0`.
 5. ~~Frozen-snapshot Merkle subtree/leaf walk~~ **done** (`merkle-walk-v1`).
 6. ~~Full 1,000-write EXEMPLAR E3~~ **done**: 3 peers, C offline, B hard-abort/reopen, relay-only catch-up, equal roots, resume no-redelivery.
+7. ~~Relay signature / OpId / datastore admission (M3b-sig)~~ **done** (`admit_experimental_op`, `m3b_admission`). Next: AUTH membership control plane + E5; then E7 remainder, E8 clock, E2E/E6 (blocked on remaining CX-03 live wiring).
 
 **Shipped already (do not re-open as next work):** M1 experimental exit; M2a; M2-parity; `v0.1.0-sdk`; M3a relay/client, E2-live, Merkle walk, and full E3. Equal-ts E2 remains covered at model level; it is not an M3a blocker.
 
