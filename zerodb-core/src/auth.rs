@@ -334,6 +334,7 @@ pub struct KnownGrant {
     pub ds: [u8; 32],
     pub subject: [u8; 32],
     pub scopes: Vec<u64>,
+    pub expiry: Option<u64>,
     pub revoked: bool,
 }
 
@@ -444,6 +445,32 @@ pub fn verify_admission_token(
     let pre = admission_token_preimage(tok)?;
     let sig = Signature::from_bytes(&tok.sig);
     vk.verify(&pre, &sig).map_err(|_| AuthError::SigInvalid)?;
+    Ok(())
+}
+
+/// Admission verification with relay wall-clock expiry and binding to the
+/// authenticated transport peer. This remains a relay filter; peers enforce
+/// the causal per-operation predicate independently.
+pub fn verify_admission_token_at(
+    tok: &AdmissionToken,
+    known_grants: &[KnownGrant],
+    connected_peer: &[u8; 32],
+    now_ms: u64,
+) -> Result<(), AuthError> {
+    verify_admission_token(tok, known_grants)?;
+    if peer_id(&tok.device) != *connected_peer {
+        return Err(AuthError::SigInvalid);
+    }
+    if tok.cert.expiry.is_some_and(|expiry| now_ms >= expiry) {
+        return Err(AuthError::Expired);
+    }
+    let grant = known_grants
+        .iter()
+        .find(|grant| grant.id == tok.grant)
+        .ok_or(AuthError::NoMembership)?;
+    if grant.expiry.is_some_and(|expiry| now_ms >= expiry) {
+        return Err(AuthError::Expired);
+    }
     Ok(())
 }
 
@@ -1296,6 +1323,7 @@ mod tests {
             ds: ds_id,
             subject,
             scopes: vec![SCOPE_WRITE, SCOPE_ADMIN, SCOPE_READ, SCOPE_SYNC],
+            expiry: None,
             revoked: false,
         };
         let tok = AdmissionToken {

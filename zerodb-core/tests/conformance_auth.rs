@@ -302,6 +302,7 @@ fn run_admission(v: &Json, path: &std::path::Path) {
                 .iter()
                 .map(|s| s.as_u64().unwrap())
                 .collect(),
+            expiry: g.get("expiry").and_then(Json::as_u64),
             revoked: g["revoked"].as_bool().unwrap(),
         })
         .collect();

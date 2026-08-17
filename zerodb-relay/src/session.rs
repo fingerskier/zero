@@ -4,6 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
+use zerodb_core::auth::{
+    AdmissionToken, DeviceCert, KnownGrant, SCOPE_READ, SCOPE_SYNC, verify_admission_token_at,
+};
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::merkle::{BUCKET_WIDTH_MS, MERKLE_FORMAT_VERSION, MerkleTree};
 use zerodb_core::relay::{
@@ -84,6 +87,7 @@ impl Relay {
             nonce,
             session_id,
             subscriptions: HashSet::new(),
+            authorized: HashMap::new(),
             walk_snapshots: HashMap::new(),
         }
     }
@@ -95,6 +99,26 @@ impl Relay {
             .store
             .count(ds)
             .map_err(Into::into)
+    }
+
+    /// Persist one relay-side membership grant. The first grant protects the
+    /// datastore: subsequent access requires a valid SUBSCRIBE token.
+    pub fn upsert_grant(&self, grant: KnownGrant) -> Result<(), RelayError> {
+        self.inner
+            .lock()
+            .map_err(|_| RelayError::Poison)?
+            .store
+            .upsert_grant(grant)?;
+        Ok(())
+    }
+
+    pub fn revoke_grant(&self, ds: &str, grant: &[u8; 32]) -> Result<bool, RelayError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| RelayError::Poison)?
+            .store
+            .revoke_grant(ds, grant)?)
     }
 }
 
@@ -113,6 +137,7 @@ enum Phase {
     },
     Authed {
         caps: Vec<String>,
+        peer_id: [u8; 32],
     },
     Closed,
 }
@@ -123,6 +148,7 @@ pub struct RelaySession {
     nonce: [u8; 32],
     session_id: u64,
     subscriptions: HashSet<String>,
+    authorized: HashMap<String, [u8; 32]>,
     walk_snapshots: HashMap<String, Vec<StoredOp>>,
 }
 
@@ -255,6 +281,7 @@ impl RelaySession {
         let caps = negotiate_capabilities(&offered, RELAY_CAPS);
         self.phase = Phase::Authed {
             caps: caps.iter().map(|c| (*c).to_string()).collect(),
+            peer_id: claimed,
         };
         Ok(vec![encode_env(
             MSG_WELCOME,
@@ -280,8 +307,17 @@ impl RelaySession {
             }
         };
         let mut outcomes = Vec::new();
+        let allowed = self.datastore_allowed(&ds)?;
         let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         for op in operations {
+            if !allowed {
+                outcomes.push(Cbor::Map(vec![
+                    ("op_id".into(), op_id_cbor(op)),
+                    ("outcome".into(), Cbor::Text("REJECT".into())),
+                    ("reason".into(), Cbor::Text("AUTHZ".into())),
+                ]));
+                continue;
+            }
             let (outcome, reason, parsed) = parse_stored(op, &ds);
             if outcome == "REJECT" {
                 let mut m = vec![
@@ -312,11 +348,19 @@ impl RelaySession {
     }
 
     fn has_cap(&self, cap: &str) -> bool {
-        matches!(&self.phase, Phase::Authed { caps } if caps.iter().any(|c| c == cap))
+        matches!(&self.phase, Phase::Authed { caps, .. } if caps.iter().any(|c| c == cap))
     }
 
     fn on_sync(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
         let ds = text(map_get(&env.payload, "datastore"))?;
+        if !self.datastore_allowed(&ds)? {
+            return Ok(vec![error_frame(
+                env.request_id,
+                0x202,
+                "MEMBERSHIP_DENIED",
+                false,
+            )]);
+        }
         let cursor = map_get(&env.payload, "cursor");
         let frontier = parse_frontier(cursor);
         let guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
@@ -374,6 +418,14 @@ impl RelaySession {
 
     fn on_merkle_node(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
         let ds = text(map_get(&env.payload, "datastore"))?;
+        if !self.datastore_allowed(&ds)? {
+            return Ok(vec![error_frame(
+                env.request_id,
+                0x202,
+                "MEMBERSHIP_DENIED",
+                false,
+            )]);
+        }
         let level = uint(map_get(&env.payload, "level"))? as usize;
         let index = uint(map_get(&env.payload, "index"))? as usize;
         let stored = self
@@ -405,6 +457,14 @@ impl RelaySession {
 
     fn on_merkle_leaf(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
         let ds = text(map_get(&env.payload, "datastore"))?;
+        if !self.datastore_allowed(&ds)? {
+            return Ok(vec![error_frame(
+                env.request_id,
+                0x202,
+                "MEMBERSHIP_DENIED",
+                false,
+            )]);
+        }
         let leaf_index = uint(map_get(&env.payload, "leaf_index"))? as usize;
         let stored = self
             .walk_snapshots
@@ -440,6 +500,14 @@ impl RelaySession {
 
     fn on_delta(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
         let ds = text(map_get(&env.payload, "datastore"))?;
+        if !self.datastore_allowed(&ds)? {
+            return Ok(vec![error_frame(
+                env.request_id,
+                0x202,
+                "MEMBERSHIP_DENIED",
+                false,
+            )]);
+        }
         let wanted: HashSet<[u8; 32]> = match map_get(&env.payload, "op_ids") {
             Cbor::Array(ids) => ids.iter().filter_map(|id| take32(id).ok()).collect(),
             _ => return Err(RelayError::Protocol("delta op_ids".into())),
@@ -472,7 +540,70 @@ impl RelaySession {
         let mut entries = Vec::new();
         let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         for item in list {
-            let ds = text(item)?;
+            let (ds, token) = match item {
+                Cbor::Text(_) => (text(item)?, None),
+                Cbor::Map(_) => {
+                    let ds = text(map_get(item, "id"))?;
+                    let token = match parse_admission_token(map_get(item, "token")) {
+                        Ok(token) => token,
+                        Err(_) => {
+                            return Ok(vec![error_frame(
+                                env.request_id,
+                                0x202,
+                                "MEMBERSHIP_DENIED",
+                                false,
+                            )]);
+                        }
+                    };
+                    (ds, Some(token))
+                }
+                _ => {
+                    return Ok(vec![error_frame(
+                        env.request_id,
+                        0x400,
+                        "BAD_SUBSCRIBE",
+                        false,
+                    )]);
+                }
+            };
+            let grants = guard.store.grants(&ds)?;
+            if !grants.is_empty() {
+                let Some(token) = token else {
+                    return Ok(vec![error_frame(
+                        env.request_id,
+                        0x202,
+                        "MEMBERSHIP_DENIED",
+                        false,
+                    )]);
+                };
+                let peer_id = match &self.phase {
+                    Phase::Authed { peer_id, .. } => *peer_id,
+                    _ => {
+                        return Ok(vec![error_frame(
+                            env.request_id,
+                            0x201,
+                            "AUTH_FAILED",
+                            true,
+                        )]);
+                    }
+                };
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| RelayError::Protocol(e.to_string()))?
+                    .as_millis() as u64;
+                if !token.scopes.contains(&SCOPE_READ)
+                    || !token.scopes.contains(&SCOPE_SYNC)
+                    || verify_admission_token_at(&token, &grants, &peer_id, now_ms).is_err()
+                {
+                    return Ok(vec![error_frame(
+                        env.request_id,
+                        0x202,
+                        "MEMBERSHIP_DENIED",
+                        false,
+                    )]);
+                }
+                self.authorized.insert(ds.clone(), token.grant);
+            }
             self.subscriptions.insert(ds.clone());
             guard
                 .subscribers
@@ -497,6 +628,24 @@ impl RelaySession {
             env.request_id,
             Cbor::Map(vec![("datastores".into(), Cbor::Array(entries))]),
         )])
+    }
+
+    fn datastore_allowed(&self, ds: &str) -> Result<bool, RelayError> {
+        let guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
+        let grants = guard.store.grants(ds)?;
+        if grants.is_empty() {
+            return Ok(true);
+        }
+        let Some(id) = self.authorized.get(ds) else {
+            return Ok(false);
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| RelayError::Protocol(e.to_string()))?
+            .as_millis() as u64;
+        Ok(grants.iter().any(|grant| {
+            grant.id == *id && !grant.revoked && grant.expiry.is_none_or(|expiry| now_ms < expiry)
+        }))
     }
 }
 
@@ -691,6 +840,56 @@ fn text_array(c: &Cbor) -> Vec<String> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+fn uint_array(c: &Cbor) -> Result<Vec<u64>, RelayError> {
+    match c {
+        Cbor::Array(values) => values.iter().map(uint).collect(),
+        _ => Err(RelayError::Protocol("uint array".into())),
+    }
+}
+
+fn optional_uint(c: &Cbor) -> Result<Option<u64>, RelayError> {
+    match c {
+        Cbor::Null => Ok(None),
+        Cbor::Uint(value) => Ok(Some(*value)),
+        _ => Err(RelayError::Protocol("optional uint".into())),
+    }
+}
+
+fn optional_b32(c: &Cbor) -> Result<Option<[u8; 32]>, RelayError> {
+    match c {
+        Cbor::Null => Ok(None),
+        _ => take32(c).map(Some),
+    }
+}
+
+fn parse_admission_token(c: &Cbor) -> Result<AdmissionToken, RelayError> {
+    if !matches!(c, Cbor::Map(_)) {
+        return Err(RelayError::Protocol("admission token".into()));
+    }
+    let cert = map_get(c, "cert");
+    if !matches!(cert, Cbor::Map(_)) {
+        return Err(RelayError::Protocol("device cert".into()));
+    }
+    Ok(AdmissionToken {
+        ds: take32(map_get(c, "ds"))?,
+        subject: take32(map_get(c, "subject"))?,
+        grant: take32(map_get(c, "grant"))?,
+        scopes: uint_array(map_get(c, "scopes"))?,
+        device: take32(map_get(c, "device"))?,
+        cert: DeviceCert {
+            kr: uint(map_get(cert, "kr"))?,
+            device_pk: take32(map_get(cert, "device"))?,
+            principal_id: take32(map_get(cert, "principal"))?,
+            root_pk: take32(map_get(cert, "root_pk"))?,
+            issued: uint(map_get(cert, "issued"))?,
+            expiry: optional_uint(map_get(cert, "expiry"))?,
+            revoke_of: optional_b32(map_get(cert, "revoke_of"))?,
+            cert_sig: take64(map_get(cert, "cert_sig"))?,
+        },
+        sig: take64(map_get(c, "sig"))?,
+    })
 }
 
 fn parse_stored(

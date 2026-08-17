@@ -5,6 +5,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
+use zerodb_core::auth::KnownGrant;
 use zerodb_core::merkle::MerkleOp;
 use zerodb_core::relay::{HeldOp, root_hex};
 
@@ -49,6 +50,9 @@ pub trait OpStore: Send {
     fn insert(&mut self, ds: &str, op: StoredOp) -> Result<bool, StoreError>;
     fn list(&self, ds: &str) -> Result<Vec<StoredOp>, StoreError>;
     fn count(&self, ds: &str) -> Result<u64, StoreError>;
+    fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError>;
+    fn grants(&self, ds: &str) -> Result<Vec<KnownGrant>, StoreError>;
+    fn revoke_grant(&mut self, ds: &str, id: &[u8; 32]) -> Result<bool, StoreError>;
 }
 
 pub fn validated_root_hex(ops: &[StoredOp]) -> String {
@@ -59,12 +63,14 @@ pub fn validated_root_hex(ops: &[StoredOp]) -> String {
 pub struct MemoryStore {
     // (ds, op_id) → op
     ops: BTreeMap<(String, [u8; 32]), StoredOp>,
+    grants: BTreeMap<(String, [u8; 32]), KnownGrant>,
 }
 
 impl MemoryStore {
     pub fn new() -> Self {
         Self {
             ops: BTreeMap::new(),
+            grants: BTreeMap::new(),
         }
     }
 }
@@ -97,6 +103,28 @@ impl OpStore for MemoryStore {
     fn count(&self, ds: &str) -> Result<u64, StoreError> {
         Ok(self.ops.keys().filter(|(d, _)| d == ds).count() as u64)
     }
+
+    fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError> {
+        self.grants.insert((hex::encode(grant.ds), grant.id), grant);
+        Ok(())
+    }
+
+    fn grants(&self, ds: &str) -> Result<Vec<KnownGrant>, StoreError> {
+        Ok(self
+            .grants
+            .iter()
+            .filter(|((d, _), _)| d == ds)
+            .map(|(_, g)| g.clone())
+            .collect())
+    }
+
+    fn revoke_grant(&mut self, ds: &str, id: &[u8; 32]) -> Result<bool, StoreError> {
+        if let Some(grant) = self.grants.get_mut(&(ds.to_string(), *id)) {
+            grant.revoked = true;
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }
 
 pub struct SqliteStore {
@@ -118,6 +146,15 @@ impl SqliteStore {
                 logical INTEGER NOT NULL,
                 body BLOB NOT NULL,
                 PRIMARY KEY (ds, op_id)
+            );
+            CREATE TABLE IF NOT EXISTS membership_grants (
+                ds TEXT NOT NULL,
+                grant_id BLOB NOT NULL,
+                subject BLOB NOT NULL,
+                scopes TEXT NOT NULL,
+                expiry INTEGER,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (ds, grant_id)
             );",
         )?;
         Ok(Self { conn })
@@ -183,5 +220,65 @@ impl OpStore for SqliteStore {
                     r.get(0)
                 })?;
         Ok(n as u64)
+    }
+
+    fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError> {
+        let scopes =
+            serde_json::to_string(&grant.scopes).map_err(|e| StoreError::Io(e.to_string()))?;
+        self.conn.execute(
+            "INSERT INTO membership_grants (ds, grant_id, subject, scopes, expiry, revoked)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(ds, grant_id) DO UPDATE SET subject=excluded.subject,
+             scopes=excluded.scopes, expiry=excluded.expiry, revoked=excluded.revoked",
+            params![
+                hex::encode(grant.ds),
+                grant.id.as_slice(),
+                grant.subject.as_slice(),
+                scopes,
+                grant.expiry.map(|v| v as i64),
+                grant.revoked as i64
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn grants(&self, ds: &str) -> Result<Vec<KnownGrant>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT grant_id, subject, scopes, expiry, revoked FROM membership_grants WHERE ds=?1",
+        )?;
+        let ds_bytes: [u8; 32] = hex::decode(ds)
+            .map_err(|e| StoreError::Io(e.to_string()))?
+            .try_into()
+            .map_err(|_| StoreError::Io("datastore id length".into()))?;
+        let rows = stmt.query_map(params![ds], |r| {
+            let id: Vec<u8> = r.get(0)?;
+            let subject: Vec<u8> = r.get(1)?;
+            let scopes_json: String = r.get(2)?;
+            let scopes = serde_json::from_str(&scopes_json).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    2,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+            Ok(KnownGrant {
+                id: id.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?,
+                ds: ds_bytes,
+                subject: subject
+                    .try_into()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                scopes,
+                expiry: r.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+                revoked: r.get::<_, i64>(4)? != 0,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn revoke_grant(&mut self, ds: &str, id: &[u8; 32]) -> Result<bool, StoreError> {
+        Ok(self.conn.execute(
+            "UPDATE membership_grants SET revoked=1 WHERE ds=?1 AND grant_id=?2",
+            params![ds, id.as_slice()],
+        )? != 0)
     }
 }

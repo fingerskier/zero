@@ -239,13 +239,22 @@ Subscription is the single membership verb: it scopes presence, peer listing, si
 
 ```
 {
-  datastores:   [string]    // Datastore IDs to subscribe to
+  datastores:   [string | {
+    id: string,
+    token: MembershipCapabilityToken // AUTH §3.3; required for protected stores
+  }]
   connectable:  bool        // Whether this peer accepts direct P2P connections
   metadata:     map?        // Optional transport hints for signaling
 }
 ```
 
-> **Note:** datastore admission is unauthenticated in this draft. M0d defines membership capabilities; on-wire admission is M3b. Guessed-id subscribe MUST be rejected once admission is enforced.
+For a datastore present in the relay membership control plane, the relay MUST
+verify the AUTH §3.3 token, bind its device to the authenticated connection,
+require `read` + `sync`, and reject guessed-id, forged, expired, or revoked
+membership with `MEMBERSHIP_DENIED`. The relay MUST apply the same admission
+state to OPS, SYNC, Merkle walk, and DELTA access; revocation closes access for
+already-open sessions. Stores not yet provisioned remain experimental/open for
+backward compatibility during M3b rollout.
 
 #### `SUBSCRIBED` (0x11) — R→P [L0]
 
@@ -670,6 +679,7 @@ This boundary is fundamental to the untrusted relay model: the relay ensures ope
 | `0x102` | `VERSION_MISMATCH` | Yes | Incompatible protocol version |
 | `0x103` | `MALFORMED_MESSAGE` | No | Message failed to decode |
 | `0x201` | `AUTH_FAILED` | Yes | Authentication challenge failed |
+| `0x202` | `MEMBERSHIP_DENIED` | No | Missing, invalid, expired, or revoked datastore membership |
 | `0x301` | `UNSIGNED_OP` | No | Operation lacks required signature |
 | `0x302` | `CLOCK_DRIFT` | No | Operation timestamp too far in future |
 | `0x303` | `PAYLOAD_TOO_LARGE` | No | Operation or batch exceeds limits |
