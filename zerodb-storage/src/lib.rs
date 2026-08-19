@@ -8,6 +8,7 @@
 //! create/tombstone state is likewise set-derived (order-independent). `init`
 //! is fail-closed against re-keying an already-initialized database.
 
+mod authz;
 mod backend;
 mod memory_backend;
 pub mod relay_client;
@@ -15,6 +16,7 @@ pub mod relay_client;
 mod sqlite_backend;
 pub mod sync;
 
+pub use authz::{AuthReject, IngestResult};
 pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
 pub use memory_backend::MemoryBackend;
 #[cfg(feature = "sqlite")]
@@ -36,6 +38,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
+use zerodb_core::auth::{
+    GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, SCOPE_READ, SCOPE_SYNC,
+    SCOPE_WRITE, datastore_id_from_genesis, genesis_envelope,
+};
 use zerodb_core::cbor::Cbor;
 use zerodb_core::kernel::{
     Flag, GCounter, KernelOp, Lww, OrSet, Payload, PnCounter, Replica, Value,
@@ -48,6 +54,10 @@ use zerodb_core::schema::{
     encode_ir, parse_ir, schema_id,
 };
 use zerodb_core::sign::{DOMAIN_OP_SIG, verify_op};
+
+use crate::authz::{
+    META_AUTH, authorize_wire, bundle_has_genesis, control_dep_hex, load_applied_wires,
+};
 
 pub(crate) const KIND_CREATE_NODE: u64 = 1;
 pub(crate) const KIND_CREATE_EDGE: u64 = 2;
@@ -73,6 +83,8 @@ pub enum StoreError {
     Invalid(String),
     #[error("duplicate op")]
     Duplicate,
+    #[error("{0}")]
+    Authz(&'static str),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +159,7 @@ pub struct LocalStore<B: StoreBackend = DefaultBackend> {
     /// Wall-clock source for local HLC ticks. Defaults to system time;
     /// tests may override via `set_test_clock` to simulate clock rollback.
     clock: fn() -> u64,
+    last_rejects: Vec<authz::AuthReject>,
 }
 
 struct ValidatedWire {
@@ -167,6 +180,13 @@ impl LocalStore {
             std::fs::create_dir_all(parent).map_err(|e| StoreError::Io(e.to_string()))?;
         }
         Self::init_with_backend(SqliteBackend::open(path)?)
+    }
+
+    pub fn init_auth(path: &Path) -> Result<Self, StoreError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| StoreError::Io(e.to_string()))?;
+        }
+        Self::init_auth_with_backend(SqliteBackend::open(path)?)
     }
 }
 
@@ -200,6 +220,7 @@ impl<B: StoreBackend> LocalStore<B> {
             hlc_p,
             hlc_l,
             clock: now_ms,
+            last_rejects: Vec::new(),
         })
     }
 
@@ -221,6 +242,88 @@ impl<B: StoreBackend> LocalStore<B> {
         let store = Self::init_with_backend_from_seed(backend, &seed, &ds)?;
         store.backend.meta_set("salt", &salt)?;
         Ok(store)
+    }
+
+    /// Initialize a datastore with AUTH.md genesis (self-certifying `DatastoreId`).
+    ///
+    /// Solo-device identity: the local seed is both principal root and device.
+    /// Subsequent persist/import paths run the §4 membership predicate.
+    pub fn init_auth_with_backend(mut backend: B) -> Result<Self, StoreError> {
+        if already_initialized(&backend)? {
+            return Err(StoreError::Invalid(
+                "database already initialized — refuse re-init (no silent re-key)".into(),
+            ));
+        }
+        let mut seed = [0u8; 32];
+        getrandom_fill(&mut seed);
+        let signing = SigningKey::from_bytes(&seed);
+        let author_pk = signing.verifying_key().to_bytes();
+        let author: [u8; 32] = *blake3::hash(&author_pk).as_bytes();
+        let mut salt = [0u8; 16];
+        getrandom_fill(&mut salt);
+        let body = GenesisBody {
+            founder: author,
+            salt,
+            init_ep: 0,
+            fmt_v: 1,
+        };
+        let ts = OpTs {
+            physical_ms: now_ms(),
+            logical: 0,
+        };
+        let env = genesis_envelope(author, ts, &body);
+        let ds = datastore_id_from_genesis(&env).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let id = env.op_id().map_err(|e| StoreError::Cbor(e.to_string()))?;
+        let sig = {
+            let pre = [DOMAIN_OP_SIG, id.as_slice()].concat();
+            signing.sign(&pre).to_bytes()
+        };
+        let body_json = serde_json::json!({
+            "founder": hex::encode(author),
+            "salt": hex::encode(salt),
+            "init_ep": 0,
+            "fmt_v": 1,
+        });
+        let wire = WireOp {
+            id: hex::encode(id),
+            v: 1,
+            ds: hex::encode([0u8; 32]),
+            ep: 0,
+            author: hex::encode(author),
+            author_pk: hex::encode(author_pk),
+            ts: WireTs {
+                p: ts.physical_ms,
+                l: ts.logical,
+            },
+            deps: vec![],
+            grp: None,
+            kind: KIND_GENESIS,
+            body: body_json.clone(),
+            sig: hex::encode(sig),
+        };
+        let wire_json =
+            serde_json::to_string(&wire).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        backend.meta_set("seed", &seed)?;
+        backend.meta_set("ds", &ds)?;
+        backend.meta_set("salt", &salt)?;
+        backend.meta_set(META_AUTH, &[1])?;
+        meta_set_u64(&backend, "hlc_p", ts.physical_ms)?;
+        meta_set_u64(&backend, "hlc_l", 0)?;
+        meta_set_u64(&backend, "storage_format_version", STORAGE_FORMAT_VERSION)?;
+        backend.with_txn(&mut |tx| {
+            tx.op_insert(&OpRecord {
+                id,
+                author,
+                author_pk,
+                physical_ms: ts.physical_ms,
+                logical: ts.logical,
+                kind: KIND_GENESIS,
+                body_json: body_json.to_string(),
+                sig,
+                wire_json: wire_json.clone(),
+            })
+        })?;
+        Self::open_with_backend(backend)
     }
 
     /// Initialize an empty backend with an existing identity seed + datastore
@@ -276,6 +379,74 @@ impl<B: StoreBackend> LocalStore<B> {
 
     pub fn author_hex(&self) -> String {
         hex::encode(self.author)
+    }
+
+    pub fn author_pk_hex(&self) -> String {
+        hex::encode(self.author_pk)
+    }
+
+    /// Solo-device principal: `PrincipalId == PeerId`.
+    pub fn principal_hex(&self) -> String {
+        hex::encode(self.author)
+    }
+
+    pub fn is_auth_enabled(&self) -> bool {
+        self.backend
+            .meta_get(META_AUTH)
+            .ok()
+            .flatten()
+            .is_some_and(|v| v.first() == Some(&1))
+    }
+
+    pub fn take_rejects(&mut self) -> Vec<AuthReject> {
+        std::mem::take(&mut self.last_rejects)
+    }
+
+    pub fn grant_membership(
+        &mut self,
+        subject_hex: &str,
+        scopes: &[u64],
+    ) -> Result<String, StoreError> {
+        self.grant_membership_expiring(subject_hex, scopes, None)
+    }
+
+    pub fn grant_membership_expiring(
+        &mut self,
+        subject_hex: &str,
+        scopes: &[u64],
+        expiry: Option<u64>,
+    ) -> Result<String, StoreError> {
+        if scopes.is_empty() {
+            return Err(StoreError::Authz("CAP_INVALID"));
+        }
+        let subject = decode32(subject_hex)?;
+        let body_json = serde_json::json!({
+            "subject": hex::encode(subject),
+            "scopes": scopes,
+            "expiry": expiry,
+            "delegable": false,
+            "ds_bind": hex::encode(self.ds),
+        });
+        let body = json_to_cbor_body(&body_json)?;
+        self.commit_local(KIND_CAP_GRANT, body, body_json, |_, _| Ok(()))
+    }
+
+    pub fn revoke_membership(
+        &mut self,
+        grant_id_hex: &str,
+        reason: u64,
+    ) -> Result<String, StoreError> {
+        let grant = decode32(grant_id_hex)?;
+        let body_json = serde_json::json!({
+            "grant": hex::encode(grant),
+            "reason": reason,
+        });
+        let body = json_to_cbor_body(&body_json)?;
+        self.commit_local(KIND_CAP_REVOKE, body, body_json, |_, _| Ok(()))
+    }
+
+    pub fn grant_write_access(&mut self, subject_hex: &str) -> Result<String, StoreError> {
+        self.grant_membership(subject_hex, &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC])
     }
 
     /// Test hook: override the wall-clock source used for local HLC ticks.
@@ -784,6 +955,13 @@ impl<B: StoreBackend> LocalStore<B> {
             .map(|op| validate_wire_for_ds(op, &candidate_ds))
             .collect::<Result<Vec<_>, _>>()?;
 
+        let auth_on = self.is_auth_enabled() || bundle_has_genesis(&bundle.ops);
+        let mut applied_auth = if auth_on {
+            load_applied_wires(&self.backend)?
+        } else {
+            Vec::new()
+        };
+        let mut rejects = Vec::new();
         let mut next_hlc_p = self.hlc_p;
         let mut next_hlc_l = self.hlc_l;
         let mut accepted = 0u32;
@@ -792,12 +970,28 @@ impl<B: StoreBackend> LocalStore<B> {
             if adopting {
                 tx.meta_set("ds", &candidate_ds)?;
             }
+            if auth_on {
+                tx.meta_set(META_AUTH, &[1])?;
+            }
             let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
             for (op, validated) in bundle.ops.iter().zip(&validated) {
                 if tx.op_exists(&validated.id)? {
                     skipped += 1;
                     continue;
+                }
+                if auth_on {
+                    match authorize_wire(&candidate_ds, &applied_auth, op) {
+                        Ok(()) => applied_auth.push(op.clone()),
+                        Err(StoreError::Authz(reason)) => {
+                            rejects.push(AuthReject {
+                                op_id: op.id.clone(),
+                                reason,
+                            });
+                            continue;
+                        }
+                        Err(err) => return Err(err),
+                    }
                 }
                 check_wire_ingress(tx, op, &pending, local_ep)?;
                 (next_hlc_p, next_hlc_l) =
@@ -810,6 +1004,7 @@ impl<B: StoreBackend> LocalStore<B> {
             meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
             Ok(())
         })?;
+        self.last_rejects = rejects;
 
         self.ds = candidate_ds;
         self.hlc_p = next_hlc_p;
@@ -875,14 +1070,37 @@ impl<B: StoreBackend> LocalStore<B> {
     }
 
     pub fn ingest_wire(&mut self, wire: &WireOp) -> Result<bool, StoreError> {
+        match self.ingest_op(wire)? {
+            IngestResult::Applied => Ok(true),
+            IngestResult::Duplicate => Ok(false),
+            IngestResult::Rejected { reason } => Err(StoreError::Authz(reason)),
+        }
+    }
+
+    /// Persist one already-signed op. AUTH rejects are named outcomes, not errors.
+    pub fn ingest_op(&mut self, wire: &WireOp) -> Result<IngestResult, StoreError> {
+        self.last_rejects.clear();
         let validated = validate_wire_for_ds(wire, &self.ds)?;
         if self.backend.op_exists(&validated.id)? {
-            return Ok(false);
+            return Ok(IngestResult::Duplicate);
+        }
+        if self.is_auth_enabled() || wire.kind == KIND_GENESIS {
+            let applied = load_applied_wires(&self.backend)?;
+            if let Err(StoreError::Authz(reason)) = authorize_wire(&self.ds, &applied, wire) {
+                self.last_rejects.push(AuthReject {
+                    op_id: wire.id.clone(),
+                    reason,
+                });
+                return Ok(IngestResult::Rejected { reason });
+            }
         }
 
         let (next_hlc_p, next_hlc_l) =
             next_remote_hlc(self.hlc_p, self.hlc_l, wire.ts.p, wire.ts.l, now_ms())?;
         self.backend.with_txn(&mut |tx| {
+            if wire.kind == KIND_GENESIS {
+                tx.meta_set(META_AUTH, &[1])?;
+            }
             apply_wire(tx, wire, &validated)?;
             meta_set_u64(tx, "hlc_p", next_hlc_p)?;
             meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
@@ -891,7 +1109,7 @@ impl<B: StoreBackend> LocalStore<B> {
 
         self.hlc_p = next_hlc_p;
         self.hlc_l = next_hlc_l;
-        Ok(true)
+        Ok(IngestResult::Applied)
     }
 
     fn orset_dots_for(
@@ -958,6 +1176,11 @@ impl<B: StoreBackend> LocalStore<B> {
         F: FnOnce(&mut GroupBuilder) -> Result<T, StoreError>,
     {
         let group_id = *Uuid::now_v7().as_bytes();
+        let deps = if self.is_auth_enabled() {
+            control_dep_hex(&load_applied_wires(&self.backend)?)?
+        } else {
+            Vec::new()
+        };
         let mut builder = GroupBuilder {
             signing: self.signing.clone(),
             author: self.author,
@@ -967,6 +1190,7 @@ impl<B: StoreBackend> LocalStore<B> {
             hlc_p: self.hlc_p,
             hlc_l: self.hlc_l,
             group_id,
+            deps,
             staged: Vec::new(),
         };
         let out = f(&mut builder)?;
@@ -985,6 +1209,12 @@ impl<B: StoreBackend> LocalStore<B> {
         let mut next_p = self.hlc_p;
         let mut next_l = self.hlc_l;
         let ds = self.ds;
+        let auth_on = self.is_auth_enabled();
+        let mut applied_auth = if auth_on {
+            load_applied_wires(&self.backend)?
+        } else {
+            Vec::new()
+        };
         self.backend.with_txn(&mut |tx| {
             let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
@@ -992,6 +1222,10 @@ impl<B: StoreBackend> LocalStore<B> {
                 let validated = validate_wire_for_ds(wire, &ds)?;
                 if tx.op_exists(&validated.id)? {
                     return Err(StoreError::Duplicate);
+                }
+                if auth_on {
+                    authorize_wire(&ds, &applied_auth, wire)?;
+                    applied_auth.push(wire.clone());
                 }
                 check_wire_ingress(tx, wire, &pending, local_ep)?;
                 (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, now_ms())?;
@@ -1019,13 +1253,27 @@ impl<B: StoreBackend> LocalStore<B> {
     {
         let ts = self.next_local_ts()?;
         let ep = self.schema_epoch().unwrap_or(0);
+        let applied = if self.is_auth_enabled() {
+            load_applied_wires(&self.backend)?
+        } else {
+            Vec::new()
+        };
+        let deps = if self.is_auth_enabled() {
+            control_dep_hex(&applied)?
+        } else {
+            Vec::new()
+        };
+        let dep_ids = deps
+            .iter()
+            .map(|dep| decode32(dep))
+            .collect::<Result<Vec<_>, _>>()?;
         let env = OpEnvelope {
             v: 1,
             ds: self.ds,
             ep,
             author: self.author,
             ts,
-            deps: vec![],
+            deps: dep_ids,
             grp: None,
             kind,
             body,
@@ -1046,12 +1294,15 @@ impl<B: StoreBackend> LocalStore<B> {
                 p: ts.physical_ms,
                 l: ts.logical,
             },
-            deps: vec![],
+            deps,
             grp: None,
             kind,
             body: body_json.clone(),
             sig: hex::encode(sig),
         };
+        if self.is_auth_enabled() && kind != KIND_GENESIS {
+            authorize_wire(&self.ds, &applied, &wire)?;
+        }
         let wire_json =
             serde_json::to_string(&wire).map_err(|e| StoreError::Invalid(e.to_string()))?;
         let rec = OpRecord {
@@ -1092,6 +1343,7 @@ pub struct GroupBuilder {
     hlc_p: u64,
     hlc_l: u16,
     group_id: [u8; 16],
+    deps: Vec<String>,
     staged: Vec<WireOp>,
 }
 
@@ -1126,13 +1378,18 @@ impl GroupBuilder {
         body_json: serde_json::Value,
     ) -> Result<(), StoreError> {
         let ts = self.next_ts()?;
+        let dep_ids = self
+            .deps
+            .iter()
+            .map(|dep| decode32(dep))
+            .collect::<Result<Vec<_>, _>>()?;
         let env = OpEnvelope {
             v: 1,
             ds: self.ds,
             ep: self.ep,
             author: self.author,
             ts,
-            deps: vec![],
+            deps: dep_ids,
             grp: Some(self.group_id),
             kind,
             body,
@@ -1153,7 +1410,7 @@ impl GroupBuilder {
                 p: ts.physical_ms,
                 l: ts.logical,
             },
-            deps: vec![],
+            deps: self.deps.clone(),
             grp: Some(hex::encode(self.group_id)),
             kind,
             body: body_json,
@@ -1267,6 +1524,7 @@ fn apply_wire(
             check_schema_pin_tx(tx, node, path, crdt)?;
             rematerialize_prop(tx, node, path)?;
         }
+        KIND_GENESIS | KIND_CAP_GRANT | KIND_CAP_REVOKE => {}
         _ => unreachable!("wire kind was validated"),
     }
     Ok(())
@@ -1317,12 +1575,12 @@ fn validate_wire_for_ds(
         )));
     }
     let wire_ds = decode32(&wire.ds)?;
-    if &wire_ds != expected_ds {
-        return Err(StoreError::Invalid(format!(
-            "operation datastore mismatch: expected {} got {}",
-            hex::encode(expected_ds),
-            wire.ds
-        )));
+    if wire.kind == KIND_GENESIS {
+        if wire_ds != [0u8; 32] {
+            return Err(StoreError::Authz("AUTH_WRONG_DATASTORE"));
+        }
+    } else if &wire_ds != expected_ds {
+        return Err(StoreError::Authz("AUTH_WRONG_DATASTORE"));
     }
     if wire.ts.p > i64::MAX as u64 {
         return Err(StoreError::Invalid(
@@ -1367,6 +1625,13 @@ fn validate_wire_for_ds(
         kind: wire.kind,
         body: json_to_cbor_body(&wire.body)?,
     };
+    if wire.kind == KIND_GENESIS {
+        let derived =
+            datastore_id_from_genesis(&envelope).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        if derived != *expected_ds {
+            return Err(StoreError::Authz("AUTH_WRONG_DATASTORE"));
+        }
+    }
     let computed_id = envelope
         .op_id()
         .map_err(|e| StoreError::Cbor(e.to_string()))?;
@@ -1537,6 +1802,53 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
                 }
                 other => return Err(StoreError::Invalid(format!("crdt {other}"))),
             }
+        }
+        KIND_GENESIS => {
+            decode32(
+                object
+                    .get("founder")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| StoreError::Invalid("body.founder".into()))?,
+            )?;
+            let salt = object
+                .get("salt")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| StoreError::Invalid("body.salt".into()))?;
+            hex::decode(salt).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        }
+        KIND_CAP_GRANT => {
+            decode32(
+                object
+                    .get("subject")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| StoreError::Invalid("body.subject".into()))?,
+            )?;
+            decode32(
+                object
+                    .get("ds_bind")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| StoreError::Invalid("body.ds_bind".into()))?,
+            )?;
+            let scopes = object
+                .get("scopes")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| StoreError::Invalid("body.scopes".into()))?;
+            if scopes.is_empty() {
+                return Err(StoreError::Authz("CAP_INVALID"));
+            }
+            for scope in scopes {
+                if scope.as_u64().is_none() {
+                    return Err(StoreError::Invalid("body.scopes".into()));
+                }
+            }
+        }
+        KIND_CAP_REVOKE => {
+            decode32(
+                object
+                    .get("grant")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| StoreError::Invalid("body.grant".into()))?,
+            )?;
         }
         other => {
             return Err(StoreError::Invalid(format!(
@@ -1976,7 +2288,7 @@ fn now_ms() -> u64 {
     js_sys::Date::now() as u64
 }
 
-fn decode32(s: &str) -> Result<[u8; 32], StoreError> {
+pub(crate) fn decode32(s: &str) -> Result<[u8; 32], StoreError> {
     let b = hex::decode(s).map_err(|e| StoreError::Invalid(e.to_string()))?;
     b.try_into()
         .map_err(|_| StoreError::Invalid("expected 32 bytes".into()))

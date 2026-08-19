@@ -1,5 +1,5 @@
 //! M3b-sig: relay rejects unsigned, forged, and wrong-datastore ops.
-//! Not EXEMPLAR E5/E7 — no AUTH membership grants yet.
+//! Membership / EXEMPLAR E5 is `e5_membership`.
 
 use ed25519_dalek::{Signer, SigningKey};
 use zerodb_core::cbor::{self, Cbor};

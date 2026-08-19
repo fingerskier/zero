@@ -81,4 +81,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-M3a durable convergence has exited experimentally. M3b-sig (relay signature / OpId / datastore admission) is on. Highest-value remaining work is AUTH membership + E5, then E7/E8/E6. All formats remain draft-1 and unfrozen.
+M3a durable convergence has exited experimentally. M3b-sig and AUTH membership + E5 (peer §4 grant/revoke, honest-relay filter, colluding-relay peer reject) are on. Highest-value remaining work is E7 remainder, E8 clock, then E6. All formats remain draft-1 and unfrozen. Do not claim M3b exit until E5–E8 are all done.

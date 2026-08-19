@@ -5,7 +5,7 @@
 //! or one WebSocket binary per envelope). Not a format freeze. Implements the
 //! negotiated frozen-snapshot Merkle walk. M3b-sig: the relay admits
 //! signed ops only (signature, OpId preimage, datastore bind). AUTH
-//! membership grants remain later.
+//! membership is enforced by peers on apply.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,7 +21,8 @@ use zerodb_core::relay::{
     MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth,
 };
 
-use crate::{ExportBundle, LocalStore, StoreBackend, StoreError, WireOp};
+use crate::authz::bundle_datastore_id;
+use crate::{ExportBundle, IngestResult, LocalStore, StoreBackend, StoreError, WireOp};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RelaySyncSummary {
@@ -92,7 +93,12 @@ where
         .unwrap_or_else(|| store.datastore_id_hex());
 
     let local = store.export_all()?;
-    let to_send: Vec<WireOp> = local.ops.into_iter().filter(|w| w.ds == ds).collect();
+    let zero_ds = "00".repeat(32);
+    let to_send: Vec<WireOp> = local
+        .ops
+        .into_iter()
+        .filter(|w| w.ds == ds || (w.kind == 0 && w.ds == zero_ds))
+        .collect();
     let mut request_id = 3u32;
     if !to_send.is_empty() {
         summary.sent = to_send.len() as u32;
@@ -191,7 +197,7 @@ where
     }
     let bundle = ExportBundle {
         format: 1,
-        datastore_id: incoming[0].ds.clone(),
+        datastore_id: bundle_datastore_id(&incoming)?,
         ops: incoming,
     };
     let adopting = store.op_count()? == 0 && bundle.datastore_id != store.datastore_id_hex();
@@ -201,10 +207,9 @@ where
         let mut applied = 0u32;
         let mut skipped = 0u32;
         for w in &bundle.ops {
-            if store.ingest_wire(w)? {
-                applied += 1;
-            } else {
-                skipped += 1;
+            match store.ingest_op(w)? {
+                IngestResult::Applied => applied += 1,
+                IngestResult::Duplicate | IngestResult::Rejected { .. } => skipped += 1,
             }
         }
         (applied, skipped)

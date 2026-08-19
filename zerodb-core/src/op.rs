@@ -79,13 +79,15 @@ impl OpEnvelope {
 
 /// Experimental WireOp JSON body → CBOR (same rules as LocalStore).
 /// Hex strings on `node` / `edge` / `src` / `dst` become bytes.
+/// AUTH control bodies also encode `founder` / `salt` / `subject` / `ds_bind` /
+/// `grant` as bytes, and numeric arrays (grant `scopes`) as uints.
 pub fn json_to_cbor_body(v: &serde_json::Value) -> Result<Cbor, String> {
     let mut entries = Vec::new();
     if let Some(obj) = v.as_object() {
         for (k, val) in obj {
             let c = match val {
                 serde_json::Value::String(s) => {
-                    if k == "node" || k == "edge" || k == "src" || k == "dst" {
+                    if is_hex_body_key(k) {
                         let b = hex::decode(s).map_err(|e| e.to_string())?;
                         Cbor::Bytes(b)
                     } else {
@@ -104,7 +106,14 @@ pub fn json_to_cbor_body(v: &serde_json::Value) -> Result<Cbor, String> {
                     a.iter()
                         .map(|x| match x {
                             serde_json::Value::String(s) => Cbor::Text(s.clone()),
-                            _ => Cbor::Text(x.to_string()),
+                            serde_json::Value::Number(n) => {
+                                if let Some(u) = n.as_u64() {
+                                    Cbor::Uint(u)
+                                } else {
+                                    Cbor::Text(n.to_string())
+                                }
+                            }
+                            other => Cbor::Text(other.to_string()),
                         })
                         .collect(),
                 ),
@@ -115,6 +124,13 @@ pub fn json_to_cbor_body(v: &serde_json::Value) -> Result<Cbor, String> {
         }
     }
     Ok(Cbor::Map(entries))
+}
+
+fn is_hex_body_key(k: &str) -> bool {
+    matches!(
+        k,
+        "node" | "edge" | "src" | "dst" | "founder" | "salt" | "subject" | "ds_bind" | "grant"
+    )
 }
 
 #[cfg(test)]
