@@ -957,11 +957,18 @@ fn author_write_allowed(
         KIND_CAP_GRANT | KIND_CAP_REVOKE => SCOPE_ADMIN,
         _ => SCOPE_WRITE,
     };
+    let physical_ms = match map_get(op, "physical_ms") {
+        Cbor::Uint(n) => *n,
+        _ => std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    };
     Ok(grants.iter().any(|grant| {
         grant.subject == author
             && !grant.revoked
             && grant.scopes.contains(&need)
-            && grant.expiry.is_none()
+            && grant.expiry.is_none_or(|expiry| physical_ms < expiry)
     }))
 }
 
@@ -1007,12 +1014,16 @@ fn apply_membership_from_op(
                 .and_then(|v| v.as_array())
                 .map(|items| items.iter().filter_map(|item| item.as_u64()).collect())
                 .unwrap_or_default();
+            let expiry = match body.get("expiry") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => value.as_u64(),
+            };
             store.upsert_grant(KnownGrant {
                 id: op_id,
                 ds: ds_bytes,
                 subject,
                 scopes,
-                expiry: None,
+                expiry,
                 revoked: false,
             })?;
         }

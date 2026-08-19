@@ -7,10 +7,12 @@
 
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
+use zerodb_core::auth::{SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE};
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::op::{OpEnvelope, OpTs};
 use zerodb_core::relay::{
-    DOMAIN_RELAY_AUTH, MSG_AUTH, MSG_HELLO, MSG_OP_ACK, MSG_OPS, peer_id_from_pk,
+    DOMAIN_RELAY_AUTH, MSG_AUTH, MSG_ERROR, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST,
+    peer_id_from_pk,
 };
 use zerodb_core::sign::{DOMAIN_OP_SIG, sign_op};
 use zerodb_relay::{Relay, RelaySession};
@@ -355,4 +357,115 @@ fn e5_honest_relay_rejects_non_member_write() {
     assert_eq!(outcome, "REJECT");
     assert_eq!(reason.as_deref(), Some("AUTHZ"));
     assert!(relay.op_count(&a.datastore_id_hex()).unwrap() >= 2);
+}
+
+#[test]
+fn e5_revoked_member_cannot_mutate_via_atomic_group() {
+    let mut a = auth_store();
+    let mut b = empty_store();
+    let grant_id = a.grant_write_access(&b.principal_hex()).unwrap();
+    b.import_bundle(&a.export_all().unwrap()).unwrap();
+
+    let node = b
+        .atomic_group(|g| {
+            let node = g.create_node("Todo")?;
+            g.set_lww(&node, "title", "ok")?;
+            Ok(node)
+        })
+        .unwrap();
+    assert_eq!(b.get_lww(&node, "title").unwrap().as_deref(), Some("ok"));
+
+    a.revoke_membership(&grant_id, 2).unwrap();
+    b.import_bundle(&a.export_all().unwrap()).unwrap();
+    let err = b
+        .atomic_group(|g| {
+            let late = g.create_node("AfterRevoke")?;
+            g.set_lww(&late, "title", "nope")?;
+            Ok(late)
+        })
+        .unwrap_err();
+    assert_eq!(err.to_string(), "AUTH_REVOKED");
+    assert!(!has_label(&b, "AfterRevoke"));
+    assert_eq!(b.get_lww(&node, "title").unwrap().as_deref(), Some("ok"));
+}
+
+fn sync_type(session: &mut RelaySession, ds: &str) -> u8 {
+    let frame = encode_env(
+        MSG_SYNC_REQUEST,
+        4,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text(ds.into())),
+            ("accepted_root".into(), Cbor::Bytes(vec![0; 32])),
+        ]),
+    );
+    let reply = session.handle(&frame).unwrap();
+    as_u64(map_get(&cbor::decode(&reply[0]).unwrap(), "type").expect("type")) as u8
+}
+
+#[test]
+fn e5_expired_grant_cannot_sync_after_expiry() {
+    let mut a = auth_store();
+    let mut b = empty_store();
+    a.grant_membership_expiring(
+        &b.principal_hex(),
+        &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC],
+        Some(1),
+    )
+    .unwrap();
+    b.import_bundle(&a.export_all().unwrap()).unwrap();
+
+    let relay = Relay::memory();
+    let mut ra = relay.accept();
+    drive(&mut a, &mut ra, None);
+
+    let mut rb = relay.accept();
+    handshake(&mut rb, &b.identity_seed());
+    assert_eq!(sync_type(&mut rb, &a.datastore_id_hex()), MSG_ERROR);
+}
+
+#[test]
+fn e5_finite_grant_writes_until_expiry() {
+    let mut a = auth_store();
+    let mut b = empty_store();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let expiry = now + 30_000;
+    a.grant_membership_expiring(
+        &b.principal_hex(),
+        &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC],
+        Some(expiry),
+    )
+    .unwrap();
+    b.import_bundle(&a.export_all().unwrap()).unwrap();
+
+    let relay = Relay::memory();
+    let mut ra = relay.accept();
+    drive(&mut a, &mut ra, None);
+
+    let mut rb = relay.accept();
+    handshake(&mut rb, &b.identity_seed());
+    let live = signed_create(
+        &b.identity_seed(),
+        &ds_bytes(&a),
+        &[genesis_id(&a)],
+        now,
+        "Live",
+    );
+    let (outcome, _) =
+        outcome_of(&submit_ops(&mut rb, &a.datastore_id_hex(), vec![wire_to_relay(&live)])[0]);
+    assert_eq!(outcome, "ACCEPT", "still-valid finite grant must write");
+
+    let late = signed_create(
+        &b.identity_seed(),
+        &ds_bytes(&a),
+        &[genesis_id(&a)],
+        expiry,
+        "Late",
+    );
+    let (outcome, reason) =
+        outcome_of(&submit_ops(&mut rb, &a.datastore_id_hex(), vec![wire_to_relay(&late)])[0]);
+    assert_eq!(outcome, "REJECT");
+    assert_eq!(reason.as_deref(), Some("AUTHZ"));
 }

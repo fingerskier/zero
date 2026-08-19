@@ -407,6 +407,15 @@ impl<B: StoreBackend> LocalStore<B> {
         subject_hex: &str,
         scopes: &[u64],
     ) -> Result<String, StoreError> {
+        self.grant_membership_expiring(subject_hex, scopes, None)
+    }
+
+    pub fn grant_membership_expiring(
+        &mut self,
+        subject_hex: &str,
+        scopes: &[u64],
+        expiry: Option<u64>,
+    ) -> Result<String, StoreError> {
         if scopes.is_empty() {
             return Err(StoreError::Authz("CAP_INVALID"));
         }
@@ -414,7 +423,7 @@ impl<B: StoreBackend> LocalStore<B> {
         let body_json = serde_json::json!({
             "subject": hex::encode(subject),
             "scopes": scopes,
-            "expiry": null,
+            "expiry": expiry,
             "delegable": false,
             "ds_bind": hex::encode(self.ds),
         });
@@ -1167,6 +1176,11 @@ impl<B: StoreBackend> LocalStore<B> {
         F: FnOnce(&mut GroupBuilder) -> Result<T, StoreError>,
     {
         let group_id = *Uuid::now_v7().as_bytes();
+        let deps = if self.is_auth_enabled() {
+            control_dep_hex(&load_applied_wires(&self.backend)?)?
+        } else {
+            Vec::new()
+        };
         let mut builder = GroupBuilder {
             signing: self.signing.clone(),
             author: self.author,
@@ -1176,6 +1190,7 @@ impl<B: StoreBackend> LocalStore<B> {
             hlc_p: self.hlc_p,
             hlc_l: self.hlc_l,
             group_id,
+            deps,
             staged: Vec::new(),
         };
         let out = f(&mut builder)?;
@@ -1194,6 +1209,12 @@ impl<B: StoreBackend> LocalStore<B> {
         let mut next_p = self.hlc_p;
         let mut next_l = self.hlc_l;
         let ds = self.ds;
+        let auth_on = self.is_auth_enabled();
+        let mut applied_auth = if auth_on {
+            load_applied_wires(&self.backend)?
+        } else {
+            Vec::new()
+        };
         self.backend.with_txn(&mut |tx| {
             let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
@@ -1201,6 +1222,10 @@ impl<B: StoreBackend> LocalStore<B> {
                 let validated = validate_wire_for_ds(wire, &ds)?;
                 if tx.op_exists(&validated.id)? {
                     return Err(StoreError::Duplicate);
+                }
+                if auth_on {
+                    authorize_wire(&ds, &applied_auth, wire)?;
+                    applied_auth.push(wire.clone());
                 }
                 check_wire_ingress(tx, wire, &pending, local_ep)?;
                 (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, now_ms())?;
@@ -1318,6 +1343,7 @@ pub struct GroupBuilder {
     hlc_p: u64,
     hlc_l: u16,
     group_id: [u8; 16],
+    deps: Vec<String>,
     staged: Vec<WireOp>,
 }
 
@@ -1352,13 +1378,18 @@ impl GroupBuilder {
         body_json: serde_json::Value,
     ) -> Result<(), StoreError> {
         let ts = self.next_ts()?;
+        let dep_ids = self
+            .deps
+            .iter()
+            .map(|dep| decode32(dep))
+            .collect::<Result<Vec<_>, _>>()?;
         let env = OpEnvelope {
             v: 1,
             ds: self.ds,
             ep: self.ep,
             author: self.author,
             ts,
-            deps: vec![],
+            deps: dep_ids,
             grp: Some(self.group_id),
             kind,
             body,
@@ -1379,7 +1410,7 @@ impl GroupBuilder {
                 p: ts.physical_ms,
                 l: ts.logical,
             },
-            deps: vec![],
+            deps: self.deps.clone(),
             grp: Some(hex::encode(self.group_id)),
             kind,
             body: body_json,
