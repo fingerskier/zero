@@ -3,7 +3,7 @@
 //! Handshake, durable validated oplog, dual-root catch-up, resume cursor,
 //! reject-ack, frozen-snapshot Merkle subtree/leaf walk, and M3b-sig
 //! operation admission (signature + OpId + datastore bind), plus the durable
-//! AUTH membership grant cache and token-gated E5 subscription/sync path.
+//! AUTH membership grant cache, token-gated SUBSCRIBE, and grant-op write filter.
 
 mod session;
 mod store;

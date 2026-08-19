@@ -3,10 +3,11 @@
 //! Handshake (HELLO/AUTH/WELCOME capabilities), dual-root catch-up
 //! invariant (CX-08), resume cursor, reject-ack, and ordered envelope
 //! frames. `admit_experimental_op` is the relay-side signature / OpId /
-//! datastore-binding check (M3b-sig). AUTH membership grants remain later.
+//! datastore-binding check (M3b-sig). Peers still run AUTH.md §4.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
+use crate::auth::datastore_id_from_genesis;
 use crate::cbor::Cbor;
 use crate::merkle::{MerkleOp, merkle_root};
 use crate::op::{OpEnvelope, OpTs, json_to_cbor_body};
@@ -334,9 +335,6 @@ pub fn admit_experimental_op(op: &Cbor, datastore: &str) -> Result<AdmittedOp, A
             .ok_or(AdmitReject::Decode)
     };
     let wire_ds = get_str("ds")?;
-    if wire_ds != datastore {
-        return Err(AdmitReject::Authz);
-    }
     let claimed_id = hex32(get_str("id")?)?;
     let author = hex32(get_str("author")?)?;
     let author_pk = hex32(get_str("author_pk")?)?;
@@ -407,6 +405,14 @@ pub fn admit_experimental_op(op: &Cbor, datastore: &str) -> Result<AdmittedOp, A
         kind,
         body,
     };
+    if kind == 0 {
+        let derived = datastore_id_from_genesis(&envelope).map_err(|_| AdmitReject::Authz)?;
+        if hex::encode(derived) != datastore {
+            return Err(AdmitReject::Authz);
+        }
+    } else if wire_ds != datastore {
+        return Err(AdmitReject::Authz);
+    }
     let computed = envelope.op_id().map_err(|_| AdmitReject::Decode)?;
     if computed != claimed_id {
         return Err(AdmitReject::Sig);

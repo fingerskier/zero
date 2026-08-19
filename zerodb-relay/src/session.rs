@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 use zerodb_core::auth::{
-    AdmissionToken, DeviceCert, KnownGrant, SCOPE_READ, SCOPE_SYNC, verify_admission_token_at,
+    AdmissionToken, DeviceCert, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KnownGrant,
+    SCOPE_ADMIN, SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE, verify_admission_token_at,
 };
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::merkle::{BUCKET_WIDTH_MS, MERKLE_FORMAT_VERSION, MerkleTree};
@@ -37,6 +38,9 @@ pub struct Inner {
     pub next_nonce: Option<[u8; 32]>,
     next_session: u64,
     subscribers: HashMap<String, HashSet<u64>>,
+    /// When true, skip membership filters (SUBSCRIBE + author write) so peers
+    /// can prove AUTH.md §4 independently of the relay (EXEMPLAR E5).
+    colluding: bool,
 }
 
 pub struct Relay {
@@ -45,12 +49,22 @@ pub struct Relay {
 
 impl Relay {
     pub fn memory() -> Self {
+        Self::with_store(Box::new(crate::store::MemoryStore::new()), false)
+    }
+
+    /// Forwards signed ops and subscriptions without membership checks.
+    pub fn memory_colluding() -> Self {
+        Self::with_store(Box::new(crate::store::MemoryStore::new()), true)
+    }
+
+    fn with_store(store: Box<dyn OpStore>, colluding: bool) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
-                store: Box::new(crate::store::MemoryStore::new()),
+                store,
                 next_nonce: None,
                 next_session: 0,
                 subscribers: HashMap::new(),
+                colluding,
             })),
         }
     }
@@ -62,6 +76,7 @@ impl Relay {
                 next_nonce: None,
                 next_session: 0,
                 subscribers: HashMap::new(),
+                colluding: false,
             })),
         })
     }
@@ -307,17 +322,9 @@ impl RelaySession {
             }
         };
         let mut outcomes = Vec::new();
-        let allowed = self.datastore_allowed(&ds)?;
         let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
+        let colluding = guard.colluding;
         for op in operations {
-            if !allowed {
-                outcomes.push(Cbor::Map(vec![
-                    ("op_id".into(), op_id_cbor(op)),
-                    ("outcome".into(), Cbor::Text("REJECT".into())),
-                    ("reason".into(), Cbor::Text("AUTHZ".into())),
-                ]));
-                continue;
-            }
             let (outcome, reason, parsed) = parse_stored(op, &ds);
             if outcome == "REJECT" {
                 let mut m = vec![
@@ -332,7 +339,18 @@ impl RelaySession {
             }
             let parsed = parsed.expect("parsed");
             let id = parsed.op_id;
+            if !colluding && !author_write_allowed(&mut *guard.store, &ds, op, parsed.author)? {
+                outcomes.push(Cbor::Map(vec![
+                    ("op_id".into(), Cbor::Bytes(id.to_vec())),
+                    ("outcome".into(), Cbor::Text("REJECT".into())),
+                    ("reason".into(), Cbor::Text("AUTHZ".into())),
+                ]));
+                continue;
+            }
             let inserted = guard.store.insert(&ds, parsed)?;
+            if inserted {
+                apply_membership_from_op(&mut *guard.store, &ds, op, id)?;
+            }
             let tag = if inserted { "ACCEPT" } else { "DUPLICATE" };
             outcomes.push(Cbor::Map(vec![
                 ("op_id".into(), Cbor::Bytes(id.to_vec())),
@@ -567,7 +585,7 @@ impl RelaySession {
                 }
             };
             let grants = guard.store.grants(&ds)?;
-            if !grants.is_empty() {
+            if !guard.colluding && !grants.is_empty() {
                 let Some(token) = token else {
                     return Ok(vec![error_frame(
                         env.request_id,
@@ -632,20 +650,31 @@ impl RelaySession {
 
     fn datastore_allowed(&self, ds: &str) -> Result<bool, RelayError> {
         let guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
+        if guard.colluding {
+            return Ok(true);
+        }
         let grants = guard.store.grants(ds)?;
         if grants.is_empty() {
             return Ok(true);
         }
-        let Some(id) = self.authorized.get(ds) else {
-            return Ok(false);
-        };
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| RelayError::Protocol(e.to_string()))?
             .as_millis() as u64;
-        Ok(grants.iter().any(|grant| {
-            grant.id == *id && !grant.revoked && grant.expiry.is_none_or(|expiry| now_ms < expiry)
-        }))
+        let live = |grant: &KnownGrant| {
+            !grant.revoked && grant.expiry.is_none_or(|expiry| now_ms < expiry)
+        };
+        if let Some(id) = self.authorized.get(ds) {
+            return Ok(grants.iter().any(|grant| grant.id == *id && live(grant)));
+        }
+        // Solo-device: HELLO/AUTH PeerId == PrincipalId, so a live grant for
+        // this subject is enough for SYNC without a separate SUBSCRIBE token.
+        let Phase::Authed { peer_id, .. } = &self.phase else {
+            return Ok(false);
+        };
+        Ok(grants
+            .iter()
+            .any(|grant| grant.subject == *peer_id && live(grant)))
     }
 }
 
@@ -890,6 +919,111 @@ fn parse_admission_token(c: &Cbor) -> Result<AdmissionToken, RelayError> {
         },
         sig: take64(map_get(c, "sig"))?,
     })
+}
+
+fn wire_json(op: &Cbor) -> Option<serde_json::Value> {
+    match map_get(op, "wire") {
+        Cbor::Text(s) => serde_json::from_str(s).ok(),
+        _ => None,
+    }
+}
+
+fn hex_field(value: &serde_json::Value, key: &str) -> Option<[u8; 32]> {
+    let hex = value.get(key)?.as_str()?;
+    let bytes = hex::decode(hex).ok()?;
+    bytes.try_into().ok()
+}
+
+fn ds_bytes(ds: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(ds).ok()?;
+    bytes.try_into().ok()
+}
+
+fn author_write_allowed(
+    store: &mut dyn OpStore,
+    ds: &str,
+    op: &Cbor,
+    author: [u8; 32],
+) -> Result<bool, RelayError> {
+    let grants = store.grants(ds)?;
+    if grants.is_empty() {
+        return Ok(true);
+    }
+    let kind = wire_json(op)
+        .and_then(|wire| wire.get("kind").and_then(|v| v.as_u64()))
+        .unwrap_or(1);
+    let need = match kind {
+        KIND_GENESIS => return Ok(true),
+        KIND_CAP_GRANT | KIND_CAP_REVOKE => SCOPE_ADMIN,
+        _ => SCOPE_WRITE,
+    };
+    Ok(grants.iter().any(|grant| {
+        grant.subject == author
+            && !grant.revoked
+            && grant.scopes.contains(&need)
+            && grant.expiry.is_none()
+    }))
+}
+
+fn apply_membership_from_op(
+    store: &mut dyn OpStore,
+    ds: &str,
+    op: &Cbor,
+    op_id: [u8; 32],
+) -> Result<(), RelayError> {
+    let Some(wire) = wire_json(op) else {
+        return Ok(());
+    };
+    let kind = wire
+        .get("kind")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(u64::MAX);
+    let Some(ds_bytes) = ds_bytes(ds) else {
+        return Ok(());
+    };
+    match kind {
+        KIND_GENESIS => {
+            let Some(founder) = wire.get("body").and_then(|body| hex_field(body, "founder")) else {
+                return Ok(());
+            };
+            store.upsert_grant(KnownGrant {
+                id: op_id,
+                ds: ds_bytes,
+                subject: founder,
+                scopes: vec![SCOPE_WRITE, SCOPE_ADMIN, SCOPE_READ, SCOPE_SYNC],
+                expiry: None,
+                revoked: false,
+            })?;
+        }
+        KIND_CAP_GRANT => {
+            let Some(body) = wire.get("body") else {
+                return Ok(());
+            };
+            let Some(subject) = hex_field(body, "subject") else {
+                return Ok(());
+            };
+            let scopes = body
+                .get("scopes")
+                .and_then(|v| v.as_array())
+                .map(|items| items.iter().filter_map(|item| item.as_u64()).collect())
+                .unwrap_or_default();
+            store.upsert_grant(KnownGrant {
+                id: op_id,
+                ds: ds_bytes,
+                subject,
+                scopes,
+                expiry: None,
+                revoked: false,
+            })?;
+        }
+        KIND_CAP_REVOKE => {
+            if let Some(grant) = wire.get("body").and_then(|body| hex_field(body, "grant")) {
+                store.revoke_grant(ds, &grant)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn parse_stored(
