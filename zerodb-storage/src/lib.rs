@@ -16,7 +16,10 @@ pub mod relay_client;
 mod sqlite_backend;
 pub mod sync;
 
-pub use authz::{APPLY_INVALID, AuthReject, CLOCK_DRIFT, CLOCK_DRIFT_OVERFLOW, IngestResult};
+pub use authz::{
+    APPLY_INVALID, AuthReject, CLOCK_DRIFT, CLOCK_DRIFT_OVERFLOW, ENCRYPTED_PLAINTEXT,
+    IngestResult, KEY_WRAP_INVALID,
+};
 pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
 pub use memory_backend::MemoryBackend;
 #[cfg(feature = "sqlite")]
@@ -39,8 +42,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 use zerodb_core::auth::{
-    GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD, KR_GROUP_KEY,
-    SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE, datastore_id_from_genesis, genesis_envelope,
+    GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD, KR_DEVICE_CERT,
+    KR_DEVICE_REVOKE, KR_GROUP_KEY, SCOPE_ADMIN, SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE,
+    datastore_id_from_genesis, genesis_envelope,
 };
 use zerodb_core::cbor::Cbor;
 use zerodb_core::envelope::{ValueContext, open, seal};
@@ -70,6 +74,11 @@ pub const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
 const META_QUARANTINE: &str = "quarantine";
 const META_KEYRING: &str = "group_keyring";
 const META_KEY_CURRENT: &str = "group_key_current";
+/// X25519 wrap: recipient/eph_pk 32, XChaCha20 nonce 24, key 32 + Poly1305 tag 16.
+const WRAP_RECIPIENT_LEN: usize = 32;
+const WRAP_EPH_PK_LEN: usize = 32;
+const WRAP_NONCE_LEN: usize = 24;
+const WRAP_CIPHERTEXT_LEN: usize = 48;
 const QUARANTINE_MAX_OPS: usize = 1024;
 const QUARANTINE_MAX_BYTES: usize = 1024 * 1024;
 /// Experimental local SQLite layout version (KERNEL `storage_format_version`).
@@ -620,7 +629,8 @@ impl<B: StoreBackend> LocalStore<B> {
         });
         let body = json_to_cbor_body(&body_json)?;
         self.commit_local(KIND_KEY_RECORD, body, body_json, |tx, wire| {
-            apply_group_key_record(tx, wire)?;
+            let adopt = wire_author_is_admin(&load_applied_wires(tx)?, wire)?;
+            apply_group_key_record(tx, wire, adopt)?;
             rematerialize_encrypted_props(tx)
         })
     }
@@ -1198,11 +1208,26 @@ impl<B: StoreBackend> LocalStore<B> {
 
         // Validate the complete bundle before datastore adoption or any write.
         // Keep the decoded values so the transaction does not repeat crypto work.
-        let validated = bundle
-            .ops
-            .iter()
-            .map(|op| validate_wire_for_ds(op, &candidate_ds))
-            .collect::<Result<Vec<_>, _>>()?;
+        // Malformed wraps and encrypted-plaintext are per-op named rejects so
+        // they cannot abort catch-up of later well-formed ops.
+        let mut rejects = Vec::new();
+        let mut validated: Vec<Option<ValidatedWire>> = Vec::with_capacity(bundle.ops.len());
+        for op in &bundle.ops {
+            match validate_wire_for_ds(op, &candidate_ds) {
+                Ok(wire) => validated.push(Some(wire)),
+                Err(err) => {
+                    if let Some(reason) = per_op_ingress_tag(&err) {
+                        rejects.push(AuthReject {
+                            op_id: op.id.clone(),
+                            reason,
+                        });
+                        validated.push(None);
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
 
         let _released = self.release_quarantine()?;
         let auth_on = self.is_auth_enabled() || bundle_has_genesis(&bundle.ops);
@@ -1211,7 +1236,6 @@ impl<B: StoreBackend> LocalStore<B> {
         } else {
             Vec::new()
         };
-        let mut rejects = Vec::new();
         let mut next_hlc_p = self.hlc_p;
         let mut next_hlc_l = self.hlc_l;
         let mut accepted = 0u32;
@@ -1231,6 +1255,10 @@ impl<B: StoreBackend> LocalStore<B> {
                 applied_auth.extend(held_wires);
             }
             for (op, validated) in bundle.ops.iter().zip(&validated) {
+                let Some(validated) = validated else {
+                    skipped += 1;
+                    continue;
+                };
                 if tx.op_exists(&validated.id)? {
                     skipped += 1;
                     continue;
@@ -1264,7 +1292,20 @@ impl<B: StoreBackend> LocalStore<B> {
                 }
                 (next_hlc_p, next_hlc_l) =
                     next_remote_hlc(next_hlc_p, next_hlc_l, op.ts.p, op.ts.l, wall)?;
-                apply_wire(tx, op, validated)?;
+                match apply_wire(tx, op, validated) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        if let Some(reason) = per_op_ingress_tag(&err) {
+                            rejects.push(AuthReject {
+                                op_id: op.id.clone(),
+                                reason,
+                            });
+                            skipped += 1;
+                            continue;
+                        }
+                        return Err(err);
+                    }
+                }
                 if auth_on {
                     applied_auth.push(op.clone());
                 }
@@ -1365,7 +1406,16 @@ impl<B: StoreBackend> LocalStore<B> {
                     reason: "AUTH_SIG_INVALID",
                 });
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                if let Some(reason) = per_op_ingress_tag(&err) {
+                    self.last_rejects.push(AuthReject {
+                        op_id: wire.id.clone(),
+                        reason,
+                    });
+                    return Ok(IngestResult::Rejected { reason });
+                }
+                return Err(err);
+            }
         };
         if self.backend.op_exists(&validated.id)? {
             return Ok(IngestResult::Duplicate);
@@ -1398,7 +1448,7 @@ impl<B: StoreBackend> LocalStore<B> {
 
         let (next_hlc_p, next_hlc_l) =
             next_remote_hlc(self.hlc_p, self.hlc_l, wire.ts.p, wire.ts.l, wall)?;
-        self.backend.with_txn(&mut |tx| {
+        match self.backend.with_txn(&mut |tx| {
             if wire.kind == KIND_GENESIS {
                 tx.meta_set(META_AUTH, &[1])?;
             }
@@ -1406,7 +1456,19 @@ impl<B: StoreBackend> LocalStore<B> {
             meta_set_u64(tx, "hlc_p", next_hlc_p)?;
             meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
             Ok(())
-        })?;
+        }) {
+            Ok(()) => {}
+            Err(err) => {
+                if let Some(reason) = per_op_ingress_tag(&err) {
+                    self.last_rejects.push(AuthReject {
+                        op_id: wire.id.clone(),
+                        reason,
+                    });
+                    return Ok(IngestResult::Rejected { reason });
+                }
+                return Err(err);
+            }
+        }
 
         self.hlc_p = next_hlc_p;
         self.hlc_l = next_hlc_l;
@@ -1482,6 +1544,17 @@ impl<B: StoreBackend> LocalStore<B> {
         } else {
             Vec::new()
         };
+        let schema = load_schema_ir(&self.backend)?;
+        if schema_has_encrypted(schema.as_ref()) {
+            self.ensure_group_key()?;
+        }
+        let group_key = current_group_key(&self.backend).ok();
+        let mut node_labels = BTreeMap::new();
+        for (id, label, deleted) in self.backend.node_list()? {
+            if !deleted {
+                node_labels.insert(id, label);
+            }
+        }
         let mut builder = GroupBuilder {
             signing: self.signing.clone(),
             author: self.author,
@@ -1493,6 +1566,9 @@ impl<B: StoreBackend> LocalStore<B> {
             group_id,
             deps,
             staged: Vec::new(),
+            schema,
+            node_labels,
+            group_key,
         };
         let out = f(&mut builder)?;
         if !builder.staged.is_empty() {
@@ -1683,6 +1759,9 @@ pub struct GroupBuilder {
     group_id: [u8; 16],
     deps: Vec<String>,
     staged: Vec<WireOp>,
+    schema: Option<SchemaIr>,
+    node_labels: BTreeMap<String, String>,
+    group_key: Option<[u8; 32]>,
 }
 
 impl GroupBuilder {
@@ -1716,6 +1795,16 @@ impl GroupBuilder {
         body_json: serde_json::Value,
     ) -> Result<(), StoreError> {
         let ts = self.next_ts()?;
+        self.stage_at(ts, kind, body, body_json)
+    }
+
+    fn stage_at(
+        &mut self,
+        ts: OpTs,
+        kind: u64,
+        body: Cbor,
+        body_json: serde_json::Value,
+    ) -> Result<(), StoreError> {
         let dep_ids = self
             .deps
             .iter()
@@ -1767,10 +1856,47 @@ impl GroupBuilder {
         ]);
         let body_json = serde_json::json!({ "label": label, "node": node_hex });
         self.stage(KIND_CREATE_NODE, body, body_json)?;
+        self.node_labels.insert(node_hex.clone(), label.to_string());
         Ok(node_hex)
     }
 
+    fn path_is_encrypted(&self, node: &str, path: &str) -> bool {
+        let Some(label) = self.node_labels.get(node) else {
+            return false;
+        };
+        self.schema
+            .as_ref()
+            .and_then(|ir| ir.nodes.get(label))
+            .and_then(|ent| ent.props.get(path))
+            .is_some_and(|p| p.encrypted)
+    }
+
     pub fn set_lww(&mut self, node: &str, path: &str, value: &str) -> Result<(), StoreError> {
+        if self.path_is_encrypted(node, path) {
+            let key = self
+                .group_key
+                .ok_or_else(|| StoreError::Invalid("no current group key".into()))?;
+            let ts = self.next_ts()?;
+            let mut nonce = [0u8; 24];
+            getrandom_fill(&mut nonce);
+            let ctx = ValueContext {
+                ds: self.ds,
+                author: self.author,
+                physical_ms: ts.physical_ms,
+                logical: ts.logical,
+                ep: self.ep,
+                path: path.to_string(),
+            };
+            let envelope = seal(&key, &nonce, &ctx, value.as_bytes());
+            let body_json = serde_json::json!({
+                "node": node,
+                "path": path,
+                "crdt": "lww",
+                "encrypted": hex::encode(envelope),
+            });
+            let body = json_to_cbor_body(&body_json)?;
+            return self.stage_at(ts, KIND_SET_PROPERTY, body, body_json);
+        }
         let body_json = serde_json::json!({
             "node": node, "path": path, "crdt": "lww", "value": value
         });
@@ -1822,7 +1948,17 @@ fn apply_wire(
             .as_str()
             .ok_or_else(|| StoreError::Invalid("body.crdt".into()))?;
         check_schema_pin_tx(tx, node, path, crdt)?;
+        check_encrypted_ingest(tx, node, path, &wire.body)?;
     }
+    if wire.kind == KIND_KEY_RECORD {
+        check_key_record_wraps(&wire.body)?;
+    }
+
+    let adopt_current = if wire.kind == KIND_KEY_RECORD {
+        wire_author_is_admin(&load_applied_wires(tx)?, wire)?
+    } else {
+        false
+    };
 
     let body_json = wire.body.to_string();
     let wire_json = serde_json::to_string(wire).map_err(|e| StoreError::Invalid(e.to_string()))?;
@@ -1873,7 +2009,7 @@ fn apply_wire(
         }
         KIND_GENESIS | KIND_CAP_GRANT | KIND_CAP_REVOKE => {}
         KIND_KEY_RECORD => {
-            apply_group_key_record(tx, wire)?;
+            apply_group_key_record(tx, wire, adopt_current)?;
             rematerialize_encrypted_props(tx)?;
         }
         _ => unreachable!("wire kind was validated"),
@@ -1971,6 +2107,14 @@ fn quarantine_held(tx: &dyn BackendTxn) -> Result<(BTreeSet<[u8; 32]>, Vec<WireO
         wires.push(entry.wire);
     }
     Ok((ids, wires))
+}
+
+fn per_op_ingress_tag(err: &StoreError) -> Option<&'static str> {
+    match err {
+        StoreError::Invalid(msg) if msg == ENCRYPTED_PLAINTEXT => Some(ENCRYPTED_PLAINTEXT),
+        StoreError::Invalid(msg) if msg == KEY_WRAP_INVALID => Some(KEY_WRAP_INVALID),
+        _ => None,
+    }
 }
 
 fn permanent_reject_reason(err: &StoreError) -> Option<&'static str> {
@@ -2331,30 +2475,11 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
                 .get("kr")
                 .and_then(serde_json::Value::as_u64)
                 .ok_or_else(|| StoreError::Invalid("body.kr".into()))?;
-            if kr != KR_GROUP_KEY {
-                return Err(StoreError::Invalid("unsupported KeyRecord kr".into()));
-            }
-            let key_id = object
-                .get("key_id")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| StoreError::Invalid("body.key_id".into()))?;
-            if hex::decode(key_id).map(|b| b.len()).unwrap_or(0) != 16 {
-                return Err(StoreError::Invalid("body.key_id".into()));
-            }
-            let wraps = object
-                .get("wraps")
-                .and_then(serde_json::Value::as_array)
-                .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
-            for wrap in wraps {
-                let w = wrap
-                    .as_object()
-                    .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
-                for key in ["recipient", "eph_pk", "nonce", "wrapped"] {
-                    let hex = w
-                        .get(key)
-                        .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| StoreError::Invalid(format!("body.wraps.{key}")))?;
-                    hex::decode(hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+            match kr {
+                KR_GROUP_KEY => validate_group_key_wraps(object)?,
+                KR_DEVICE_CERT | KR_DEVICE_REVOKE => validate_device_key_record(object, kr)?,
+                _ => {
+                    return Err(StoreError::Invalid("unsupported KeyRecord kr".into()));
                 }
             }
         }
@@ -2365,6 +2490,108 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
         }
     }
     Ok(())
+}
+
+fn require_hex_len(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    len: usize,
+) -> Result<(), StoreError> {
+    let hex = object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| StoreError::Invalid(format!("body.{key}")))?;
+    let bytes = hex::decode(hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    if bytes.len() != len {
+        return Err(StoreError::Invalid(format!("body.{key}")));
+    }
+    Ok(())
+}
+
+fn wrap_hex_len(
+    wrap: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    len: usize,
+) -> Result<(), StoreError> {
+    let hex = wrap
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| StoreError::Invalid(KEY_WRAP_INVALID.into()))?;
+    let bytes = hex::decode(hex).map_err(|_| StoreError::Invalid(KEY_WRAP_INVALID.into()))?;
+    if bytes.len() != len {
+        return Err(StoreError::Invalid(KEY_WRAP_INVALID.into()));
+    }
+    Ok(())
+}
+
+fn validate_group_key_wraps(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), StoreError> {
+    let key_id = object
+        .get("key_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| StoreError::Invalid("body.key_id".into()))?;
+    if hex::decode(key_id).map(|b| b.len()).unwrap_or(0) != 16 {
+        return Err(StoreError::Invalid("body.key_id".into()));
+    }
+    let wraps = object
+        .get("wraps")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
+    for wrap in wraps {
+        let w = wrap
+            .as_object()
+            .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
+        wrap_hex_len(w, "recipient", WRAP_RECIPIENT_LEN)?;
+        wrap_hex_len(w, "eph_pk", WRAP_EPH_PK_LEN)?;
+        wrap_hex_len(w, "nonce", WRAP_NONCE_LEN)?;
+        wrap_hex_len(w, "wrapped", WRAP_CIPHERTEXT_LEN)?;
+    }
+    Ok(())
+}
+
+fn validate_device_key_record(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kr: u64,
+) -> Result<(), StoreError> {
+    require_hex_len(object, "device", 32)?;
+    require_hex_len(object, "principal", 32)?;
+    require_hex_len(object, "root_pk", 32)?;
+    require_hex_len(object, "cert_sig", 64)?;
+    if object
+        .get("issued")
+        .and_then(serde_json::Value::as_u64)
+        .is_none()
+    {
+        return Err(StoreError::Invalid("body.issued".into()));
+    }
+    match object.get("expiry") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(v) if v.as_u64().is_some() => {}
+        _ => return Err(StoreError::Invalid("body.expiry".into())),
+    }
+    match (kr, object.get("revoke_of")) {
+        (KR_DEVICE_CERT, None | Some(serde_json::Value::Null)) => {}
+        (KR_DEVICE_CERT, _) => {
+            return Err(StoreError::Invalid("body.revoke_of".into()));
+        }
+        (KR_DEVICE_REVOKE, Some(serde_json::Value::Null) | None) => {
+            return Err(StoreError::Invalid("body.revoke_of".into()));
+        }
+        (KR_DEVICE_REVOKE, _) => require_hex_len(object, "revoke_of", 32)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn check_key_record_wraps(body: &serde_json::Value) -> Result<(), StoreError> {
+    if body.get("kr").and_then(|v| v.as_u64()) != Some(KR_GROUP_KEY) {
+        return Ok(());
+    }
+    let object = body
+        .as_object()
+        .ok_or_else(|| StoreError::Invalid("operation body must be an object".into()))?;
+    validate_group_key_wraps(object)
 }
 
 fn validate_observed(value: Option<&serde_json::Value>) -> Result<(), StoreError> {
@@ -2896,12 +3123,28 @@ fn recover_hlc_from_oplog(b: &dyn BackendTxn) -> Result<(u64, u16), StoreError> 
     Ok((p, l))
 }
 
-fn prop_is_encrypted(tx: &dyn BackendTxn, node_hex: &str, path: &str) -> Result<bool, StoreError> {
+fn load_schema_ir(tx: &dyn BackendTxn) -> Result<Option<SchemaIr>, StoreError> {
     let Some(raw) = tx.meta_get("schema_ir")? else {
-        return Ok(false);
+        return Ok(None);
     };
     let decoded = zerodb_core::cbor::decode(&raw).map_err(|e| StoreError::Cbor(e.to_string()))?;
-    let ir = parse_ir(&decoded).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    parse_ir(&decoded)
+        .map(Some)
+        .map_err(|e| StoreError::Invalid(e.to_string()))
+}
+
+fn schema_has_encrypted(ir: Option<&SchemaIr>) -> bool {
+    ir.is_some_and(|ir| {
+        ir.nodes
+            .values()
+            .any(|ent| ent.props.values().any(|p| p.encrypted))
+    })
+}
+
+fn prop_is_encrypted(tx: &dyn BackendTxn, node_hex: &str, path: &str) -> Result<bool, StoreError> {
+    let Some(ir) = load_schema_ir(tx)? else {
+        return Ok(false);
+    };
     let label = tx
         .node_list()?
         .into_iter()
@@ -2915,6 +3158,94 @@ fn prop_is_encrypted(tx: &dyn BackendTxn, node_hex: &str, path: &str) -> Result<
         .get(&label)
         .and_then(|ent| ent.props.get(path))
         .is_some_and(|p| p.encrypted))
+}
+
+fn check_encrypted_ingest(
+    tx: &dyn BackendTxn,
+    node_hex: &str,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<(), StoreError> {
+    if !prop_is_encrypted(tx, node_hex, path)? {
+        return Ok(());
+    }
+    let has_value = body
+        .get("value")
+        .and_then(serde_json::Value::as_str)
+        .is_some();
+    let has_enc = body
+        .get("encrypted")
+        .and_then(serde_json::Value::as_str)
+        .is_some();
+    if has_value || !has_enc {
+        return Err(StoreError::Invalid(ENCRYPTED_PLAINTEXT.into()));
+    }
+    Ok(())
+}
+
+fn wire_author_is_admin(applied: &[WireOp], candidate: &WireOp) -> Result<bool, StoreError> {
+    let Some(genesis) = applied.iter().find(|op| op.kind == KIND_GENESIS) else {
+        return Ok(false);
+    };
+    let founder = genesis
+        .body
+        .get("founder")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if candidate.author == founder {
+        return Ok(true);
+    }
+    let ds = candidate.ds.as_str();
+    let ts = candidate.ts.p;
+    let mut admin_grants: Vec<&WireOp> = Vec::new();
+    for op in applied {
+        if op.kind != KIND_CAP_GRANT {
+            continue;
+        }
+        let subject = op
+            .body
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if subject != candidate.author {
+            continue;
+        }
+        let ds_bind = op
+            .body
+            .get("ds_bind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if ds_bind != ds {
+            continue;
+        }
+        let Some(scopes) = op.body.get("scopes").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        if !scopes.iter().any(|s| s.as_u64() == Some(SCOPE_ADMIN)) {
+            continue;
+        }
+        admin_grants.push(op);
+    }
+    let revoked: BTreeSet<&str> = applied
+        .iter()
+        .filter(|op| op.kind == KIND_CAP_REVOKE)
+        .filter_map(|op| op.body.get("grant").and_then(|v| v.as_str()))
+        .collect();
+    for grant in admin_grants {
+        if revoked.contains(grant.id.as_str()) {
+            continue;
+        }
+        if grant
+            .body
+            .get("expiry")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|exp| ts >= exp)
+        {
+            continue;
+        }
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn load_keyring(tx: &dyn BackendTxn) -> Result<BTreeMap<[u8; 16], [u8; 32]>, StoreError> {
@@ -2983,12 +3314,15 @@ fn parse_wrap(v: &serde_json::Value) -> Result<GroupKeyWrap, StoreError> {
     let nonce_bytes = hex::decode(nonce_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
     let nonce: [u8; 24] = nonce_bytes
         .try_into()
-        .map_err(|_| StoreError::Invalid("wrap.nonce length".into()))?;
+        .map_err(|_| StoreError::Invalid(KEY_WRAP_INVALID.into()))?;
     let wrapped_hex = v
         .get("wrapped")
         .and_then(|x| x.as_str())
         .ok_or_else(|| StoreError::Invalid("wrap.wrapped".into()))?;
     let wrapped = hex::decode(wrapped_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    if wrapped.len() != WRAP_CIPHERTEXT_LEN {
+        return Err(StoreError::Invalid(KEY_WRAP_INVALID.into()));
+    }
     Ok(GroupKeyWrap {
         recipient,
         eph_pk,
@@ -3005,7 +3339,11 @@ fn body_hex_field(v: &serde_json::Value, key: &str) -> Result<[u8; 32], StoreErr
     decode32(hex)
 }
 
-fn apply_group_key_record(tx: &dyn BackendTxn, wire: &WireOp) -> Result<(), StoreError> {
+fn apply_group_key_record(
+    tx: &dyn BackendTxn,
+    wire: &WireOp,
+    adopt_as_current: bool,
+) -> Result<(), StoreError> {
     if wire.body.get("kr").and_then(|v| v.as_u64()) != Some(KR_GROUP_KEY) {
         return Ok(());
     }
@@ -3042,7 +3380,9 @@ fn apply_group_key_record(tx: &dyn BackendTxn, wire: &WireOp) -> Result<(), Stor
             let mut ring = load_keyring(tx)?;
             ring.insert(kid, key);
             save_keyring(tx, &ring)?;
-            tx.meta_set(META_KEY_CURRENT, &kid)?;
+            if adopt_as_current {
+                tx.meta_set(META_KEY_CURRENT, &kid)?;
+            }
             break;
         }
     }

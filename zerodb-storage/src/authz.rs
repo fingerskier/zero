@@ -18,6 +18,10 @@ pub const CLOCK_DRIFT_OVERFLOW: &str = "CLOCK_DRIFT_OVERFLOW";
 /// Permanent apply/validate failure while releasing a held op. The entry is
 /// deleted so later writes are not wedged.
 pub const APPLY_INVALID: &str = "APPLY_INVALID";
+/// Local IR marks the property encrypted; the wire carried plaintext `value`.
+pub const ENCRYPTED_PLAINTEXT: &str = "ENCRYPTED_PLAINTEXT";
+/// `KeyRecord` `kr = 2` wrap field failed documented length checks.
+pub const KEY_WRAP_INVALID: &str = "KEY_WRAP_INVALID";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthReject {
@@ -107,6 +111,14 @@ fn authz_body(wire: &WireOp) -> Result<AuthzBody, StoreError> {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
         }),
+        KIND_KEY_RECORD => {
+            let kr = wire
+                .body
+                .get("kr")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| StoreError::Invalid("body.kr".into()))?;
+            Ok(AuthzBody::KeyRecord { kr })
+        }
         _ => Ok(AuthzBody::Other),
     }
 }

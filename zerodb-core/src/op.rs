@@ -143,6 +143,11 @@ fn is_hex_body_key(k: &str) -> bool {
             | "eph_pk"
             | "nonce"
             | "wrapped"
+            | "device"
+            | "principal"
+            | "root_pk"
+            | "cert_sig"
+            | "revoke_of"
     )
 }
 
