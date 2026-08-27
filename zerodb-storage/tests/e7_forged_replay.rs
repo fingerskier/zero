@@ -449,3 +449,54 @@ fn e7_colluding_relay_cannot_materialize_attacks() {
     assert_rejected(a.ingest_op(&flipped).unwrap(), "AUTH_SIG_INVALID");
     assert_rejected(b.ingest_op(&flipped).unwrap(), "AUTH_SIG_INVALID");
 }
+
+#[test]
+fn e7_colluding_header_only_does_not_poison_catchup() {
+    let (mut a, mut b, node, _inc) = e5_topology();
+    let score = a.get_prop(&node, "voteScore").unwrap();
+    let relay = Relay::memory_colluding();
+    let mut ra = relay.accept();
+    let mut rb = relay.accept();
+    let mut rc = relay.accept();
+    let ds = a.datastore_id_hex();
+    drive(&mut a, &mut ra, None);
+    drive(&mut b, &mut rb, Some(&ds));
+
+    handshake(&mut rc, &[0xC9u8; 32]);
+    let junk_id = [0xE7u8; 32];
+    let header_only = Cbor::Map(vec![
+        ("op_id".into(), Cbor::Bytes(junk_id.to_vec())),
+        ("author".into(), Cbor::Bytes(vec![0xB0; 32])),
+        ("physical_ms".into(), Cbor::Uint(9_600_000)),
+        ("logical".into(), Cbor::Uint(0)),
+    ]);
+    let (outcome, _) = outcome_of(&submit_ops(&mut rc, &ds, vec![header_only])[0]);
+    assert_eq!(
+        outcome, "ACCEPT",
+        "colluding relay forwards header-only unsigned junk"
+    );
+
+    a.create_node("AfterJunk").unwrap();
+    drive(&mut a, &mut ra, None);
+
+    let summary = drive(&mut b, &mut rb, None);
+    assert!(
+        summary.skipped >= 1,
+        "missing wire is AUTH_SIG_INVALID skip, not a catch-up abort: {summary:?}"
+    );
+    assert!(
+        summary.applied >= 1,
+        "later valid ops must still apply after header-only junk: {summary:?}"
+    );
+    assert!(has_label(&b, "AfterJunk"));
+    assert_eq!(b.get_prop(&node, "voteScore").unwrap(), score);
+    let junk_hex = hex::encode(junk_id);
+    assert!(
+        !b.export_all()
+            .unwrap()
+            .ops
+            .iter()
+            .any(|op| op.id == junk_hex),
+        "header-only junk must not be applied"
+    );
+}
