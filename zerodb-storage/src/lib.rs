@@ -467,13 +467,11 @@ impl<B: StoreBackend> LocalStore<B> {
                 if tx.op_exists(&validated.id)? {
                     continue;
                 }
-                if auth_on {
-                    if let Err(err) = authorize_wire(&ds, &applied_auth, &entry.wire) {
-                        if push_permanent_reject(&err, &entry.wire.id, &mut rejects) {
-                            continue;
-                        }
-                        return Err(err);
+                if auth_on && let Err(err) = authorize_wire(&ds, &applied_auth, &entry.wire) {
+                    if push_permanent_reject(&err, &entry.wire.id, &mut rejects) {
+                        continue;
                     }
+                    return Err(err);
                 }
                 if let Err(err) = apply_wire(tx, &entry.wire, &validated) {
                     if push_permanent_reject(&err, &entry.wire.id, &mut rejects) {
