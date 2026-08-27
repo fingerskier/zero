@@ -1078,6 +1078,9 @@ fn parse_stored(
 }
 
 fn stored_from_header(op: &Cbor) -> Option<StoredOp> {
+    // Colluding mode forwards header-only ops so peers can reject them
+    // independently (AUTH.md §4 / KERNEL §4.4). Catch-up must skip a
+    // missing `wire` rather than aborting the batch.
     let op_id = take32(map_get(op, "op_id")).ok()?;
     let author = take32(map_get(op, "author")).ok()?;
     let physical_ms = match map_get(op, "physical_ms") {

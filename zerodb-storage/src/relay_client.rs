@@ -133,12 +133,13 @@ where
     );
     let replies = handle(&sync_req).map_err(map_h)?;
     let mut incoming: Vec<WireOp> = Vec::new();
+    let mut catchup_skipped = 0u32;
     let mut sync_payload = None;
     for frame in &replies {
         let (ty, _, pl) = decode_env(frame)?;
         match ty {
             MSG_SYNC_RESPONSE => sync_payload = Some(pl),
-            MSG_OPS => collect_wire_ops(&pl, &mut incoming)?,
+            MSG_OPS => collect_wire_ops(&pl, &mut incoming, &mut catchup_skipped)?,
             MSG_ERROR => return Err(err(&format!("SYNC error: {pl:?}"))),
             _ => {}
         }
@@ -178,7 +179,9 @@ where
                 for frame in handle(&delta).map_err(map_h)? {
                     let (ty, _, pl) = decode_env(&frame)?;
                     match ty {
-                        MSG_DELTA_BATCH => collect_wire_ops(&pl, &mut incoming)?,
+                        MSG_DELTA_BATCH => {
+                            collect_wire_ops(&pl, &mut incoming, &mut catchup_skipped)?
+                        }
                         MSG_ERROR => return Err(err(&format!("DELTA error: {pl:?}"))),
                         _ => return Err(err("expected DELTA_BATCH")),
                     }
@@ -186,8 +189,9 @@ where
             }
         }
     }
-    summary.received = incoming.len() as u32;
+    summary.received = incoming.len() as u32 + catchup_skipped;
     if incoming.is_empty() {
+        summary.skipped = catchup_skipped;
         if let Some(join) = join_ds
             && store.op_count()? == 0
         {
@@ -215,14 +219,25 @@ where
         (applied, skipped)
     };
     summary.applied = applied;
-    summary.skipped = skipped;
+    summary.skipped = catchup_skipped.saturating_add(skipped);
     Ok(summary)
 }
 
-fn collect_wire_ops(payload: &Cbor, incoming: &mut Vec<WireOp>) -> Result<(), StoreError> {
+/// Decode catch-up ops. Missing or malformed `wire` is AUTH.md §4
+/// `AUTH_SIG_INVALID` (KERNEL §4.4 cannot be checked). A colluding or
+/// buggy relay may persist header-only junk; one entry must not abort
+/// the batch.
+fn collect_wire_ops(
+    payload: &Cbor,
+    incoming: &mut Vec<WireOp>,
+    skipped: &mut u32,
+) -> Result<(), StoreError> {
     if let Cbor::Array(ops) = map_get(payload, "operations") {
         for op in ops {
-            incoming.push(relay_to_wire(op)?);
+            match catchup_wire_op(op) {
+                Some(wire) => incoming.push(wire),
+                None => *skipped += 1,
+            }
         }
     }
     Ok(())
@@ -514,10 +529,10 @@ fn wire_to_relay(w: &WireOp) -> Result<Cbor, StoreError> {
     ]))
 }
 
-fn relay_to_wire(op: &Cbor) -> Result<WireOp, StoreError> {
+fn catchup_wire_op(op: &Cbor) -> Option<WireOp> {
     match map_get(op, "wire") {
-        Cbor::Text(s) => serde_json::from_str(s).map_err(|e| err(&e.to_string())),
-        _ => Err(err("catch-up op missing wire payload")),
+        Cbor::Text(s) => serde_json::from_str(s).ok(),
+        _ => None,
     }
 }
 
