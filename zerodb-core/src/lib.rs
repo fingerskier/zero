@@ -5,6 +5,7 @@ pub mod delivery;
 pub mod envelope;
 pub mod epoch;
 pub mod frontier;
+pub mod group_key;
 pub mod hlc;
 pub mod kernel;
 pub mod merkle;

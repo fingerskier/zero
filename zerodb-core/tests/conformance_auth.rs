@@ -138,6 +138,9 @@ fn parse_authz_body(b: &Json) -> AuthzBody {
             reason: b["reason"].as_u64().unwrap(),
         },
         "other" => AuthzBody::Other,
+        "keyrecord" => AuthzBody::KeyRecord {
+            kr: b["kr"].as_u64().unwrap(),
+        },
         other => panic!("unknown authz body type {other}"),
     }
 }

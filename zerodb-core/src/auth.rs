@@ -22,6 +22,7 @@ pub const DOMAIN_RELAY_AUTH: &[u8] = b"zerodb-relay-auth-v1";
 /// KeyRecord subtype tags (AUTH.md §1.2).
 pub const KR_DEVICE_CERT: u64 = 0;
 pub const KR_DEVICE_REVOKE: u64 = 1;
+pub const KR_GROUP_KEY: u64 = 2;
 
 /// Scope tags (AUTH.md §3.1).
 pub const SCOPE_WRITE: u64 = 0;
@@ -91,6 +92,10 @@ pub enum AuthzBody {
     Revoke {
         grant: [u8; 32],
         reason: u64,
+    },
+    /// `KeyRecord` (kind 8). `kr = 2` is admin; `kr ∈ {0,1}` stay write.
+    KeyRecord {
+        kr: u64,
     },
     /// Data / other control ops — body not needed for authz.
     Other,
@@ -480,13 +485,16 @@ fn is_known_scope(s: u64) -> bool {
     matches!(s, SCOPE_WRITE | SCOPE_ADMIN | SCOPE_READ | SCOPE_SYNC)
 }
 
-fn required_scope(kind: u64) -> Result<u64, AuthError> {
+fn required_scope(kind: u64, body: &AuthzBody) -> Result<u64, AuthError> {
     match kind {
         KIND_CREATE_NODE | KIND_CREATE_EDGE | KIND_SET_PROPERTY | KIND_TOMBSTONE => Ok(SCOPE_WRITE),
         KIND_SCHEMA_EPOCH | KIND_CAP_GRANT | KIND_CAP_REVOKE | KIND_CHECKPOINT => Ok(SCOPE_ADMIN),
-        // KeyRecord device cert publication: model as write-equivalent self-attestation;
-        // full root-sig path is covered by device-cert vectors. Treat as write for authz.
-        KIND_KEY_RECORD => Ok(SCOPE_WRITE),
+        // AUTH.md §4.1: device cert/revoke (`kr ∈ {0,1}`) are write/self-attestation;
+        // group-key distribution (`kr = 2`) requires admin.
+        KIND_KEY_RECORD => match body {
+            AuthzBody::KeyRecord { kr } if *kr == KR_GROUP_KEY => Ok(SCOPE_ADMIN),
+            _ => Ok(SCOPE_WRITE),
+        },
         KIND_GENESIS => Ok(SCOPE_ADMIN), // not used for genesis path
         _ => Err(AuthError::CapInvalid),
     }
@@ -561,7 +569,7 @@ pub fn authorize(
         return Err(AuthError::NoMembership);
     }
 
-    let need = required_scope(candidate.kind)?;
+    let need = required_scope(candidate.kind, &candidate.body)?;
 
     #[derive(Clone)]
     struct GrantView {

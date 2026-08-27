@@ -247,7 +247,7 @@ Lifecycle: red in `xfail/`, promote on both-runners-green. All four families pro
 ## 8. Out of scope (deliberate)
 
 - Entity-level ACLs (C6) — post-v0.1.
-- Group encryption key distribution behavior beyond `KeyRecord` slot (`kr = 2`) — M3b.
+- Group-key wrap for `KeyRecord` `kr = 2` is live for E6: X25519 ECDH + XChaCha20-Poly1305 per recipient, rotation republishes wraps for the remaining set, KERNEL §7 envelopes stay unchanged. Remaining H10: offline-peer revocation, bootstrap ordering beyond causal control deps, two-key principal/device wrap, and a frozen wrap body.
 - Multi-owner / k-of-n root — post-v0.1.
 - Social recovery of lost principal roots — product/docs only in v0.1.
 

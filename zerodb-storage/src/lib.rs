@@ -16,7 +16,10 @@ pub mod relay_client;
 mod sqlite_backend;
 pub mod sync;
 
-pub use authz::{APPLY_INVALID, AuthReject, CLOCK_DRIFT, CLOCK_DRIFT_OVERFLOW, IngestResult};
+pub use authz::{
+    APPLY_INVALID, AuthReject, CLOCK_DRIFT, CLOCK_DRIFT_OVERFLOW, ENCRYPTED_PLAINTEXT,
+    IngestResult, KEY_WRAP_INVALID,
+};
 pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
 pub use memory_backend::MemoryBackend;
 #[cfg(feature = "sqlite")]
@@ -39,10 +42,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 use zerodb_core::auth::{
-    GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, SCOPE_READ, SCOPE_SYNC,
-    SCOPE_WRITE, datastore_id_from_genesis, genesis_envelope,
+    GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD, KR_DEVICE_CERT,
+    KR_DEVICE_REVOKE, KR_GROUP_KEY, SCOPE_ADMIN, SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE,
+    datastore_id_from_genesis, genesis_envelope,
 };
 use zerodb_core::cbor::Cbor;
+use zerodb_core::envelope::{ValueContext, open, seal};
+use zerodb_core::group_key::{GroupKeyWrap, group_key_id, unwrap_group_key, wrap_group_key};
 use zerodb_core::kernel::{
     Flag, GCounter, KernelOp, Lww, OrSet, Payload, PnCounter, Replica, Value,
 };
@@ -66,6 +72,13 @@ pub(crate) const KIND_TOMBSTONE: u64 = 4;
 /// KERNEL §5 `max_drift_ms` / H1 max forward skew (60 seconds).
 pub const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
 const META_QUARANTINE: &str = "quarantine";
+const META_KEYRING: &str = "group_keyring";
+const META_KEY_CURRENT: &str = "group_key_current";
+/// X25519 wrap: recipient/eph_pk 32, XChaCha20 nonce 24, key 32 + Poly1305 tag 16.
+const WRAP_RECIPIENT_LEN: usize = 32;
+const WRAP_EPH_PK_LEN: usize = 32;
+const WRAP_NONCE_LEN: usize = 24;
+const WRAP_CIPHERTEXT_LEN: usize = 48;
 const QUARANTINE_MAX_OPS: usize = 1024;
 const QUARANTINE_MAX_BYTES: usize = 1024 * 1024;
 /// Experimental local SQLite layout version (KERNEL `storage_format_version`).
@@ -544,6 +557,115 @@ impl<B: StoreBackend> LocalStore<B> {
         self.grant_membership(subject_hex, &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC])
     }
 
+    /// Create a group key if none exists. Returns the current `KeyId`.
+    pub fn ensure_group_key(&mut self) -> Result<[u8; 16], StoreError> {
+        if let Some(id) = load_current_key_id(&self.backend)? {
+            return Ok(id);
+        }
+        let mut key = [0u8; 32];
+        getrandom_fill(&mut key);
+        let id = group_key_id(&key);
+        let mut ring = load_keyring(&self.backend)?;
+        ring.insert(id, key);
+        save_keyring(&self.backend, &ring)?;
+        self.backend.meta_set(META_KEY_CURRENT, &id)?;
+        Ok(id)
+    }
+
+    /// Publish a `KeyRecord` `kr = 2` wrapping the current group key for
+    /// `recipients` (`PeerId` hex, Ed25519 `author_pk` hex).
+    pub fn distribute_group_key(
+        &mut self,
+        recipients: &[(&str, &str)],
+    ) -> Result<String, StoreError> {
+        self.ensure_group_key()?;
+        self.publish_group_key_record(recipients)
+    }
+
+    /// Generate a new group key (old keys stay for pre-rotation notes) and
+    /// wrap it for the remaining recipient set.
+    pub fn rotate_group_key(&mut self, recipients: &[(&str, &str)]) -> Result<String, StoreError> {
+        let mut key = [0u8; 32];
+        getrandom_fill(&mut key);
+        let id = group_key_id(&key);
+        let mut ring = load_keyring(&self.backend)?;
+        ring.insert(id, key);
+        save_keyring(&self.backend, &ring)?;
+        self.backend.meta_set(META_KEY_CURRENT, &id)?;
+        self.publish_group_key_record(recipients)
+    }
+
+    fn publish_group_key_record(
+        &mut self,
+        recipients: &[(&str, &str)],
+    ) -> Result<String, StoreError> {
+        let id = load_current_key_id(&self.backend)?
+            .ok_or_else(|| StoreError::Invalid("no group key to distribute".into()))?;
+        let ring = load_keyring(&self.backend)?;
+        let key = ring
+            .get(&id)
+            .ok_or_else(|| StoreError::Invalid("current group key missing from keyring".into()))?;
+        let mut wraps = Vec::new();
+        for (peer_hex, pk_hex) in recipients {
+            let recipient = decode32(peer_hex)?;
+            let pk = decode32(pk_hex)?;
+            let mut eph = [0u8; 32];
+            let mut nonce = [0u8; 24];
+            getrandom_fill(&mut eph);
+            getrandom_fill(&mut nonce);
+            let wrap = wrap_group_key(key, &self.ds, &recipient, &pk, &eph, &nonce)
+                .map_err(|e| StoreError::Crypto(e.to_string()))?;
+            wraps.push(serde_json::json!({
+                "recipient": hex::encode(wrap.recipient),
+                "eph_pk": hex::encode(wrap.eph_pk),
+                "nonce": hex::encode(wrap.nonce),
+                "wrapped": hex::encode(wrap.wrapped),
+            }));
+        }
+        let body_json = serde_json::json!({
+            "kr": KR_GROUP_KEY,
+            "key_id": hex::encode(id),
+            "wraps": wraps,
+        });
+        let body = json_to_cbor_body(&body_json)?;
+        self.commit_local(KIND_KEY_RECORD, body, body_json, |tx, wire| {
+            let adopt = wire_author_is_admin(&load_applied_wires(tx)?, wire)?;
+            apply_group_key_record(tx, wire, adopt)?;
+            rematerialize_encrypted_props(tx)
+        })
+    }
+
+    /// Every stored KERNEL §7 envelope tried against this store's keyring
+    /// (and the local identity seed as a bogus key). Empty for non-recipients.
+    pub fn decrypt_oracle(&self) -> Result<Vec<String>, StoreError> {
+        let ring = load_keyring(&self.backend)?;
+        let mut recovered = Vec::new();
+        let seed = self.identity_seed();
+        for wire in self.export_all()?.ops {
+            if wire.kind != KIND_SET_PROPERTY {
+                continue;
+            }
+            let Some(enc_hex) = wire.body.get("encrypted").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let envelope = hex::decode(enc_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+            let ctx = value_context_from_wire(&wire)?;
+            for key in ring.values() {
+                if let Ok(pt) = open(key, &envelope, &ctx)
+                    && let Ok(text) = String::from_utf8(pt)
+                {
+                    recovered.push(text);
+                }
+            }
+            if let Ok(pt) = open(&seed, &envelope, &ctx)
+                && let Ok(text) = String::from_utf8(pt)
+            {
+                recovered.push(text);
+            }
+        }
+        Ok(recovered)
+    }
+
     /// Test hook: override the wall-clock source used for local HLC ticks.
     /// Used by E1 acceptance tests to simulate wall-clock rollback across restart.
     #[doc(hidden)]
@@ -884,6 +1006,50 @@ impl<B: StoreBackend> LocalStore<B> {
             Some(false) => {}
         }
         check_schema_pin_tx(&self.backend, node_hex, path, crdt)?;
+        let encrypted = prop_is_encrypted(&self.backend, node_hex, path)?;
+        if encrypted && crdt != "lww" {
+            return Err(StoreError::Invalid(
+                "encrypted properties must be lww".into(),
+            ));
+        }
+
+        let node_s = node_hex.to_string();
+        let path_s = path.to_string();
+        if encrypted {
+            let plaintext = extra
+                .get("value")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| StoreError::Invalid("lww value".into()))?;
+            let _released = self.release_quarantine()?;
+            self.ensure_group_key()?;
+            let ts = self.next_local_ts()?;
+            let ep = self.schema_epoch().unwrap_or(0);
+            let key = current_group_key(&self.backend)?;
+            let mut nonce = [0u8; 24];
+            getrandom_fill(&mut nonce);
+            let ctx = ValueContext {
+                ds: self.ds,
+                author: self.author,
+                physical_ms: ts.physical_ms,
+                logical: ts.logical,
+                ep,
+                path: path.to_string(),
+            };
+            let envelope = seal(&key, &nonce, &ctx, plaintext.as_bytes());
+            let body_json = serde_json::json!({
+                "node": node_hex,
+                "path": path,
+                "crdt": "lww",
+                "encrypted": hex::encode(envelope),
+            });
+            let body = json_to_cbor_body(&body_json)?;
+            return self.commit_prepared(ts, KIND_SET_PROPERTY, body, body_json, move |tx, _| {
+                tx.node_insert_ignore(&node_s, "Node")?;
+                rematerialize_prop(tx, &node_s, &path_s)?;
+                Ok(())
+            });
+        }
+
         let mut body_json = extra;
         let obj = body_json
             .as_object_mut()
@@ -893,8 +1059,6 @@ impl<B: StoreBackend> LocalStore<B> {
         obj.insert("crdt".into(), serde_json::json!(crdt));
 
         let body = json_to_cbor_body(&body_json)?;
-        let node_s = node_hex.to_string();
-        let path_s = path.to_string();
         self.commit_local(KIND_SET_PROPERTY, body, body_json, move |tx, _| {
             tx.node_insert_ignore(&node_s, "Node")?;
             rematerialize_prop(tx, &node_s, &path_s)?;
@@ -1044,11 +1208,26 @@ impl<B: StoreBackend> LocalStore<B> {
 
         // Validate the complete bundle before datastore adoption or any write.
         // Keep the decoded values so the transaction does not repeat crypto work.
-        let validated = bundle
-            .ops
-            .iter()
-            .map(|op| validate_wire_for_ds(op, &candidate_ds))
-            .collect::<Result<Vec<_>, _>>()?;
+        // Malformed wraps and encrypted-plaintext are per-op named rejects so
+        // they cannot abort catch-up of later well-formed ops.
+        let mut rejects = Vec::new();
+        let mut validated: Vec<Option<ValidatedWire>> = Vec::with_capacity(bundle.ops.len());
+        for op in &bundle.ops {
+            match validate_wire_for_ds(op, &candidate_ds) {
+                Ok(wire) => validated.push(Some(wire)),
+                Err(err) => {
+                    if let Some(reason) = per_op_ingress_tag(&err) {
+                        rejects.push(AuthReject {
+                            op_id: op.id.clone(),
+                            reason,
+                        });
+                        validated.push(None);
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
 
         let _released = self.release_quarantine()?;
         let auth_on = self.is_auth_enabled() || bundle_has_genesis(&bundle.ops);
@@ -1057,7 +1236,6 @@ impl<B: StoreBackend> LocalStore<B> {
         } else {
             Vec::new()
         };
-        let mut rejects = Vec::new();
         let mut next_hlc_p = self.hlc_p;
         let mut next_hlc_l = self.hlc_l;
         let mut accepted = 0u32;
@@ -1077,6 +1255,10 @@ impl<B: StoreBackend> LocalStore<B> {
                 applied_auth.extend(held_wires);
             }
             for (op, validated) in bundle.ops.iter().zip(&validated) {
+                let Some(validated) = validated else {
+                    skipped += 1;
+                    continue;
+                };
                 if tx.op_exists(&validated.id)? {
                     skipped += 1;
                     continue;
@@ -1110,7 +1292,20 @@ impl<B: StoreBackend> LocalStore<B> {
                 }
                 (next_hlc_p, next_hlc_l) =
                     next_remote_hlc(next_hlc_p, next_hlc_l, op.ts.p, op.ts.l, wall)?;
-                apply_wire(tx, op, validated)?;
+                match apply_wire(tx, op, validated) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        if let Some(reason) = per_op_ingress_tag(&err) {
+                            rejects.push(AuthReject {
+                                op_id: op.id.clone(),
+                                reason,
+                            });
+                            skipped += 1;
+                            continue;
+                        }
+                        return Err(err);
+                    }
+                }
                 if auth_on {
                     applied_auth.push(op.clone());
                 }
@@ -1211,7 +1406,16 @@ impl<B: StoreBackend> LocalStore<B> {
                     reason: "AUTH_SIG_INVALID",
                 });
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                if let Some(reason) = per_op_ingress_tag(&err) {
+                    self.last_rejects.push(AuthReject {
+                        op_id: wire.id.clone(),
+                        reason,
+                    });
+                    return Ok(IngestResult::Rejected { reason });
+                }
+                return Err(err);
+            }
         };
         if self.backend.op_exists(&validated.id)? {
             return Ok(IngestResult::Duplicate);
@@ -1244,7 +1448,7 @@ impl<B: StoreBackend> LocalStore<B> {
 
         let (next_hlc_p, next_hlc_l) =
             next_remote_hlc(self.hlc_p, self.hlc_l, wire.ts.p, wire.ts.l, wall)?;
-        self.backend.with_txn(&mut |tx| {
+        match self.backend.with_txn(&mut |tx| {
             if wire.kind == KIND_GENESIS {
                 tx.meta_set(META_AUTH, &[1])?;
             }
@@ -1252,7 +1456,19 @@ impl<B: StoreBackend> LocalStore<B> {
             meta_set_u64(tx, "hlc_p", next_hlc_p)?;
             meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
             Ok(())
-        })?;
+        }) {
+            Ok(()) => {}
+            Err(err) => {
+                if let Some(reason) = per_op_ingress_tag(&err) {
+                    self.last_rejects.push(AuthReject {
+                        op_id: wire.id.clone(),
+                        reason,
+                    });
+                    return Ok(IngestResult::Rejected { reason });
+                }
+                return Err(err);
+            }
+        }
 
         self.hlc_p = next_hlc_p;
         self.hlc_l = next_hlc_l;
@@ -1328,6 +1544,17 @@ impl<B: StoreBackend> LocalStore<B> {
         } else {
             Vec::new()
         };
+        let schema = load_schema_ir(&self.backend)?;
+        if schema_has_encrypted(schema.as_ref()) {
+            self.ensure_group_key()?;
+        }
+        let group_key = current_group_key(&self.backend).ok();
+        let mut node_labels = BTreeMap::new();
+        for (id, label, deleted) in self.backend.node_list()? {
+            if !deleted {
+                node_labels.insert(id, label);
+            }
+        }
         let mut builder = GroupBuilder {
             signing: self.signing.clone(),
             author: self.author,
@@ -1339,6 +1566,9 @@ impl<B: StoreBackend> LocalStore<B> {
             group_id,
             deps,
             staged: Vec::new(),
+            schema,
+            node_labels,
+            group_key,
         };
         let out = f(&mut builder)?;
         if !builder.staged.is_empty() {
@@ -1422,6 +1652,20 @@ impl<B: StoreBackend> LocalStore<B> {
     {
         let _released = self.release_quarantine()?;
         let ts = self.next_local_ts()?;
+        self.commit_prepared(ts, kind, body, body_json, materialize)
+    }
+
+    fn commit_prepared<F>(
+        &mut self,
+        ts: OpTs,
+        kind: u64,
+        body: Cbor,
+        body_json: serde_json::Value,
+        materialize: F,
+    ) -> Result<String, StoreError>
+    where
+        F: FnOnce(&dyn BackendTxn, &WireOp) -> Result<(), StoreError>,
+    {
         let ep = self.schema_epoch().unwrap_or(0);
         let applied = if self.is_auth_enabled() {
             load_applied_wires(&self.backend)?
@@ -1515,6 +1759,9 @@ pub struct GroupBuilder {
     group_id: [u8; 16],
     deps: Vec<String>,
     staged: Vec<WireOp>,
+    schema: Option<SchemaIr>,
+    node_labels: BTreeMap<String, String>,
+    group_key: Option<[u8; 32]>,
 }
 
 impl GroupBuilder {
@@ -1548,6 +1795,16 @@ impl GroupBuilder {
         body_json: serde_json::Value,
     ) -> Result<(), StoreError> {
         let ts = self.next_ts()?;
+        self.stage_at(ts, kind, body, body_json)
+    }
+
+    fn stage_at(
+        &mut self,
+        ts: OpTs,
+        kind: u64,
+        body: Cbor,
+        body_json: serde_json::Value,
+    ) -> Result<(), StoreError> {
         let dep_ids = self
             .deps
             .iter()
@@ -1599,10 +1856,47 @@ impl GroupBuilder {
         ]);
         let body_json = serde_json::json!({ "label": label, "node": node_hex });
         self.stage(KIND_CREATE_NODE, body, body_json)?;
+        self.node_labels.insert(node_hex.clone(), label.to_string());
         Ok(node_hex)
     }
 
+    fn path_is_encrypted(&self, node: &str, path: &str) -> bool {
+        let Some(label) = self.node_labels.get(node) else {
+            return false;
+        };
+        self.schema
+            .as_ref()
+            .and_then(|ir| ir.nodes.get(label))
+            .and_then(|ent| ent.props.get(path))
+            .is_some_and(|p| p.encrypted)
+    }
+
     pub fn set_lww(&mut self, node: &str, path: &str, value: &str) -> Result<(), StoreError> {
+        if self.path_is_encrypted(node, path) {
+            let key = self
+                .group_key
+                .ok_or_else(|| StoreError::Invalid("no current group key".into()))?;
+            let ts = self.next_ts()?;
+            let mut nonce = [0u8; 24];
+            getrandom_fill(&mut nonce);
+            let ctx = ValueContext {
+                ds: self.ds,
+                author: self.author,
+                physical_ms: ts.physical_ms,
+                logical: ts.logical,
+                ep: self.ep,
+                path: path.to_string(),
+            };
+            let envelope = seal(&key, &nonce, &ctx, value.as_bytes());
+            let body_json = serde_json::json!({
+                "node": node,
+                "path": path,
+                "crdt": "lww",
+                "encrypted": hex::encode(envelope),
+            });
+            let body = json_to_cbor_body(&body_json)?;
+            return self.stage_at(ts, KIND_SET_PROPERTY, body, body_json);
+        }
         let body_json = serde_json::json!({
             "node": node, "path": path, "crdt": "lww", "value": value
         });
@@ -1654,7 +1948,17 @@ fn apply_wire(
             .as_str()
             .ok_or_else(|| StoreError::Invalid("body.crdt".into()))?;
         check_schema_pin_tx(tx, node, path, crdt)?;
+        check_encrypted_ingest(tx, node, path, &wire.body)?;
     }
+    if wire.kind == KIND_KEY_RECORD {
+        check_key_record_wraps(&wire.body)?;
+    }
+
+    let adopt_current = if wire.kind == KIND_KEY_RECORD {
+        wire_author_is_admin(&load_applied_wires(tx)?, wire)?
+    } else {
+        false
+    };
 
     let body_json = wire.body.to_string();
     let wire_json = serde_json::to_string(wire).map_err(|e| StoreError::Invalid(e.to_string()))?;
@@ -1704,6 +2008,10 @@ fn apply_wire(
             rematerialize_prop(tx, node, path)?;
         }
         KIND_GENESIS | KIND_CAP_GRANT | KIND_CAP_REVOKE => {}
+        KIND_KEY_RECORD => {
+            apply_group_key_record(tx, wire, adopt_current)?;
+            rematerialize_encrypted_props(tx)?;
+        }
         _ => unreachable!("wire kind was validated"),
     }
     Ok(())
@@ -1799,6 +2107,14 @@ fn quarantine_held(tx: &dyn BackendTxn) -> Result<(BTreeSet<[u8; 32]>, Vec<WireO
         wires.push(entry.wire);
     }
     Ok((ids, wires))
+}
+
+fn per_op_ingress_tag(err: &StoreError) -> Option<&'static str> {
+    match err {
+        StoreError::Invalid(msg) if msg == ENCRYPTED_PLAINTEXT => Some(ENCRYPTED_PLAINTEXT),
+        StoreError::Invalid(msg) if msg == KEY_WRAP_INVALID => Some(KEY_WRAP_INVALID),
+        _ => None,
+    }
 }
 
 fn permanent_reject_reason(err: &StoreError) -> Option<&'static str> {
@@ -2038,12 +2354,23 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
                 .ok_or_else(|| StoreError::Invalid("body.crdt".into()))?;
             match crdt {
                 "lww" => {
-                    if object
+                    let has_value = object
                         .get("value")
                         .and_then(serde_json::Value::as_str)
-                        .is_none()
-                    {
+                        .is_some();
+                    let has_enc = object
+                        .get("encrypted")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some();
+                    if has_value == has_enc {
                         return Err(StoreError::Invalid("lww value".into()));
+                    }
+                    if has_enc {
+                        let enc = object.get("encrypted").and_then(serde_json::Value::as_str);
+                        let bytes = enc.and_then(|h| hex::decode(h).ok());
+                        if bytes.as_ref().is_none_or(|b| b.is_empty()) {
+                            return Err(StoreError::Invalid("lww encrypted".into()));
+                        }
                     }
                 }
                 "gcounter" | "pncounter" => {
@@ -2143,6 +2470,19 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
                     .ok_or_else(|| StoreError::Invalid("body.grant".into()))?,
             )?;
         }
+        KIND_KEY_RECORD => {
+            let kr = object
+                .get("kr")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| StoreError::Invalid("body.kr".into()))?;
+            match kr {
+                KR_GROUP_KEY => validate_group_key_wraps(object)?,
+                KR_DEVICE_CERT | KR_DEVICE_REVOKE => validate_device_key_record(object, kr)?,
+                _ => {
+                    return Err(StoreError::Invalid("unsupported KeyRecord kr".into()));
+                }
+            }
+        }
         other => {
             return Err(StoreError::Invalid(format!(
                 "unsupported operation kind {other}"
@@ -2150,6 +2490,108 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
         }
     }
     Ok(())
+}
+
+fn require_hex_len(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    len: usize,
+) -> Result<(), StoreError> {
+    let hex = object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| StoreError::Invalid(format!("body.{key}")))?;
+    let bytes = hex::decode(hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    if bytes.len() != len {
+        return Err(StoreError::Invalid(format!("body.{key}")));
+    }
+    Ok(())
+}
+
+fn wrap_hex_len(
+    wrap: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    len: usize,
+) -> Result<(), StoreError> {
+    let hex = wrap
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| StoreError::Invalid(KEY_WRAP_INVALID.into()))?;
+    let bytes = hex::decode(hex).map_err(|_| StoreError::Invalid(KEY_WRAP_INVALID.into()))?;
+    if bytes.len() != len {
+        return Err(StoreError::Invalid(KEY_WRAP_INVALID.into()));
+    }
+    Ok(())
+}
+
+fn validate_group_key_wraps(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), StoreError> {
+    let key_id = object
+        .get("key_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| StoreError::Invalid("body.key_id".into()))?;
+    if hex::decode(key_id).map(|b| b.len()).unwrap_or(0) != 16 {
+        return Err(StoreError::Invalid("body.key_id".into()));
+    }
+    let wraps = object
+        .get("wraps")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
+    for wrap in wraps {
+        let w = wrap
+            .as_object()
+            .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
+        wrap_hex_len(w, "recipient", WRAP_RECIPIENT_LEN)?;
+        wrap_hex_len(w, "eph_pk", WRAP_EPH_PK_LEN)?;
+        wrap_hex_len(w, "nonce", WRAP_NONCE_LEN)?;
+        wrap_hex_len(w, "wrapped", WRAP_CIPHERTEXT_LEN)?;
+    }
+    Ok(())
+}
+
+fn validate_device_key_record(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kr: u64,
+) -> Result<(), StoreError> {
+    require_hex_len(object, "device", 32)?;
+    require_hex_len(object, "principal", 32)?;
+    require_hex_len(object, "root_pk", 32)?;
+    require_hex_len(object, "cert_sig", 64)?;
+    if object
+        .get("issued")
+        .and_then(serde_json::Value::as_u64)
+        .is_none()
+    {
+        return Err(StoreError::Invalid("body.issued".into()));
+    }
+    match object.get("expiry") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(v) if v.as_u64().is_some() => {}
+        _ => return Err(StoreError::Invalid("body.expiry".into())),
+    }
+    match (kr, object.get("revoke_of")) {
+        (KR_DEVICE_CERT, None | Some(serde_json::Value::Null)) => {}
+        (KR_DEVICE_CERT, _) => {
+            return Err(StoreError::Invalid("body.revoke_of".into()));
+        }
+        (KR_DEVICE_REVOKE, Some(serde_json::Value::Null) | None) => {
+            return Err(StoreError::Invalid("body.revoke_of".into()));
+        }
+        (KR_DEVICE_REVOKE, _) => require_hex_len(object, "revoke_of", 32)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn check_key_record_wraps(body: &serde_json::Value) -> Result<(), StoreError> {
+    if body.get("kr").and_then(|v| v.as_u64()) != Some(KR_GROUP_KEY) {
+        return Ok(());
+    }
+    let object = body
+        .as_object()
+        .ok_or_else(|| StoreError::Invalid("operation body must be an object".into()))?;
+    validate_group_key_wraps(object)
 }
 
 fn validate_observed(value: Option<&serde_json::Value>) -> Result<(), StoreError> {
@@ -2282,6 +2724,17 @@ fn rematerialize_prop(tx: &dyn BackendTxn, entity: &str, path: &str) -> Result<(
                 Some(Value::Text(t)) => serde_json::to_string(t).unwrap(),
                 Some(Value::Int(i)) => serde_json::to_string(i).unwrap(),
                 Some(Value::Bool(b)) => serde_json::to_string(b).unwrap(),
+                Some(Value::Bytes(env)) => {
+                    let Some(winning) = ops.iter().max_by_key(|op| op.order_key()) else {
+                        return tx.prop_delete(entity, path);
+                    };
+                    match open_encrypted_lww(tx, path, env, winning) {
+                        Ok(text) => serde_json::to_string(&text).unwrap(),
+                        Err(_) => {
+                            return tx.prop_delete(entity, path);
+                        }
+                    }
+                }
                 Some(Value::Null) => "null".into(),
                 _ => "null".into(),
             }
@@ -2394,10 +2847,15 @@ fn body_to_payload(body: &serde_json::Value) -> Result<Payload, StoreError> {
     let crdt = body["crdt"].as_str().unwrap_or("lww");
     match crdt {
         "lww" => {
-            let v = body["value"]
-                .as_str()
-                .ok_or_else(|| StoreError::Invalid("lww value".into()))?;
-            Ok(Payload::LwwSet(Value::Text(v.into())))
+            if let Some(enc) = body.get("encrypted").and_then(|v| v.as_str()) {
+                let bytes = hex::decode(enc).map_err(|e| StoreError::Invalid(e.to_string()))?;
+                Ok(Payload::LwwSet(Value::Bytes(bytes)))
+            } else {
+                let v = body["value"]
+                    .as_str()
+                    .ok_or_else(|| StoreError::Invalid("lww value".into()))?;
+                Ok(Payload::LwwSet(Value::Text(v.into())))
+            }
         }
         "gcounter" | "pncounter" => {
             let n = body["n"].as_u64().unwrap_or(1);
@@ -2488,10 +2946,23 @@ fn pin_json_to_ir(v: &serde_json::Value) -> Result<SchemaIr, StoreError> {
             .ok_or_else(|| StoreError::Invalid(format!("schema.nodes.{label}.props")))?;
         let mut props = BTreeMap::new();
         for (path, crdt) in props_in {
-            let name = crdt
-                .as_str()
-                .ok_or_else(|| StoreError::Invalid("prop crdt must be string".into()))?;
-            let tag = crdt_from_name(name)
+            let (name, encrypted) = if let Some(name) = crdt.as_str() {
+                (name.to_string(), false)
+            } else if let Some(obj) = crdt.as_object() {
+                let name = obj
+                    .get("crdt")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| StoreError::Invalid("prop crdt must be string".into()))?
+                    .to_string();
+                let encrypted = obj
+                    .get("encrypted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                (name, encrypted)
+            } else {
+                return Err(StoreError::Invalid("prop crdt must be string".into()));
+            };
+            let tag = crdt_from_name(&name)
                 .ok_or_else(|| StoreError::Invalid(format!("unknown crdt {name}")))?;
             props.insert(
                 path.clone(),
@@ -2499,7 +2970,7 @@ fn pin_json_to_ir(v: &serde_json::Value) -> Result<SchemaIr, StoreError> {
                     crdt: tag,
                     value_type: default_value_type(tag),
                     nullable: true,
-                    encrypted: false,
+                    encrypted,
                 },
             );
         }
@@ -2650,6 +3121,343 @@ fn recover_hlc_from_oplog(b: &dyn BackendTxn) -> Result<(u64, u16), StoreError> 
         meta_set_u64(b, "hlc_l", l as u64)?;
     }
     Ok((p, l))
+}
+
+fn load_schema_ir(tx: &dyn BackendTxn) -> Result<Option<SchemaIr>, StoreError> {
+    let Some(raw) = tx.meta_get("schema_ir")? else {
+        return Ok(None);
+    };
+    let decoded = zerodb_core::cbor::decode(&raw).map_err(|e| StoreError::Cbor(e.to_string()))?;
+    parse_ir(&decoded)
+        .map(Some)
+        .map_err(|e| StoreError::Invalid(e.to_string()))
+}
+
+fn schema_has_encrypted(ir: Option<&SchemaIr>) -> bool {
+    ir.is_some_and(|ir| {
+        ir.nodes
+            .values()
+            .any(|ent| ent.props.values().any(|p| p.encrypted))
+    })
+}
+
+fn prop_is_encrypted(tx: &dyn BackendTxn, node_hex: &str, path: &str) -> Result<bool, StoreError> {
+    let Some(ir) = load_schema_ir(tx)? else {
+        return Ok(false);
+    };
+    let label = tx
+        .node_list()?
+        .into_iter()
+        .find(|(id, _, del)| id == node_hex && !*del)
+        .map(|(_, l, _)| l);
+    let Some(label) = label else {
+        return Ok(false);
+    };
+    Ok(ir
+        .nodes
+        .get(&label)
+        .and_then(|ent| ent.props.get(path))
+        .is_some_and(|p| p.encrypted))
+}
+
+fn check_encrypted_ingest(
+    tx: &dyn BackendTxn,
+    node_hex: &str,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<(), StoreError> {
+    if !prop_is_encrypted(tx, node_hex, path)? {
+        return Ok(());
+    }
+    let has_value = body
+        .get("value")
+        .and_then(serde_json::Value::as_str)
+        .is_some();
+    let has_enc = body
+        .get("encrypted")
+        .and_then(serde_json::Value::as_str)
+        .is_some();
+    if has_value || !has_enc {
+        return Err(StoreError::Invalid(ENCRYPTED_PLAINTEXT.into()));
+    }
+    Ok(())
+}
+
+fn wire_author_is_admin(applied: &[WireOp], candidate: &WireOp) -> Result<bool, StoreError> {
+    let Some(genesis) = applied.iter().find(|op| op.kind == KIND_GENESIS) else {
+        return Ok(false);
+    };
+    let founder = genesis
+        .body
+        .get("founder")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if candidate.author == founder {
+        return Ok(true);
+    }
+    let ds = candidate.ds.as_str();
+    let ts = candidate.ts.p;
+    let mut admin_grants: Vec<&WireOp> = Vec::new();
+    for op in applied {
+        if op.kind != KIND_CAP_GRANT {
+            continue;
+        }
+        let subject = op
+            .body
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if subject != candidate.author {
+            continue;
+        }
+        let ds_bind = op
+            .body
+            .get("ds_bind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if ds_bind != ds {
+            continue;
+        }
+        let Some(scopes) = op.body.get("scopes").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        if !scopes.iter().any(|s| s.as_u64() == Some(SCOPE_ADMIN)) {
+            continue;
+        }
+        admin_grants.push(op);
+    }
+    let revoked: BTreeSet<&str> = applied
+        .iter()
+        .filter(|op| op.kind == KIND_CAP_REVOKE)
+        .filter_map(|op| op.body.get("grant").and_then(|v| v.as_str()))
+        .collect();
+    for grant in admin_grants {
+        if revoked.contains(grant.id.as_str()) {
+            continue;
+        }
+        if grant
+            .body
+            .get("expiry")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|exp| ts >= exp)
+        {
+            continue;
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn load_keyring(tx: &dyn BackendTxn) -> Result<BTreeMap<[u8; 16], [u8; 32]>, StoreError> {
+    let Some(raw) = tx.meta_get(META_KEYRING)? else {
+        return Ok(BTreeMap::new());
+    };
+    let v: serde_json::Value =
+        serde_json::from_slice(&raw).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let mut out = BTreeMap::new();
+    if let Some(obj) = v.as_object() {
+        for (id_hex, key_val) in obj {
+            let id_bytes = hex::decode(id_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+            let id: [u8; 16] = id_bytes
+                .try_into()
+                .map_err(|_| StoreError::Invalid("key id length".into()))?;
+            let key_hex = key_val
+                .as_str()
+                .ok_or_else(|| StoreError::Invalid("keyring value".into()))?;
+            let key = decode32(key_hex)?;
+            out.insert(id, key);
+        }
+    }
+    Ok(out)
+}
+
+fn save_keyring(
+    tx: &dyn BackendTxn,
+    ring: &BTreeMap<[u8; 16], [u8; 32]>,
+) -> Result<(), StoreError> {
+    let mut obj = serde_json::Map::new();
+    for (id, key) in ring {
+        obj.insert(hex::encode(id), serde_json::Value::String(hex::encode(key)));
+    }
+    tx.meta_set(
+        META_KEYRING,
+        serde_json::Value::Object(obj).to_string().as_bytes(),
+    )
+}
+
+fn load_current_key_id(tx: &dyn BackendTxn) -> Result<Option<[u8; 16]>, StoreError> {
+    let Some(raw) = tx.meta_get(META_KEY_CURRENT)? else {
+        return Ok(None);
+    };
+    let id: [u8; 16] = raw
+        .try_into()
+        .map_err(|_| StoreError::Invalid("current key id length".into()))?;
+    Ok(Some(id))
+}
+
+fn current_group_key(tx: &dyn BackendTxn) -> Result<[u8; 32], StoreError> {
+    let id = load_current_key_id(tx)?
+        .ok_or_else(|| StoreError::Invalid("no current group key".into()))?;
+    let ring = load_keyring(tx)?;
+    ring.get(&id)
+        .copied()
+        .ok_or_else(|| StoreError::Invalid("current group key missing from keyring".into()))
+}
+
+fn parse_wrap(v: &serde_json::Value) -> Result<GroupKeyWrap, StoreError> {
+    let recipient = body_hex_field(v, "recipient")?;
+    let eph_pk = body_hex_field(v, "eph_pk")?;
+    let nonce_hex = v
+        .get("nonce")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| StoreError::Invalid("wrap.nonce".into()))?;
+    let nonce_bytes = hex::decode(nonce_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let nonce: [u8; 24] = nonce_bytes
+        .try_into()
+        .map_err(|_| StoreError::Invalid(KEY_WRAP_INVALID.into()))?;
+    let wrapped_hex = v
+        .get("wrapped")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| StoreError::Invalid("wrap.wrapped".into()))?;
+    let wrapped = hex::decode(wrapped_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    if wrapped.len() != WRAP_CIPHERTEXT_LEN {
+        return Err(StoreError::Invalid(KEY_WRAP_INVALID.into()));
+    }
+    Ok(GroupKeyWrap {
+        recipient,
+        eph_pk,
+        nonce,
+        wrapped,
+    })
+}
+
+fn body_hex_field(v: &serde_json::Value, key: &str) -> Result<[u8; 32], StoreError> {
+    let hex = v
+        .get(key)
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| StoreError::Invalid(format!("wrap.{key}")))?;
+    decode32(hex)
+}
+
+fn apply_group_key_record(
+    tx: &dyn BackendTxn,
+    wire: &WireOp,
+    adopt_as_current: bool,
+) -> Result<(), StoreError> {
+    if wire.body.get("kr").and_then(|v| v.as_u64()) != Some(KR_GROUP_KEY) {
+        return Ok(());
+    }
+    let Some(seed_raw) = tx.meta_get("seed")? else {
+        return Ok(());
+    };
+    let seed: [u8; 32] = seed_raw
+        .try_into()
+        .map_err(|_| StoreError::Invalid("seed length".into()))?;
+    let signing = SigningKey::from_bytes(&seed);
+    let pk = signing.verifying_key().to_bytes();
+    let me = *blake3::hash(&pk).as_bytes();
+    let ds = decode32(&wire.ds)?;
+    let kid_hex = wire
+        .body
+        .get("key_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| StoreError::Invalid("body.key_id".into()))?;
+    let kid_bytes = hex::decode(kid_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let kid: [u8; 16] = kid_bytes
+        .try_into()
+        .map_err(|_| StoreError::Invalid("key id length".into()))?;
+    let wraps = wire
+        .body
+        .get("wraps")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
+    for wrap_json in wraps {
+        let wrap = parse_wrap(wrap_json)?;
+        if wrap.recipient != me {
+            continue;
+        }
+        if let Ok(key) = unwrap_group_key(&wrap, &ds, &kid, &me, &seed) {
+            let mut ring = load_keyring(tx)?;
+            ring.insert(kid, key);
+            save_keyring(tx, &ring)?;
+            if adopt_as_current {
+                tx.meta_set(META_KEY_CURRENT, &kid)?;
+            }
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn rematerialize_encrypted_props(tx: &dyn BackendTxn) -> Result<(), StoreError> {
+    let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    for row in tx.op_scan_props()? {
+        let body: serde_json::Value =
+            serde_json::from_str(&row.body_json).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        if body.get("encrypted").and_then(|v| v.as_str()).is_some()
+            && let (Some(n), Some(p)) = (body["node"].as_str(), body["path"].as_str())
+        {
+            pairs.insert((n.to_string(), p.to_string()));
+        }
+    }
+    for (n, p) in pairs {
+        rematerialize_prop(tx, &n, &p)?;
+    }
+    Ok(())
+}
+
+fn value_context_from_wire(wire: &WireOp) -> Result<ValueContext, StoreError> {
+    let path = wire
+        .body
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| StoreError::Invalid("body.path".into()))?
+        .to_string();
+    Ok(ValueContext {
+        ds: decode32(&wire.ds)?,
+        author: decode32(&wire.author)?,
+        physical_ms: wire.ts.p,
+        logical: wire.ts.l,
+        ep: wire.ep,
+        path,
+    })
+}
+
+fn open_encrypted_lww(
+    tx: &dyn BackendTxn,
+    path: &str,
+    envelope: &[u8],
+    winning: &KernelOp,
+) -> Result<String, StoreError> {
+    let id: [u8; 32] = winning
+        .op_id
+        .clone()
+        .try_into()
+        .map_err(|_| StoreError::Invalid("op id length".into()))?;
+    let wire_json = tx
+        .op_wire_by_id(&id)?
+        .ok_or_else(|| StoreError::Invalid("missing encrypted op".into()))?;
+    let wire: WireOp =
+        serde_json::from_str(&wire_json).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let ctx = ValueContext {
+        ds: decode32(&wire.ds)?,
+        author: decode32(&wire.author)?,
+        physical_ms: winning.physical_ms,
+        logical: winning.logical,
+        ep: wire.ep,
+        path: path.to_string(),
+    };
+    let ring = load_keyring(tx)?;
+    for key in ring.values() {
+        if let Ok(pt) = open(key, envelope, &ctx)
+            && let Ok(text) = String::from_utf8(pt)
+        {
+            return Ok(text);
+        }
+    }
+    Err(StoreError::Crypto(
+        "encrypted value: no recipient key".into(),
+    ))
 }
 
 /// Soft schema pin: declared (label, path) must match CRDT. Undeclared

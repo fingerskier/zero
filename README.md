@@ -81,4 +81,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-M3a durable convergence has exited experimentally. M3b-sig, AUTH membership + E5, E7 remainder (peer `AUTH_SIG_INVALID` / `Duplicate`, honest-relay `REJECT/SIG`, colluding-relay forward, wipe-dedup I-3), and E8 clock quarantine (peer `CLOCK_DRIFT` hold + release; H1 closed) are on. Highest-value remaining work is E6. All formats remain draft-1 and unfrozen. Do not claim M3b exit until E5–E8 are all done (E6 still open).
+M3a durable convergence has exited experimentally. M3b-sig, AUTH membership + E5, E7 remainder, E8 clock quarantine (H1 closed), and E6 encrypted notes (I-10 live; KERNEL §7 on persist/ingest) are on. Highest-value remaining work is the M3b remainder (H10 leftovers, handshake/TLS, two-key split) then M3c. All formats remain draft-1 and unfrozen. Do not claim M3b exit.

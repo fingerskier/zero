@@ -208,13 +208,16 @@ function isKnownScope(s) {
   return s === SCOPE_WRITE || s === SCOPE_ADMIN || s === SCOPE_READ || s === SCOPE_SYNC;
 }
 
-function requiredScope(kind) {
+function requiredScope(kind, body) {
+  if (kind === KIND_KEY_RECORD) {
+    if (body && body.kr === 2) return SCOPE_ADMIN;
+    return SCOPE_WRITE;
+  }
   if (
     kind === KIND_CREATE_NODE ||
     kind === KIND_CREATE_EDGE ||
     kind === KIND_SET_PROPERTY ||
-    kind === KIND_TOMBSTONE ||
-    kind === KIND_KEY_RECORD
+    kind === KIND_TOMBSTONE
   ) {
     return SCOPE_WRITE;
   }
@@ -270,7 +273,7 @@ export function authorize(datastoreIdHex, applied, candidate) {
 
   let need;
   try {
-    need = requiredScope(candidate.kind);
+    need = requiredScope(candidate.kind, candidate.body);
   } catch {
     return 'CAP_INVALID';
   }
