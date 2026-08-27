@@ -14,6 +14,9 @@ pub const META_AUTH: &str = "auth";
 pub const CLOCK_DRIFT: &str = "CLOCK_DRIFT";
 /// AUTH.md §6 overflow: oldest quarantined op dropped to keep the buffer bounded.
 pub const CLOCK_DRIFT_OVERFLOW: &str = "CLOCK_DRIFT_OVERFLOW";
+/// Permanent apply/validate failure while releasing a held op. The entry is
+/// deleted so later writes are not wedged.
+pub const APPLY_INVALID: &str = "APPLY_INVALID";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthReject {

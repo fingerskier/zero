@@ -199,6 +199,7 @@ Capability `expiry` is compared against the op's own `ts.physical_ms`. Clock att
 | `AUTH_NOT_ADMIN` | control op without admin/founder |
 | `CAP_SCOPE_UNKNOWN` | grant carries unknown scope tag |
 | `CAP_INVALID` | grant/revoke/cert structural failure |
+| `APPLY_INVALID` | held op permanently fails apply on release (e.g. schema-pin mismatch) |
 
 Rejects are **not** materialized and MUST NOT be forwarded as valid (I-8, I-9).
 
@@ -224,7 +225,7 @@ One bounded, application-visible quarantine is shared by:
 - `AUTHOR_UNRESOLVED` (this document),
 - `EQUIVOCATION` device quarantine signal (KERNEL §4.5; exclusion is separate and permanent for the op set),
 - restore/clone divergence (DQ-7),
-- future-clock H1: named outcome `CLOCK_DRIFT` — a well-formed signed member op with `ts.p > wall + max_drift_ms` is held, not materialized, and does not advance HLC; it is released and applied when the timestamp falls inside the bound (KERNEL §5). Overflow of this buffer drops oldest with `CLOCK_DRIFT_OVERFLOW`.
+- future-clock H1: named outcome `CLOCK_DRIFT` — a well-formed signed member op with `ts.p > wall + max_drift_ms` is held, not materialized, and does not advance HLC; it is released and applied when the timestamp falls inside the bound (KERNEL §5). Overflow of this buffer drops oldest with `CLOCK_DRIFT_OVERFLOW`. A held op that permanently fails apply on release (for example a schema-pin mismatch) is deleted with APPLY_INVALID so later writes are not wedged.
 
 **v0.1 model parameters** (registry may pin later): max entries = 1024 ops or 1 MiB, whichever first; overflow drops oldest unresolved with `AUTHOR_UNKNOWN` (or the package-specific overflow tag). Exact bounds are not byte-frozen until composite M0; vectors name the bound they assume.
 

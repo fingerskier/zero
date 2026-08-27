@@ -16,7 +16,7 @@ pub mod relay_client;
 mod sqlite_backend;
 pub mod sync;
 
-pub use authz::{AuthReject, CLOCK_DRIFT, CLOCK_DRIFT_OVERFLOW, IngestResult};
+pub use authz::{APPLY_INVALID, AuthReject, CLOCK_DRIFT, CLOCK_DRIFT_OVERFLOW, IngestResult};
 pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
 pub use memory_backend::MemoryBackend;
 #[cfg(feature = "sqlite")]
@@ -457,33 +457,35 @@ impl<B: StoreBackend> LocalStore<B> {
                 }
                 let validated = match validate_wire_for_ds(&entry.wire, &ds) {
                     Ok(validated) => validated,
-                    Err(StoreError::Crypto(_)) => {
-                        rejects.push(AuthReject {
-                            op_id: entry.wire.id.clone(),
-                            reason: "AUTH_SIG_INVALID",
-                        });
-                        continue;
+                    Err(err) => {
+                        if push_permanent_reject(&err, &entry.wire.id, &mut rejects) {
+                            continue;
+                        }
+                        return Err(err);
                     }
-                    Err(err) => return Err(err),
                 };
                 if tx.op_exists(&validated.id)? {
                     continue;
                 }
                 if auth_on {
-                    if let Err(StoreError::Authz(reason)) =
-                        authorize_wire(&ds, &applied_auth, &entry.wire)
-                    {
-                        rejects.push(AuthReject {
-                            op_id: entry.wire.id.clone(),
-                            reason,
-                        });
+                    if let Err(err) = authorize_wire(&ds, &applied_auth, &entry.wire) {
+                        if push_permanent_reject(&err, &entry.wire.id, &mut rejects) {
+                            continue;
+                        }
+                        return Err(err);
+                    }
+                }
+                if let Err(err) = apply_wire(tx, &entry.wire, &validated) {
+                    if push_permanent_reject(&err, &entry.wire.id, &mut rejects) {
                         continue;
                     }
-                    applied_auth.push(entry.wire.clone());
+                    return Err(err);
                 }
                 (next_p, next_l) =
                     next_remote_hlc(next_p, next_l, entry.wire.ts.p, entry.wire.ts.l, wall)?;
-                apply_wire(tx, &entry.wire, &validated)?;
+                if auth_on {
+                    applied_auth.push(entry.wire.clone());
+                }
                 applied_ids.push(entry.wire.id.clone());
             }
             save_quarantine(tx, &keep)?;
@@ -1072,6 +1074,10 @@ impl<B: StoreBackend> LocalStore<B> {
             }
             let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
+            let (mut held, held_wires) = quarantine_held(tx)?;
+            if auth_on {
+                applied_auth.extend(held_wires);
+            }
             for (op, validated) in bundle.ops.iter().zip(&validated) {
                 if tx.op_exists(&validated.id)? {
                     skipped += 1;
@@ -1090,13 +1096,17 @@ impl<B: StoreBackend> LocalStore<B> {
                         Err(err) => return Err(err),
                     }
                 }
-                check_wire_ingress(tx, op, &pending, local_ep)?;
+                check_wire_ingress(tx, op, &pending, &held, local_ep)?;
                 if exceeds_max_drift(op.ts.p, wall) || quarantine_has(tx, &op.id)? {
                     quarantine_push(tx, op, CLOCK_DRIFT, &mut rejects)?;
                     rejects.push(AuthReject {
                         op_id: op.id.clone(),
                         reason: CLOCK_DRIFT,
                     });
+                    held.insert(validated.id);
+                    if auth_on {
+                        applied_auth.push(op.clone());
+                    }
                     skipped += 1;
                     continue;
                 }
@@ -1360,6 +1370,10 @@ impl<B: StoreBackend> LocalStore<B> {
         self.backend.with_txn(&mut |tx| {
             let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
+            let (mut held, held_wires) = quarantine_held(tx)?;
+            if auth_on {
+                applied_auth.extend(held_wires);
+            }
             for wire in wires {
                 let validated = validate_wire_for_ds(wire, &ds)?;
                 if tx.op_exists(&validated.id)? {
@@ -1368,13 +1382,17 @@ impl<B: StoreBackend> LocalStore<B> {
                 if auth_on {
                     authorize_wire(&ds, &applied_auth, wire)?;
                 }
-                check_wire_ingress(tx, wire, &pending, local_ep)?;
+                check_wire_ingress(tx, wire, &pending, &held, local_ep)?;
                 if exceeds_max_drift(wire.ts.p, wall) || quarantine_has(tx, &wire.id)? {
                     quarantine_push(tx, wire, CLOCK_DRIFT, &mut rejects)?;
                     rejects.push(AuthReject {
                         op_id: wire.id.clone(),
                         reason: CLOCK_DRIFT,
                     });
+                    held.insert(validated.id);
+                    if auth_on {
+                        applied_auth.push(wire.clone());
+                    }
                     continue;
                 }
                 if auth_on {
@@ -1627,6 +1645,19 @@ fn apply_wire(
     wire: &WireOp,
     validated: &ValidatedWire,
 ) -> Result<(), StoreError> {
+    if wire.kind == KIND_SET_PROPERTY {
+        let node = wire.body["node"]
+            .as_str()
+            .ok_or_else(|| StoreError::Invalid("body.node".into()))?;
+        let path = wire.body["path"]
+            .as_str()
+            .ok_or_else(|| StoreError::Invalid("body.path".into()))?;
+        let crdt = wire.body["crdt"]
+            .as_str()
+            .ok_or_else(|| StoreError::Invalid("body.crdt".into()))?;
+        check_schema_pin_tx(tx, node, path, crdt)?;
+    }
+
     let body_json = wire.body.to_string();
     let wire_json = serde_json::to_string(wire).map_err(|e| StoreError::Invalid(e.to_string()))?;
     tx.op_insert(&OpRecord {
@@ -1672,10 +1703,6 @@ fn apply_wire(
             let path = wire.body["path"]
                 .as_str()
                 .ok_or_else(|| StoreError::Invalid("body.path".into()))?;
-            let crdt = wire.body["crdt"]
-                .as_str()
-                .ok_or_else(|| StoreError::Invalid("body.crdt".into()))?;
-            check_schema_pin_tx(tx, node, path, crdt)?;
             rematerialize_prop(tx, node, path)?;
         }
         KIND_GENESIS | KIND_CAP_GRANT | KIND_CAP_REVOKE => {}
@@ -1759,6 +1786,43 @@ fn quarantine_bytes(entries: &[QuarantineEntry]) -> usize {
         .unwrap_or(0)
 }
 
+fn quarantine_bytes_plus(entries: &[QuarantineEntry], extra: &QuarantineEntry) -> usize {
+    let mut candidate = Vec::with_capacity(entries.len().saturating_add(1));
+    candidate.extend_from_slice(entries);
+    candidate.push(extra.clone());
+    quarantine_bytes(&candidate)
+}
+
+fn quarantine_held(tx: &dyn BackendTxn) -> Result<(BTreeSet<[u8; 32]>, Vec<WireOp>), StoreError> {
+    let mut ids = BTreeSet::new();
+    let mut wires = Vec::new();
+    for entry in load_quarantine(tx)? {
+        ids.insert(decode32(&entry.wire.id)?);
+        wires.push(entry.wire);
+    }
+    Ok((ids, wires))
+}
+
+fn permanent_reject_reason(err: &StoreError) -> Option<&'static str> {
+    match err {
+        StoreError::Crypto(_) => Some("AUTH_SIG_INVALID"),
+        StoreError::Authz(reason) => Some(*reason),
+        StoreError::Invalid(_) | StoreError::Cbor(_) | StoreError::Duplicate => Some(APPLY_INVALID),
+        _ => None,
+    }
+}
+
+fn push_permanent_reject(err: &StoreError, op_id: &str, rejects: &mut Vec<AuthReject>) -> bool {
+    let Some(reason) = permanent_reject_reason(err) else {
+        return false;
+    };
+    rejects.push(AuthReject {
+        op_id: op_id.to_string(),
+        reason,
+    });
+    true
+}
+
 fn quarantine_push(
     tx: &dyn BackendTxn,
     wire: &WireOp,
@@ -1769,10 +1833,13 @@ fn quarantine_push(
     if entries.iter().any(|entry| entry.wire.id == wire.id) {
         return Ok(());
     }
-    let incoming = wire.id.len() + reason.len() + wire.sig.len();
+    let incoming = QuarantineEntry {
+        reason: reason.to_string(),
+        wire: wire.clone(),
+    };
     while !entries.is_empty()
         && (entries.len() >= QUARANTINE_MAX_OPS
-            || quarantine_bytes(&entries).saturating_add(incoming) > QUARANTINE_MAX_BYTES)
+            || quarantine_bytes_plus(&entries, &incoming) > QUARANTINE_MAX_BYTES)
     {
         let dropped = entries.remove(0);
         overflow.push(AuthReject {
@@ -1781,7 +1848,7 @@ fn quarantine_push(
         });
     }
     if entries.len() >= QUARANTINE_MAX_OPS
-        || quarantine_bytes(&entries).saturating_add(incoming) > QUARANTINE_MAX_BYTES
+        || quarantine_bytes_plus(&entries, &incoming) > QUARANTINE_MAX_BYTES
     {
         overflow.push(AuthReject {
             op_id: wire.id.clone(),
@@ -1789,10 +1856,7 @@ fn quarantine_push(
         });
         return save_quarantine(tx, &entries);
     }
-    entries.push(QuarantineEntry {
-        reason: reason.to_string(),
-        wire: wire.clone(),
-    });
+    entries.push(incoming);
     save_quarantine(tx, &entries)
 }
 
@@ -2387,6 +2451,7 @@ fn check_wire_ingress(
     tx: &dyn BackendTxn,
     wire: &WireOp,
     pending: &BTreeSet<[u8; 32]>,
+    held: &BTreeSet<[u8; 32]>,
     local_ep: u64,
 ) -> Result<(), StoreError> {
     if wire.deps.len() > MAX_DEPS {
@@ -2397,7 +2462,7 @@ fn check_wire_ingress(
     }
     for dep in &wire.deps {
         let id = decode32(dep)?;
-        if !tx.op_exists(&id)? && !pending.contains(&id) {
+        if !tx.op_exists(&id)? && !pending.contains(&id) && !held.contains(&id) {
             return Err(StoreError::Invalid(format!("missing dep {}", dep)));
         }
     }
