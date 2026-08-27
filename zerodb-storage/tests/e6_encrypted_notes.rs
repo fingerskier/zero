@@ -330,6 +330,43 @@ fn plaintext_body(node: &str, value: &str) -> serde_json::Value {
     })
 }
 
+fn create_note_body(node: &str) -> serde_json::Value {
+    serde_json::json!({
+        "label": "Note",
+        "node": node,
+    })
+}
+
+fn signed_set_then_create(
+    member: &LocalStore<MemoryBackend>,
+    ds: &LocalStore<MemoryBackend>,
+    node: &str,
+    plaintext: &str,
+    physical: u64,
+) -> (WireOp, WireOp) {
+    let deps = control_deps(ds);
+    let ds_b = ds_bytes(ds);
+    let set = sign_wire(
+        &member.identity_seed(),
+        &ds_b,
+        1,
+        &deps,
+        physical,
+        3,
+        plaintext_body(node, plaintext),
+    );
+    let create = sign_wire(
+        &member.identity_seed(),
+        &ds_b,
+        1,
+        &deps,
+        physical.saturating_add(1),
+        1,
+        create_note_body(node),
+    );
+    (set, create)
+}
+
 #[test]
 fn e6_member_plaintext_value_rejected() {
     let (mut a, mut b, note, _grant) = e6_share_notes();
@@ -385,6 +422,92 @@ fn e6_member_plaintext_value_rejected() {
         StoreError::Invalid(msg) => assert_eq!(msg, ENCRYPTED_PLAINTEXT),
         other => panic!("expected Invalid(ENCRYPTED_PLAINTEXT), got {other}"),
     }
+}
+
+#[test]
+fn e6_member_set_before_create_plaintext_rejected() {
+    let (mut a, mut b, _note, _grant) = e6_share_notes();
+    let attack = "set-before-create-plaintext";
+
+    let node_ingest = hex::encode([0xe6u8; 16]);
+    let (set, create) = signed_set_then_create(&b, &a, &node_ingest, attack, last_physical(&a) + 1);
+    match a.ingest_op(&set).unwrap() {
+        IngestResult::Rejected { reason } => assert_eq!(reason, ENCRYPTED_PLAINTEXT),
+        other => panic!("expected ENCRYPTED_PLAINTEXT, got {other:?}"),
+    }
+    assert_eq!(a.ingest_op(&create).unwrap(), IngestResult::Applied);
+    assert_eq!(a.get_lww(&node_ingest, "body").unwrap(), None);
+    assert!(
+        !a.export_all().unwrap().ops.iter().any(|op| op.id == set.id),
+        "plaintext SetProperty must not persist"
+    );
+    assert_no_plaintext(
+        &serde_json::to_string(&a.export_all().unwrap()).unwrap(),
+        attack,
+    );
+
+    let node_import = hex::encode([0xe7u8; 16]);
+    let (set_imp, create_imp) =
+        signed_set_then_create(&b, &a, &node_import, attack, last_physical(&a) + 3);
+    let (accepted, skipped) = b
+        .import_bundle(&ExportBundle {
+            format: 1,
+            datastore_id: a.datastore_id_hex(),
+            ops: vec![set_imp.clone(), create_imp.clone()],
+        })
+        .unwrap();
+    assert_eq!(accepted, 1);
+    assert!(skipped >= 1);
+    assert!(
+        b.take_rejects()
+            .iter()
+            .any(|r| r.reason == ENCRYPTED_PLAINTEXT)
+    );
+    assert_eq!(b.get_lww(&node_import, "body").unwrap(), None);
+    assert!(
+        !b.export_all()
+            .unwrap()
+            .ops
+            .iter()
+            .any(|op| op.id == set_imp.id),
+        "plaintext SetProperty must not persist in import"
+    );
+    assert!(
+        b.export_all()
+            .unwrap()
+            .ops
+            .iter()
+            .any(|op| op.id == create_imp.id),
+        "later CreateNode must still apply"
+    );
+    assert_no_plaintext(
+        &serde_json::to_string(&b.export_all().unwrap()).unwrap(),
+        attack,
+    );
+
+    let node_atomic = hex::encode([0xe8u8; 16]);
+    let (set_at, create_at) =
+        signed_set_then_create(&b, &a, &node_atomic, attack, last_physical(&a) + 5);
+    let err = a
+        .commit_wires_atomic(&[set_at.clone(), create_at.clone()])
+        .unwrap_err();
+    match err {
+        StoreError::Invalid(msg) => assert_eq!(msg, ENCRYPTED_PLAINTEXT),
+        other => panic!("expected Invalid(ENCRYPTED_PLAINTEXT), got {other}"),
+    }
+    assert_eq!(a.get_lww(&node_atomic, "body").unwrap(), None);
+    assert!(
+        !a.export_all()
+            .unwrap()
+            .ops
+            .iter()
+            .any(|op| op.id == set_at.id || op.id == create_at.id),
+        "atomic reverse-order plaintext must roll back"
+    );
+    assert_no_plaintext(
+        &serde_json::to_string(&a.export_all().unwrap()).unwrap(),
+        attack,
+    );
 }
 
 #[test]

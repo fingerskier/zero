@@ -3141,6 +3141,12 @@ fn schema_has_encrypted(ir: Option<&SchemaIr>) -> bool {
     })
 }
 
+fn schema_path_encrypted_any(ir: &SchemaIr, path: &str) -> bool {
+    ir.nodes
+        .values()
+        .any(|ent| ent.props.get(path).is_some_and(|p| p.encrypted))
+}
+
 fn prop_is_encrypted(tx: &dyn BackendTxn, node_hex: &str, path: &str) -> Result<bool, StoreError> {
     let Some(ir) = load_schema_ir(tx)? else {
         return Ok(false);
@@ -3150,8 +3156,12 @@ fn prop_is_encrypted(tx: &dyn BackendTxn, node_hex: &str, path: &str) -> Result<
         .into_iter()
         .find(|(id, _, del)| id == node_hex && !*del)
         .map(|(_, l, _)| l);
+    // Missing node: any schema label that marks this path encrypted wins,
+    // so SetProperty-before-CreateNode cannot sneak plaintext onto a future
+    // Note.body. Unencrypted paths stay unordered (catch-up). After the
+    // node exists the per-label consult still applies.
     let Some(label) = label else {
-        return Ok(false);
+        return Ok(schema_path_encrypted_any(&ir, path));
     };
     Ok(ir
         .nodes
