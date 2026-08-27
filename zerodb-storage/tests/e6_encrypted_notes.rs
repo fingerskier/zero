@@ -97,6 +97,9 @@ fn e6_share_notes() -> (
     a.distribute_group_key(&pair(&a_peer, &a_pk, &b_peer, &b_pk))
         .unwrap();
 
+    // Schema is local meta (not a SchemaEpoch op yet). Recipients must hold
+    // the same IR so ep=1 ops are not EPOCH_UNKNOWN; the schema is not secret.
+    b.apply_schema_json(NOTE_SCHEMA).unwrap();
     b.import_bundle(&a.export_all().unwrap()).unwrap();
     assert_eq!(b.datastore_id_hex(), a.datastore_id_hex());
 
@@ -129,6 +132,7 @@ fn e6_members_read_plaintext_artifacts_and_c_do_not() {
     assert!(set.body.get("value").is_none());
 
     let mut c = empty_store();
+    c.apply_schema_json(NOTE_SCHEMA).unwrap();
     c.import_bundle(&a.export_all().unwrap()).unwrap();
     assert_eq!(c.get_lww(&note, "body").unwrap(), None);
     assert!(
