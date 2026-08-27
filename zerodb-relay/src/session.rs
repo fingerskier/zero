@@ -38,8 +38,9 @@ pub struct Inner {
     pub next_nonce: Option<[u8; 32]>,
     next_session: u64,
     subscribers: HashMap<String, HashSet<u64>>,
-    /// When true, skip membership filters (SUBSCRIBE + author write) so peers
-    /// can prove AUTH.md §4 independently of the relay (EXEMPLAR E5).
+    /// When true, skip membership filters and persist even unsigned / forged /
+    /// tampered ops so peers can prove AUTH.md §4 / KERNEL §4.4 independently
+    /// of the relay (EXEMPLAR E5 / E7).
     colluding: bool,
 }
 
@@ -52,7 +53,7 @@ impl Relay {
         Self::with_store(Box::new(crate::store::MemoryStore::new()), false)
     }
 
-    /// Forwards signed ops and subscriptions without membership checks.
+    /// Forwards ops and subscriptions without membership or signature admission.
     pub fn memory_colluding() -> Self {
         Self::with_store(Box::new(crate::store::MemoryStore::new()), true)
     }
@@ -113,6 +114,17 @@ impl Relay {
             .map_err(|_| RelayError::Poison)?
             .store
             .count(ds)
+            .map_err(Into::into)
+    }
+
+    /// Drop the durable oplog for `ds` so `(datastore, OpId)` dedup is empty.
+    /// Membership grants are kept. Test harness for EXEMPLAR E7 / I-3.
+    pub fn wipe_dedup(&self, ds: &str) -> Result<(), RelayError> {
+        self.inner
+            .lock()
+            .map_err(|_| RelayError::Poison)?
+            .store
+            .clear_ops(ds)
             .map_err(Into::into)
     }
 
@@ -325,7 +337,7 @@ impl RelaySession {
         let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         let colluding = guard.colluding;
         for op in operations {
-            let (outcome, reason, parsed) = parse_stored(op, &ds);
+            let (outcome, reason, parsed) = parse_stored(op, &ds, colluding);
             if outcome == "REJECT" {
                 let mut m = vec![
                     ("op_id".into(), op_id_cbor(op)),
@@ -1040,6 +1052,7 @@ fn apply_membership_from_op(
 fn parse_stored(
     op: &Cbor,
     datastore: &str,
+    colluding: bool,
 ) -> (&'static str, Option<&'static str>, Option<StoredOp>) {
     match admit_experimental_op(op, datastore) {
         Ok(admitted) => {
@@ -1056,8 +1069,32 @@ fn parse_stored(
                 }),
             )
         }
+        Err(reason) if colluding => match stored_from_header(op) {
+            Some(stored) => ("ACCEPT", None, Some(stored)),
+            None => ("REJECT", Some(reason.reason()), None),
+        },
         Err(reason) => ("REJECT", Some(reason.reason()), None),
     }
+}
+
+fn stored_from_header(op: &Cbor) -> Option<StoredOp> {
+    let op_id = take32(map_get(op, "op_id")).ok()?;
+    let author = take32(map_get(op, "author")).ok()?;
+    let physical_ms = match map_get(op, "physical_ms") {
+        Cbor::Uint(n) => *n,
+        _ => return None,
+    };
+    let logical = match map_get(op, "logical") {
+        Cbor::Uint(n) => u16::try_from(*n).ok()?,
+        _ => return None,
+    };
+    Some(StoredOp {
+        op_id,
+        author,
+        physical_ms,
+        logical,
+        body: cbor::encode(op).unwrap_or_default(),
+    })
 }
 
 fn op_id_cbor(op: &Cbor) -> Cbor {
