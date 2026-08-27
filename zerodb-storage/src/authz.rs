@@ -10,6 +10,10 @@ use zerodb_core::auth::{
 use crate::{StoreError, WireOp, decode32};
 
 pub const META_AUTH: &str = "auth";
+/// AUTH.md §6 / H1 named outcome: op held, not materialized, HLC not advanced.
+pub const CLOCK_DRIFT: &str = "CLOCK_DRIFT";
+/// AUTH.md §6 overflow: oldest quarantined op dropped to keep the buffer bounded.
+pub const CLOCK_DRIFT_OVERFLOW: &str = "CLOCK_DRIFT_OVERFLOW";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthReject {
@@ -21,7 +25,13 @@ pub struct AuthReject {
 pub enum IngestResult {
     Applied,
     Duplicate,
-    Rejected { reason: &'static str },
+    Rejected {
+        reason: &'static str,
+    },
+    /// Held in the shared quarantine buffer (H1). Not a silent drop.
+    Quarantined {
+        reason: &'static str,
+    },
 }
 
 pub fn is_control_kind(kind: u64) -> bool {

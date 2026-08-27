@@ -16,7 +16,7 @@ pub mod relay_client;
 mod sqlite_backend;
 pub mod sync;
 
-pub use authz::{AuthReject, IngestResult};
+pub use authz::{AuthReject, CLOCK_DRIFT, CLOCK_DRIFT_OVERFLOW, IngestResult};
 pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
 pub use memory_backend::MemoryBackend;
 #[cfg(feature = "sqlite")]
@@ -63,7 +63,11 @@ pub(crate) const KIND_CREATE_NODE: u64 = 1;
 pub(crate) const KIND_CREATE_EDGE: u64 = 2;
 pub(crate) const KIND_SET_PROPERTY: u64 = 3;
 pub(crate) const KIND_TOMBSTONE: u64 = 4;
-const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
+/// KERNEL §5 `max_drift_ms` / H1 max forward skew (60 seconds).
+pub const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
+const META_QUARANTINE: &str = "quarantine";
+const QUARANTINE_MAX_OPS: usize = 1024;
+const QUARANTINE_MAX_BYTES: usize = 1024 * 1024;
 /// Experimental local SQLite layout version (KERNEL `storage_format_version`).
 const STORAGE_FORMAT_VERSION: u64 = 1;
 
@@ -400,6 +404,97 @@ impl<B: StoreBackend> LocalStore<B> {
 
     pub fn take_rejects(&mut self) -> Vec<AuthReject> {
         std::mem::take(&mut self.last_rejects)
+    }
+
+    /// Application-visible AUTH.md §6 / H1 quarantine (held, not materialized).
+    pub fn list_quarantine(&self) -> Result<Vec<WireOp>, StoreError> {
+        Ok(load_quarantine(&self.backend)?
+            .into_iter()
+            .map(|entry| entry.wire)
+            .collect())
+    }
+
+    /// Release any quarantined op whose `ts.p` is now within `max_drift_ms` of
+    /// this store's wall clock. Applied ops advance HLC (I-5); still-skewed
+    /// ops stay held. Returns applied OpId hex strings.
+    pub fn release_quarantine(&mut self) -> Result<Vec<String>, StoreError> {
+        if load_quarantine(&self.backend)?.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wall = (self.clock)();
+        let ds = self.ds;
+        let auth_on = self.is_auth_enabled();
+        let mut next_p = self.hlc_p;
+        let mut next_l = self.hlc_l;
+        let mut applied_ids = Vec::new();
+        let mut rejects = Vec::new();
+        self.backend.with_txn(&mut |tx| {
+            let mut applied_auth = if auth_on {
+                load_applied_wires(tx)?
+            } else {
+                Vec::new()
+            };
+            let mut entries = load_quarantine(tx)?;
+            entries.sort_by(|a, b| {
+                (
+                    a.wire.ts.p,
+                    a.wire.ts.l,
+                    a.wire.author.as_str(),
+                    a.wire.id.as_str(),
+                )
+                    .cmp(&(
+                        b.wire.ts.p,
+                        b.wire.ts.l,
+                        b.wire.author.as_str(),
+                        b.wire.id.as_str(),
+                    ))
+            });
+            let mut keep = Vec::new();
+            for entry in entries {
+                if exceeds_max_drift(entry.wire.ts.p, wall) {
+                    keep.push(entry);
+                    continue;
+                }
+                let validated = match validate_wire_for_ds(&entry.wire, &ds) {
+                    Ok(validated) => validated,
+                    Err(StoreError::Crypto(_)) => {
+                        rejects.push(AuthReject {
+                            op_id: entry.wire.id.clone(),
+                            reason: "AUTH_SIG_INVALID",
+                        });
+                        continue;
+                    }
+                    Err(err) => return Err(err),
+                };
+                if tx.op_exists(&validated.id)? {
+                    continue;
+                }
+                if auth_on {
+                    if let Err(StoreError::Authz(reason)) =
+                        authorize_wire(&ds, &applied_auth, &entry.wire)
+                    {
+                        rejects.push(AuthReject {
+                            op_id: entry.wire.id.clone(),
+                            reason,
+                        });
+                        continue;
+                    }
+                    applied_auth.push(entry.wire.clone());
+                }
+                (next_p, next_l) =
+                    next_remote_hlc(next_p, next_l, entry.wire.ts.p, entry.wire.ts.l, wall)?;
+                apply_wire(tx, &entry.wire, &validated)?;
+                applied_ids.push(entry.wire.id.clone());
+            }
+            save_quarantine(tx, &keep)?;
+            meta_set_u64(tx, "hlc_p", next_p)?;
+            meta_set_u64(tx, "hlc_l", next_l as u64)?;
+            Ok(())
+        })?;
+        self.hlc_p = next_p;
+        self.hlc_l = next_l;
+        self.last_rejects.extend(rejects);
+        Ok(applied_ids)
     }
 
     pub fn grant_membership(
@@ -955,6 +1050,7 @@ impl<B: StoreBackend> LocalStore<B> {
             .map(|op| validate_wire_for_ds(op, &candidate_ds))
             .collect::<Result<Vec<_>, _>>()?;
 
+        let _released = self.release_quarantine()?;
         let auth_on = self.is_auth_enabled() || bundle_has_genesis(&bundle.ops);
         let mut applied_auth = if auth_on {
             load_applied_wires(&self.backend)?
@@ -966,6 +1062,7 @@ impl<B: StoreBackend> LocalStore<B> {
         let mut next_hlc_l = self.hlc_l;
         let mut accepted = 0u32;
         let mut skipped = 0u32;
+        let wall = (self.clock)();
         self.backend.with_txn(&mut |tx| {
             if adopting {
                 tx.meta_set("ds", &candidate_ds)?;
@@ -982,7 +1079,7 @@ impl<B: StoreBackend> LocalStore<B> {
                 }
                 if auth_on {
                     match authorize_wire(&candidate_ds, &applied_auth, op) {
-                        Ok(()) => applied_auth.push(op.clone()),
+                        Ok(()) => {}
                         Err(StoreError::Authz(reason)) => {
                             rejects.push(AuthReject {
                                 op_id: op.id.clone(),
@@ -994,9 +1091,21 @@ impl<B: StoreBackend> LocalStore<B> {
                     }
                 }
                 check_wire_ingress(tx, op, &pending, local_ep)?;
+                if exceeds_max_drift(op.ts.p, wall) || quarantine_has(tx, &op.id)? {
+                    quarantine_push(tx, op, CLOCK_DRIFT, &mut rejects)?;
+                    rejects.push(AuthReject {
+                        op_id: op.id.clone(),
+                        reason: CLOCK_DRIFT,
+                    });
+                    skipped += 1;
+                    continue;
+                }
                 (next_hlc_p, next_hlc_l) =
-                    next_remote_hlc(next_hlc_p, next_hlc_l, op.ts.p, op.ts.l, now_ms())?;
+                    next_remote_hlc(next_hlc_p, next_hlc_l, op.ts.p, op.ts.l, wall)?;
                 apply_wire(tx, op, validated)?;
+                if auth_on {
+                    applied_auth.push(op.clone());
+                }
                 pending.insert(validated.id);
                 accepted += 1;
             }
@@ -1004,7 +1113,7 @@ impl<B: StoreBackend> LocalStore<B> {
             meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
             Ok(())
         })?;
-        self.last_rejects = rejects;
+        self.last_rejects.extend(rejects);
 
         self.ds = candidate_ds;
         self.hlc_p = next_hlc_p;
@@ -1072,15 +1181,17 @@ impl<B: StoreBackend> LocalStore<B> {
     pub fn ingest_wire(&mut self, wire: &WireOp) -> Result<bool, StoreError> {
         match self.ingest_op(wire)? {
             IngestResult::Applied => Ok(true),
-            IngestResult::Duplicate => Ok(false),
+            IngestResult::Duplicate | IngestResult::Quarantined { .. } => Ok(false),
             IngestResult::Rejected { reason } => Err(StoreError::Authz(reason)),
         }
     }
 
-    /// Persist one already-signed op. AUTH and authenticity rejects are named
-    /// outcomes (`AUTH_SIG_INVALID`, membership tags), not silent drops.
+    /// Persist one already-signed op. AUTH, authenticity, and H1 clock
+    /// outcomes are named (`AUTH_SIG_INVALID`, membership tags, `CLOCK_DRIFT`),
+    /// not silent drops.
     pub fn ingest_op(&mut self, wire: &WireOp) -> Result<IngestResult, StoreError> {
         self.last_rejects.clear();
+        self.release_quarantine()?;
         let validated = match validate_wire_for_ds(wire, &self.ds) {
             Ok(validated) => validated,
             Err(StoreError::Crypto(_)) => {
@@ -1108,8 +1219,23 @@ impl<B: StoreBackend> LocalStore<B> {
             }
         }
 
+        let wall = (self.clock)();
+        if exceeds_max_drift(wire.ts.p, wall) || quarantine_has(&self.backend, &wire.id)? {
+            let mut overflow = Vec::new();
+            self.backend
+                .with_txn(&mut |tx| quarantine_push(tx, wire, CLOCK_DRIFT, &mut overflow))?;
+            self.last_rejects.extend(overflow);
+            self.last_rejects.push(AuthReject {
+                op_id: wire.id.clone(),
+                reason: CLOCK_DRIFT,
+            });
+            return Ok(IngestResult::Quarantined {
+                reason: CLOCK_DRIFT,
+            });
+        }
+
         let (next_hlc_p, next_hlc_l) =
-            next_remote_hlc(self.hlc_p, self.hlc_l, wire.ts.p, wire.ts.l, now_ms())?;
+            next_remote_hlc(self.hlc_p, self.hlc_l, wire.ts.p, wire.ts.l, wall)?;
         self.backend.with_txn(&mut |tx| {
             if wire.kind == KIND_GENESIS {
                 tx.meta_set(META_AUTH, &[1])?;
@@ -1219,15 +1345,18 @@ impl<B: StoreBackend> LocalStore<B> {
         if wires.is_empty() {
             return Ok(());
         }
+        let _released = self.release_quarantine()?;
         let mut next_p = self.hlc_p;
         let mut next_l = self.hlc_l;
         let ds = self.ds;
         let auth_on = self.is_auth_enabled();
+        let wall = (self.clock)();
         let mut applied_auth = if auth_on {
             load_applied_wires(&self.backend)?
         } else {
             Vec::new()
         };
+        let mut rejects = Vec::new();
         self.backend.with_txn(&mut |tx| {
             let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
@@ -1238,10 +1367,20 @@ impl<B: StoreBackend> LocalStore<B> {
                 }
                 if auth_on {
                     authorize_wire(&ds, &applied_auth, wire)?;
-                    applied_auth.push(wire.clone());
                 }
                 check_wire_ingress(tx, wire, &pending, local_ep)?;
-                (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, now_ms())?;
+                if exceeds_max_drift(wire.ts.p, wall) || quarantine_has(tx, &wire.id)? {
+                    quarantine_push(tx, wire, CLOCK_DRIFT, &mut rejects)?;
+                    rejects.push(AuthReject {
+                        op_id: wire.id.clone(),
+                        reason: CLOCK_DRIFT,
+                    });
+                    continue;
+                }
+                if auth_on {
+                    applied_auth.push(wire.clone());
+                }
+                (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, wall)?;
                 apply_wire(tx, wire, &validated)?;
                 pending.insert(validated.id);
             }
@@ -1249,6 +1388,7 @@ impl<B: StoreBackend> LocalStore<B> {
             meta_set_u64(tx, "hlc_l", next_l as u64)?;
             Ok(())
         })?;
+        self.last_rejects.extend(rejects);
         self.hlc_p = next_p;
         self.hlc_l = next_l;
         Ok(())
@@ -1264,6 +1404,7 @@ impl<B: StoreBackend> LocalStore<B> {
     where
         F: FnOnce(&dyn BackendTxn, &WireOp) -> Result<(), StoreError>,
     {
+        let _released = self.release_quarantine()?;
         let ts = self.next_local_ts()?;
         let ep = self.schema_epoch().unwrap_or(0);
         let applied = if self.is_auth_enabled() {
@@ -1543,6 +1684,13 @@ fn apply_wire(
     Ok(())
 }
 
+fn exceeds_max_drift(remote_p: u64, wall: u64) -> bool {
+    remote_p > wall.saturating_add(MAX_CLOCK_DRIFT_MS)
+}
+
+/// KERNEL `recv`: advance past a remote ts that is inside the drift bound.
+/// Far-future timestamps are an H1 *op* quarantine (`CLOCK_DRIFT`), not an
+/// HLC advance — callers must not invoke this when `exceeds_max_drift`.
 fn next_remote_hlc(
     latest_p: u64,
     latest_l: u16,
@@ -1550,8 +1698,7 @@ fn next_remote_hlc(
     remote_l: u16,
     wall: u64,
 ) -> Result<(u64, u16), StoreError> {
-    let max_accepted = wall.saturating_add(MAX_CLOCK_DRIFT_MS);
-    if remote_p > max_accepted {
+    if exceeds_max_drift(remote_p, wall) {
         return Err(StoreError::Invalid(format!(
             "remote clock drift exceeded: remote {remote_p} local {wall} max {MAX_CLOCK_DRIFT_MS}ms"
         )));
@@ -1577,6 +1724,78 @@ fn next_remote_hlc(
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct QuarantineEntry {
+    reason: String,
+    wire: WireOp,
+}
+
+fn load_quarantine(tx: &dyn BackendTxn) -> Result<Vec<QuarantineEntry>, StoreError> {
+    match tx.meta_get(META_QUARANTINE)? {
+        None => Ok(Vec::new()),
+        Some(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|e| StoreError::Invalid(format!("quarantine decode: {e}"))),
+    }
+}
+
+fn save_quarantine(tx: &dyn BackendTxn, entries: &[QuarantineEntry]) -> Result<(), StoreError> {
+    if entries.is_empty() {
+        return tx.meta_set(META_QUARANTINE, b"[]");
+    }
+    let bytes = serde_json::to_vec(entries)
+        .map_err(|e| StoreError::Invalid(format!("quarantine encode: {e}")))?;
+    tx.meta_set(META_QUARANTINE, &bytes)
+}
+
+fn quarantine_has(tx: &dyn BackendTxn, op_id: &str) -> Result<bool, StoreError> {
+    Ok(load_quarantine(tx)?
+        .iter()
+        .any(|entry| entry.wire.id == op_id))
+}
+
+fn quarantine_bytes(entries: &[QuarantineEntry]) -> usize {
+    serde_json::to_vec(entries)
+        .map(|bytes| bytes.len())
+        .unwrap_or(0)
+}
+
+fn quarantine_push(
+    tx: &dyn BackendTxn,
+    wire: &WireOp,
+    reason: &'static str,
+    overflow: &mut Vec<AuthReject>,
+) -> Result<(), StoreError> {
+    let mut entries = load_quarantine(tx)?;
+    if entries.iter().any(|entry| entry.wire.id == wire.id) {
+        return Ok(());
+    }
+    let incoming = wire.id.len() + reason.len() + wire.sig.len();
+    while !entries.is_empty()
+        && (entries.len() >= QUARANTINE_MAX_OPS
+            || quarantine_bytes(&entries).saturating_add(incoming) > QUARANTINE_MAX_BYTES)
+    {
+        let dropped = entries.remove(0);
+        overflow.push(AuthReject {
+            op_id: dropped.wire.id,
+            reason: CLOCK_DRIFT_OVERFLOW,
+        });
+    }
+    if entries.len() >= QUARANTINE_MAX_OPS
+        || quarantine_bytes(&entries).saturating_add(incoming) > QUARANTINE_MAX_BYTES
+    {
+        overflow.push(AuthReject {
+            op_id: wire.id.clone(),
+            reason: CLOCK_DRIFT_OVERFLOW,
+        });
+        return save_quarantine(tx, &entries);
+    }
+    entries.push(QuarantineEntry {
+        reason: reason.to_string(),
+        wire: wire.clone(),
+    });
+    save_quarantine(tx, &entries)
+}
+
 fn validate_wire_for_ds(
     wire: &WireOp,
     expected_ds: &[u8; 32],
@@ -1600,7 +1819,6 @@ fn validate_wire_for_ds(
             "operation physical time exceeds SQLite range".into(),
         ));
     }
-    next_remote_hlc(0, 0, wire.ts.p, wire.ts.l, now_ms())?;
 
     validate_wire_body(wire.kind, &wire.body)?;
     let author = decode32(&wire.author)?;

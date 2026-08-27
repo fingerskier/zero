@@ -10,6 +10,6 @@ WebSocket, binary frames, one CBOR envelope per message. Handshake, durable vali
 
 A LocalStore / NAPI client speaks the same envelopes (`zerodb_storage::relay_client`, `Database.connectRelay`).
 
-**Not** in this slice: E8 clock quarantine and encrypted payload enforcement (rest of M3b). Signature / OpId / datastore admission is on (`m3b_admission`). AUTH membership + E5 and E7 forged/replay (honest `REJECT/SIG` + `DUPLICATE`, colluding forward, `wipe_dedup`) are on. Full 1,000-write E3 is exercised in `zerodb-storage/tests/relay_client.rs`.
+**Not** in this slice: encrypted payload enforcement (E6 / rest of M3b). Signature / OpId / datastore admission is on (`m3b_admission`). AUTH membership + E5, E7 forged/replay (honest `REJECT/SIG` + `DUPLICATE`, colluding forward, `wipe_dedup`), and E8 clock quarantine (honest/colluding persist far-future member ops; peers hold `CLOCK_DRIFT`) are on. Full 1,000-write E3 is exercised in `zerodb-storage/tests/relay_client.rs`.
 
 Tests: `cargo test -p zerodb-relay`; `cargo test -p zerodb-storage --test relay_client`; NAPI `test/m3a-relay.test.mjs`.

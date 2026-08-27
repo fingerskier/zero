@@ -213,7 +213,9 @@ where
         for w in &bundle.ops {
             match store.ingest_op(w)? {
                 IngestResult::Applied => applied += 1,
-                IngestResult::Duplicate | IngestResult::Rejected { .. } => skipped += 1,
+                IngestResult::Duplicate
+                | IngestResult::Rejected { .. }
+                | IngestResult::Quarantined { .. } => skipped += 1,
             }
         }
         (applied, skipped)

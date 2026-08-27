@@ -646,7 +646,7 @@ All Level 1 and Level 2 relays MUST perform these checks on every received opera
 
 3. **Author consistency:** The operation's `peer` field MUST correspond to the public key that produced the signature.
 
-4. **Timestamp bounds:** The operation's HLC `physical_time` SHOULD be within `max_clock_drift` (configurable, RECOMMENDED default: 60 seconds) of the relay's clock. The relay MAY reject far-future operations with `ERROR` (code `0x302`). A unified peer/relay acceptance rule is tracked in ISSUES H1 → M3.
+4. **Timestamp bounds:** The load-bearing H1 rule is **peer-side** (KERNEL §5 / AUTH.md §6): `CLOCK_DRIFT` quarantine, `max_drift_ms` default 60 seconds, release when `ts.p ≤ wall + max_drift_ms`. A relay SHOULD persist and forward well-formed member operations even when `physical_time` is far ahead of the relay clock, so two honest peers cannot be left with different LWW winners because one relay dropped the op. The relay MAY still refuse with `ERROR` (code `0x302` `CLOCK_DRIFT`) as a bandwidth filter; that refusal is not integrity. A locally-accepted (author's own far-future wall) op that a refusing relay dropped is recovered by resubmit after the window, at which point peers apply or quarantine under the same rule.
 
 ### 9.2 Checks the Relay MUST NOT Perform
 

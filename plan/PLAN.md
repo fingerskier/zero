@@ -1,7 +1,7 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
-**Date:** 2026-08-15 (refreshed after M3a exit)
-**Status:** active — composite M0, M1, M2, and experimental **M3a durable convergence are done**. Current: **M3b security** (AUTH membership, relay signature enforcement, E2E envelopes, E5–E8). Formats remain draft/unfrozen.
+**Date:** 2026-08-27 (refreshed after E8 / H1)
+**Status:** active — composite M0, M1, M2, experimental **M3a durable convergence**, and M3b E5/E7/E8 (membership, authenticity, clock quarantine) are done. Current: **M3b remainder** (E2E/E6). Formats remain draft/unfrozen.
 **Authority:** delivery/tracking only. [SPEC §10](../doc/SPEC.md) is the normative roadmap; [ISSUES.md](../doc/ISSUES.md) the issue ledger; [LEDGER.md](LEDGER.md) the live work tracker. On conflict, SPEC wins.
 
 Completed P0 readiness, M0 packages, M1 experimental exit, and dispositioned review findings are recorded in the [ISSUES Decision Log](../doc/ISSUES.md) and are **not** re-listed here. July 2026 review files live in [plan/archive/](archive/).
@@ -69,7 +69,8 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 6. ~~Full 1,000-write EXEMPLAR E3~~ **done**: 3 peers, C offline, B hard-abort/reopen, relay-only catch-up, equal roots, resume no-redelivery.
 7. ~~Relay signature / OpId / datastore admission (M3b-sig)~~ **done** (`admit_experimental_op`, `m3b_admission`).
 8. ~~AUTH membership + executable E5~~ **done** (first-class grant/revoke ops, peer AUTH §4 on persist/import/ingest, honest-relay REJECT/AUTHZ, colluding-relay peer reject; `e5_membership` in storage + relay).
-9. ~~E7 remainder (forged/replay + colluding)~~ **done** (peer `AUTH_SIG_INVALID` / `Duplicate`; honest relay `REJECT/SIG` + `DUPLICATE`; colluding relay forwards forged/tampered; wipe-dedup replay has no double effect; `e7_forged_replay` in storage + relay). Next: E8 clock, then E2E/E6 (blocked on remaining CX-03 live wiring). **Not** M3b exit.
+9. ~~E7 remainder (forged/replay + colluding)~~ **done** (peer `AUTH_SIG_INVALID` / `Duplicate`; honest relay `REJECT/SIG` + `DUPLICATE`; colluding relay forwards forged/tampered; wipe-dedup replay has no double effect; `e7_forged_replay` in storage + relay).
+10. ~~E8 clock quarantine (H1)~~ **done** (peer `CLOCK_DRIFT` hold + release; C +30d LWW does not silently win on A/B; after the window A/B/C converge; honest/colluding relays persist/forward; `e8_clock_quarantine` in storage + relay). Next: E2E/E6 (blocked on remaining CX-03 live wiring). **Not** M3b exit.
 
 **Shipped already (do not re-open as next work):** M1 experimental exit; M2a; M2-parity; `v0.1.0-sdk`; M3a relay/client, E2-live, Merkle walk, and full E3. Equal-ts E2 remains covered at model level; it is not an M3a blocker.
 

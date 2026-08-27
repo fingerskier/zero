@@ -167,9 +167,11 @@ impl HLC {
 
     /// Update the clock after receiving a remote timestamp.
     ///
-    /// Returns the new local timestamp. Returns an error if the remote
-    /// clock drifts beyond `max_drift_ms` ahead of our wall clock
-    /// (the caller decides whether to log-and-continue or reject).
+    /// Returns the new local timestamp. Returns `ExcessiveDrift` if the
+    /// remote clock is more than `max_drift_ms` ahead of wall time — this
+    /// is the KERNEL `recv` clock-advance reject (`DRIFT_EXCEEDED`). Op
+    /// acceptance for that timestamp is the store's H1 quarantine rule
+    /// (`CLOCK_DRIFT`), not this function.
     pub fn recv(&mut self, remote: &HLCTimestamp) -> Result<HLCTimestamp, HLCError> {
         let wall = (self.clock)();
 
