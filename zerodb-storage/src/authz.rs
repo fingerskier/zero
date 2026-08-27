@@ -4,7 +4,8 @@
 //! AUTH is enforced only when a genesis op is present (or `auth` meta is set).
 
 use zerodb_core::auth::{
-    AuthzBody, AuthzOp, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, auth_error_tag, authorize,
+    AuthzBody, AuthzOp, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD,
+    auth_error_tag, authorize,
 };
 
 use crate::{StoreError, WireOp, decode32};
@@ -38,7 +39,10 @@ pub enum IngestResult {
 }
 
 pub fn is_control_kind(kind: u64) -> bool {
-    matches!(kind, KIND_GENESIS | KIND_CAP_GRANT | KIND_CAP_REVOKE)
+    matches!(
+        kind,
+        KIND_GENESIS | KIND_CAP_GRANT | KIND_CAP_REVOKE | KIND_KEY_RECORD
+    )
 }
 
 pub fn wire_to_authz(wire: &WireOp) -> Result<AuthzOp, StoreError> {

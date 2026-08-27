@@ -22,6 +22,7 @@ pub const DOMAIN_RELAY_AUTH: &[u8] = b"zerodb-relay-auth-v1";
 /// KeyRecord subtype tags (AUTH.md §1.2).
 pub const KR_DEVICE_CERT: u64 = 0;
 pub const KR_DEVICE_REVOKE: u64 = 1;
+pub const KR_GROUP_KEY: u64 = 2;
 
 /// Scope tags (AUTH.md §3.1).
 pub const SCOPE_WRITE: u64 = 0;

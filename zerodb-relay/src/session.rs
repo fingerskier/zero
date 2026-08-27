@@ -117,6 +117,25 @@ impl Relay {
             .map_err(Into::into)
     }
 
+    /// Concatenated stored op bodies (the protocol artifacts R persists).
+    /// Used by EXEMPLAR E6 to show the relay never holds plaintext.
+    pub fn captured_artifacts(&self, ds: &str) -> Result<Vec<u8>, RelayError> {
+        let ops = self
+            .inner
+            .lock()
+            .map_err(|_| RelayError::Poison)?
+            .store
+            .list(ds)
+            .map_err(RelayError::Store)?;
+        let mut out = Vec::new();
+        for op in ops {
+            out.extend_from_slice(&op.body);
+            out.extend_from_slice(&op.op_id);
+            out.extend_from_slice(&op.author);
+        }
+        Ok(out)
+    }
+
     /// Drop the durable oplog for `ds` so `(datastore, OpId)` dedup is empty.
     /// Membership grants are kept. Test harness for EXEMPLAR E7 / I-3.
     pub fn wipe_dedup(&self, ds: &str) -> Result<(), RelayError> {

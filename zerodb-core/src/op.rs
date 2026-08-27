@@ -81,55 +81,68 @@ impl OpEnvelope {
 /// Hex strings on `node` / `edge` / `src` / `dst` become bytes.
 /// AUTH control bodies also encode `founder` / `salt` / `subject` / `ds_bind` /
 /// `grant` as bytes, and numeric arrays (grant `scopes`) as uints.
+/// Group-key wraps (`kr = 2`) and KERNEL §7 envelopes recurse into maps.
 pub fn json_to_cbor_body(v: &serde_json::Value) -> Result<Cbor, String> {
-    let mut entries = Vec::new();
-    if let Some(obj) = v.as_object() {
-        for (k, val) in obj {
-            let c = match val {
-                serde_json::Value::String(s) => {
-                    if is_hex_body_key(k) {
-                        let b = hex::decode(s).map_err(|e| e.to_string())?;
-                        Cbor::Bytes(b)
-                    } else {
-                        Cbor::Text(s.clone())
-                    }
-                }
-                serde_json::Value::Number(n) => {
-                    if let Some(u) = n.as_u64() {
-                        Cbor::Uint(u)
-                    } else {
-                        Cbor::Text(n.to_string())
-                    }
-                }
-                serde_json::Value::Bool(b) => Cbor::Bool(*b),
-                serde_json::Value::Array(a) => Cbor::Array(
-                    a.iter()
-                        .map(|x| match x {
-                            serde_json::Value::String(s) => Cbor::Text(s.clone()),
-                            serde_json::Value::Number(n) => {
-                                if let Some(u) = n.as_u64() {
-                                    Cbor::Uint(u)
-                                } else {
-                                    Cbor::Text(n.to_string())
-                                }
-                            }
-                            other => Cbor::Text(other.to_string()),
-                        })
-                        .collect(),
-                ),
-                serde_json::Value::Null => Cbor::Null,
-                other => Cbor::Text(other.to_string()),
-            };
-            entries.push((k.clone(), c));
+    match v {
+        serde_json::Value::Object(_) => json_to_cbor(v, None),
+        _ => Ok(Cbor::Map(vec![])),
+    }
+}
+
+fn json_to_cbor(val: &serde_json::Value, key: Option<&str>) -> Result<Cbor, String> {
+    match val {
+        serde_json::Value::String(s) => {
+            if key.is_some_and(is_hex_body_key) {
+                let b = hex::decode(s).map_err(|e| e.to_string())?;
+                Ok(Cbor::Bytes(b))
+            } else {
+                Ok(Cbor::Text(s.clone()))
+            }
+        }
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                Ok(Cbor::Uint(u))
+            } else {
+                Ok(Cbor::Text(n.to_string()))
+            }
+        }
+        serde_json::Value::Bool(b) => Ok(Cbor::Bool(*b)),
+        serde_json::Value::Null => Ok(Cbor::Null),
+        serde_json::Value::Array(a) => {
+            let mut items = Vec::new();
+            for x in a {
+                items.push(json_to_cbor(x, None)?);
+            }
+            Ok(Cbor::Array(items))
+        }
+        serde_json::Value::Object(o) => {
+            let mut entries = Vec::new();
+            for (k, v) in o {
+                entries.push((k.clone(), json_to_cbor(v, Some(k))?));
+            }
+            Ok(Cbor::Map(entries))
         }
     }
-    Ok(Cbor::Map(entries))
 }
 
 fn is_hex_body_key(k: &str) -> bool {
     matches!(
         k,
-        "node" | "edge" | "src" | "dst" | "founder" | "salt" | "subject" | "ds_bind" | "grant"
+        "node"
+            | "edge"
+            | "src"
+            | "dst"
+            | "founder"
+            | "salt"
+            | "subject"
+            | "ds_bind"
+            | "grant"
+            | "encrypted"
+            | "key_id"
+            | "recipient"
+            | "eph_pk"
+            | "nonce"
+            | "wrapped"
     )
 }
 
