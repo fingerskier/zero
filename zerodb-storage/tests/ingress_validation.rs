@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zerodb_core::cbor::Cbor;
 use zerodb_core::op::{OpEnvelope, OpTs};
 use zerodb_core::sign::sign_op;
-use zerodb_storage::{ExportBundle, LocalStore, WireOp, WireTs};
+use zerodb_storage::{CLOCK_DRIFT, ExportBundle, IngestResult, LocalStore, WireOp, WireTs};
 
 #[derive(Debug, PartialEq)]
 struct StoreSnapshot {
@@ -229,7 +229,7 @@ fn semantic_cross_op_failure_does_not_adopt_or_commit_a_valid_prefix() {
 }
 
 #[test]
-fn future_timestamp_is_rejected_without_poisoning_local_hlc() {
+fn future_timestamp_is_quarantined_without_poisoning_local_hlc() {
     let path = tmp_db("future-timestamp");
     let mut store = LocalStore::init(&path).unwrap();
     let before = snapshot(&store);
@@ -238,10 +238,11 @@ fn future_timestamp_is_rejected_without_poisoning_local_hlc() {
         .unwrap()
         .as_millis() as u64;
     let future = wall_before + 10 * 60 * 1000;
+    let wire = signed_create_wire(&store.datastore_id_hex(), future);
     let bundle = ExportBundle {
         format: 1,
         datastore_id: store.datastore_id_hex(),
-        ops: vec![signed_create_wire(&store.datastore_id_hex(), future)],
+        ops: vec![wire.clone()],
     };
 
     let result = store.import_bundle(&bundle);
@@ -265,7 +266,20 @@ fn future_timestamp_is_rejected_without_poisoning_local_hlc() {
         "future ingress poisoned local HLC: local={} wall={wall_after}",
         local_op.ts.p,
     );
-    assert!(result.is_err(), "future operation was accepted: {result:?}");
+    assert_eq!(result.unwrap(), (0, 1), "future op is held, not applied");
+    assert_eq!(
+        store
+            .list_quarantine()
+            .unwrap()
+            .iter()
+            .map(|op| op.id.clone())
+            .collect::<Vec<_>>(),
+        vec![wire.id.clone()]
+    );
+    match store.ingest_op(&wire).unwrap() {
+        IngestResult::Quarantined { reason } => assert_eq!(reason, CLOCK_DRIFT),
+        other => panic!("expected CLOCK_DRIFT, got {other:?}"),
+    }
     assert_eq!(
         after_import, before,
         "future operation mutated durable store state"

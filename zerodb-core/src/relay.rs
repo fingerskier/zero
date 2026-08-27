@@ -308,6 +308,9 @@ fn hex64(s: &str) -> Result<[u8; 64], AdmitReject> {
 ///
 /// Checks: decode, datastore bind, author = BLAKE3(pk), OpId = preimage hash,
 /// Ed25519 signature over the OpId. Transport sender MAY differ from author.
+/// Forward clock skew is **not** an admission reject (H1): well-formed member
+/// ops are persisted so honest peers receive the same set and apply the
+/// peer-side `CLOCK_DRIFT` quarantine.
 pub fn admit_experimental_op(op: &Cbor, datastore: &str) -> Result<AdmittedOp, AdmitReject> {
     if !matches!(op, Cbor::Map(_)) {
         return Err(AdmitReject::Decode);
