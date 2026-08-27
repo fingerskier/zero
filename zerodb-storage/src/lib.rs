@@ -1077,10 +1077,23 @@ impl<B: StoreBackend> LocalStore<B> {
         }
     }
 
-    /// Persist one already-signed op. AUTH rejects are named outcomes, not errors.
+    /// Persist one already-signed op. AUTH and authenticity rejects are named
+    /// outcomes (`AUTH_SIG_INVALID`, membership tags), not silent drops.
     pub fn ingest_op(&mut self, wire: &WireOp) -> Result<IngestResult, StoreError> {
         self.last_rejects.clear();
-        let validated = validate_wire_for_ds(wire, &self.ds)?;
+        let validated = match validate_wire_for_ds(wire, &self.ds) {
+            Ok(validated) => validated,
+            Err(StoreError::Crypto(_)) => {
+                self.last_rejects.push(AuthReject {
+                    op_id: wire.id.clone(),
+                    reason: "AUTH_SIG_INVALID",
+                });
+                return Ok(IngestResult::Rejected {
+                    reason: "AUTH_SIG_INVALID",
+                });
+            }
+            Err(err) => return Err(err),
+        };
         if self.backend.op_exists(&validated.id)? {
             return Ok(IngestResult::Duplicate);
         }

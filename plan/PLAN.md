@@ -68,7 +68,8 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 5. ~~Frozen-snapshot Merkle subtree/leaf walk~~ **done** (`merkle-walk-v1`).
 6. ~~Full 1,000-write EXEMPLAR E3~~ **done**: 3 peers, C offline, B hard-abort/reopen, relay-only catch-up, equal roots, resume no-redelivery.
 7. ~~Relay signature / OpId / datastore admission (M3b-sig)~~ **done** (`admit_experimental_op`, `m3b_admission`).
-8. ~~AUTH membership + executable E5~~ **done** (first-class grant/revoke ops, peer AUTH §4 on persist/import/ingest, honest-relay REJECT/AUTHZ, colluding-relay peer reject; `e5_membership` in storage + relay). Next: E7 remainder, E8 clock, E2E/E6 (blocked on remaining CX-03 live wiring). **Not** M3b exit.
+8. ~~AUTH membership + executable E5~~ **done** (first-class grant/revoke ops, peer AUTH §4 on persist/import/ingest, honest-relay REJECT/AUTHZ, colluding-relay peer reject; `e5_membership` in storage + relay).
+9. ~~E7 remainder (forged/replay + colluding)~~ **done** (peer `AUTH_SIG_INVALID` / `Duplicate`; honest relay `REJECT/SIG` + `DUPLICATE`; colluding relay forwards forged/tampered; wipe-dedup replay has no double effect; `e7_forged_replay` in storage + relay). Next: E8 clock, then E2E/E6 (blocked on remaining CX-03 live wiring). **Not** M3b exit.
 
 **Shipped already (do not re-open as next work):** M1 experimental exit; M2a; M2-parity; `v0.1.0-sdk`; M3a relay/client, E2-live, Merkle walk, and full E3. Equal-ts E2 remains covered at model level; it is not an M3a blocker.
 

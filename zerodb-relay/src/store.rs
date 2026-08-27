@@ -50,6 +50,7 @@ pub trait OpStore: Send {
     fn insert(&mut self, ds: &str, op: StoredOp) -> Result<bool, StoreError>;
     fn list(&self, ds: &str) -> Result<Vec<StoredOp>, StoreError>;
     fn count(&self, ds: &str) -> Result<u64, StoreError>;
+    fn clear_ops(&mut self, ds: &str) -> Result<(), StoreError>;
     fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError>;
     fn grants(&self, ds: &str) -> Result<Vec<KnownGrant>, StoreError>;
     fn revoke_grant(&mut self, ds: &str, id: &[u8; 32]) -> Result<bool, StoreError>;
@@ -102,6 +103,11 @@ impl OpStore for MemoryStore {
 
     fn count(&self, ds: &str) -> Result<u64, StoreError> {
         Ok(self.ops.keys().filter(|(d, _)| d == ds).count() as u64)
+    }
+
+    fn clear_ops(&mut self, ds: &str) -> Result<(), StoreError> {
+        self.ops.retain(|(d, _), _| d != ds);
+        Ok(())
     }
 
     fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError> {
@@ -220,6 +226,12 @@ impl OpStore for SqliteStore {
                     r.get(0)
                 })?;
         Ok(n as u64)
+    }
+
+    fn clear_ops(&mut self, ds: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM ops WHERE ds = ?1", params![ds])?;
+        Ok(())
     }
 
     fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError> {
