@@ -48,7 +48,7 @@ Must not regress:
 - **Encrypted LWW:** KERNEL §7 seal before persist; relay/non-recipient stay blind; `ENCRYPTED_PLAINTEXT`; set-before-create missing-node path treated encrypted if any IR label marks the path; admin-only `kr=2` current-key adoption (E6).
 - **`CLOCK_DRIFT` quarantine + release** (E8 / H1 closed).
 - **Frozen-snapshot Merkle walk**; matching-subtree prune (M3a / E3).
-- **Advertised payload/batch limits:** `max_payload_bytes` per-op, `max_batch_*` per OPS, pre-decode frame ceiling = batch + envelope (`197d1ef` / `9903280`). Rate/subscription/quotas still unenforced (pinned).
+- **Advertised session limits:** `max_payload_bytes` per-op, `max_batch_*` per OPS, pre-decode frame ceiling, plus per-session `max_subscriptions` / `ops_per_second` / `bytes_per_second` and 3 connections per PeerId. Transcript AUTH is draft (`zerodb-relay-auth-v2`).
 - **Schema is still local meta.** Do not pretend `SchemaEpoch` exists.
 - **Formats draft-1 / unfrozen.** GC off until C7 (M5b). `zerodb-core` / `zerodb-storage` experimental until freeze.
 - **Approved-resolution checklist** (SPEC §10) is the only way a C/H issue closes.
@@ -83,8 +83,9 @@ This is the only live action list.
 **Pinned (do not start):**
 - **perf Stage 2** — trigger: Stage 0 still scan-dominated
 - **perf Stage 3** — trigger: equal/one-op-delta still full-history
-- **H10 leftovers** (offline revoke, two-key wrap, wrap-body freeze)
-- Handshake/TLS/quotas beyond payload/batch; two-key principal/device split
+- **H6 direct P2P** — parked to M4; reuse the handshake transcript helper
+- **H10** remains open (leftovers implemented this pass: offline-revoke at `open`, bootstrap hold, principal/device wrap, wrap-shape draft). Not closed.
+- M3b remainder stays pinned/open (this work is the pinned remainder, not a gate rename / not M3b exit)
 - M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm; WebRTC
 - Experimental browser-peer/IDB slice already shipped; M4a proper still waits on M3c
 

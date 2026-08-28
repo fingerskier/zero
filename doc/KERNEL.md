@@ -170,6 +170,8 @@ AAD           = domain("value_aad") ‖ SlotId
 
 `domain("value_slot")` = `zerodb-value-slot-v1`. An envelope authenticates datastore, author, timestamp, epoch, and property path — replay into any other slot, or onto a different author/timestamp, fails decryption (I-10). Construction order is: form the slot context from envelope fields that are known before encryption → seal → place the envelope in `body` → hash the body to `OpId` → sign. Negative vectors MUST include: wrong AAD component (each slot field), truncated envelope, unknown version, unknown `key_id`. At least one vector MUST construct a complete operation (plaintext → envelope → body → OpId) without supplying an external `OpId`.
 
+Group-key wrap for `KeyRecord` `kr = 2` (draft shape, **not** a format freeze; see AUTH.md §8): map fields in any order, extra/missing rejected — `recipient` 32B `PrincipalId`, `eph_pk` 32B X25519, `nonce` 24B, `wrapped` 48B.
+
 ## 8. Large values & limits (DQ-6)
 
 - Limits per registry `limits` (provisional, O6): operation ≤ 64 KiB, batch ≤ 256 KiB / 512 ops, `deps` ≤ 64, CBOR depth ≤ 16. Violations are decode errors.

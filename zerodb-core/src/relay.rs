@@ -5,7 +5,7 @@
 //! frames. `admit_experimental_op` is the relay-side signature / OpId /
 //! datastore-binding check (M3b-sig). Peers still run AUTH.md §4.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::SigningKey;
 
 use crate::auth::datastore_id_from_genesis;
 use crate::cbor::Cbor;
@@ -13,8 +13,13 @@ use crate::merkle::{MerkleOp, merkle_root};
 use crate::op::{OpEnvelope, OpTs, json_to_cbor_body};
 use crate::sign::verify_op;
 
-/// Domain-separation prefix (registry `domain_separation.relay_auth`).
-pub const DOMAIN_RELAY_AUTH: &[u8] = b"zerodb-relay-auth-v1";
+pub use crate::handshake::{
+    AuthTranscript, DEFAULT_BYTES_PER_SECOND, DEFAULT_MAX_BATCH_BYTES, DEFAULT_MAX_BATCH_OPS,
+    DEFAULT_MAX_CONNECTIONS_PER_PEER, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_SUBSCRIPTIONS,
+    DEFAULT_OPS_PER_SECOND, DEFAULT_PROTOCOL_VERSION, DEFAULT_RELAY_LEVEL, DOMAIN_RELAY_AUTH,
+    DOMAIN_RELAY_AUTH_V1, WelcomeLimits, auth_preimage_v1, auth_transcript_preimage, authenticate,
+    sign_auth, sign_auth_for_hello, sign_auth_v1_nonce_only, verify_auth,
+};
 
 /// Negotiable session capabilities (sorted).
 pub const RELAY_CAPS: &[&str] = &["dual-root", "merkle-walk-v1", "reject-ack", "resume-cursor"];
@@ -25,6 +30,10 @@ pub const ERR_AUTH_FAILED: u16 = 0x201;
 pub const ERR_SIG_INVALID: u16 = 0x301;
 /// RELAY §10.2 operation or batch exceeds advertised limits.
 pub const ERR_PAYLOAD_TOO_LARGE: u16 = 0x303;
+/// RELAY §10.2 `RATE_EXCEEDED` (ops/bytes/connection cap).
+pub const ERR_RATE_EXCEEDED: u16 = 0x304;
+/// RELAY §10.2 `TOO_MANY_SUBS`.
+pub const ERR_TOO_MANY_SUBS: u16 = 0x305;
 
 /// `OP_ACK` reject reasons (RELAY §4.4).
 pub const REJECT_DECODE: &str = "DECODE";
@@ -65,38 +74,6 @@ pub fn negotiate_capabilities<'a>(hello: &[&'a str], relay: &[&'a str]) -> Vec<&
         .copied()
         .filter(|c| hello.contains(c) && relay.contains(c))
         .collect()
-}
-
-pub fn auth_preimage(nonce: &[u8]) -> Vec<u8> {
-    [DOMAIN_RELAY_AUTH, nonce].concat()
-}
-
-pub fn sign_auth(seed: &[u8; 32], nonce: &[u8; 32]) -> [u8; 64] {
-    let key = SigningKey::from_bytes(seed);
-    key.sign(&auth_preimage(nonce)).to_bytes()
-}
-
-pub fn verify_auth(pk: &[u8; 32], nonce: &[u8; 32], sig: &[u8; 64]) -> bool {
-    let Ok(vk) = VerifyingKey::from_bytes(pk) else {
-        return false;
-    };
-    vk.verify(&auth_preimage(nonce), &Signature::from_bytes(sig))
-        .is_ok()
-}
-
-/// RELAY §4.1 / §5.2: signature over domain||nonce AND claimed PeerId == BLAKE3(pk).
-pub fn authenticate(
-    claimed_peer_id: &[u8; 32],
-    public_key: &[u8; 32],
-    nonce: &[u8; 32],
-    signature: &[u8; 64],
-) -> Result<(), u16> {
-    if verify_auth(public_key, nonce, signature) && peer_id_from_pk(public_key) == *claimed_peer_id
-    {
-        Ok(())
-    } else {
-        Err(ERR_AUTH_FAILED)
-    }
 }
 
 pub fn known_message_type(ty: u8) -> bool {

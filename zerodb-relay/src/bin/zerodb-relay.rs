@@ -22,10 +22,22 @@ struct Args {
     /// Bind address. Default loopback only.
     #[arg(long, default_value = "127.0.0.1:7700")]
     bind: String,
+    /// Permit a non-loopback plaintext bind. The process does not terminate
+    /// TLS and does not mint certificates; use only on a trusted LAN.
+    #[arg(long, default_value_t = false)]
+    allow_insecure: bool,
 }
 
 fn main() {
     let args = Args::parse();
+    if !zerodb_relay::plaintext_listen_allowed(&args.bind, args.allow_insecure) {
+        eprintln!(
+            "zerodb-relay refuses non-loopback plaintext bind {:?} without --allow-insecure \
+             (no TLS in this binary; use loopback or pass the flag for disposable LAN tests only)",
+            args.bind
+        );
+        std::process::exit(1);
+    }
     let relay = Arc::new(Relay::open(&args.path).expect("open relay store"));
     let listener = TcpListener::bind(&args.bind).expect("bind");
     let addr = listener.local_addr().expect("local_addr");

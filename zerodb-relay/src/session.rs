@@ -3,6 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use zerodb_core::auth::{
     AdmissionToken, DeviceCert, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KnownGrant,
@@ -10,12 +12,19 @@ use zerodb_core::auth::{
 };
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::merkle::{BUCKET_WIDTH_MS, MERKLE_FORMAT_VERSION, MerkleTree};
+
+use zerodb_core::handshake::{
+    AuthTranscript, DEFAULT_BYTES_PER_SECOND, DEFAULT_MAX_CONNECTIONS_PER_PEER,
+    DEFAULT_MAX_SUBSCRIPTIONS, DEFAULT_OPS_PER_SECOND, DEFAULT_PROTOCOL_VERSION,
+    DEFAULT_RELAY_LEVEL, WelcomeLimits,
+};
 use zerodb_core::relay::{
-    ERR_AUTH_FAILED, ERR_PAYLOAD_TOO_LARGE, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE,
-    MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST,
-    MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK,
-    MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME,
-    RELAY_CAPS, admit_experimental_op, authenticate, negotiate_capabilities, retransmit,
+    ERR_AUTH_FAILED, ERR_PAYLOAD_TOO_LARGE, ERR_RATE_EXCEEDED, ERR_TOO_MANY_SUBS, FrontierTip,
+    HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO,
+    MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST,
+    MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
+    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, admit_experimental_op, authenticate,
+    negotiate_capabilities, retransmit,
 };
 
 use crate::store::{OpStore, StoredOp, validated_root_hex};
@@ -42,6 +51,8 @@ pub struct Inner {
     pub next_nonce: Option<[u8; 32]>,
     next_session: u64,
     subscribers: HashMap<String, HashSet<u64>>,
+    /// Live sessions per authenticated PeerId (RELAY §8.3 RECOMMENDED 3).
+    connections: HashMap<[u8; 32], HashSet<u64>>,
     /// When true, skip membership filters and persist even unsigned / forged /
     /// tampered ops so peers can prove AUTH.md §4 / KERNEL §4.4 independently
     /// of the relay (EXEMPLAR E5 / E7).
@@ -69,6 +80,7 @@ impl Relay {
                 next_nonce: None,
                 next_session: 0,
                 subscribers: HashMap::new(),
+                connections: HashMap::new(),
                 colluding,
             })),
         }
@@ -81,6 +93,7 @@ impl Relay {
                 next_nonce: None,
                 next_session: 0,
                 subscribers: HashMap::new(),
+                connections: HashMap::new(),
                 colluding: false,
             })),
         })
@@ -109,6 +122,8 @@ impl Relay {
             subscriptions: HashSet::new(),
             authorized: HashMap::new(),
             walk_snapshots: HashMap::new(),
+            rate: RateWindow::new(),
+            authed_peer: None,
         }
     }
 
@@ -183,6 +198,7 @@ enum Phase {
     Hello {
         claimed: [u8; 32],
         pk: [u8; 32],
+        protocol_version: u8,
         hello_caps: Vec<String>,
     },
     Authed {
@@ -190,6 +206,36 @@ enum Phase {
         peer_id: [u8; 32],
     },
     Closed,
+}
+
+/// Sliding 1s window of admitted OPS count/bytes (RELAY §8).
+struct RateWindow {
+    events: VecDeque<(Instant, u32, u64)>,
+}
+
+impl RateWindow {
+    fn new() -> Self {
+        Self {
+            events: VecDeque::new(),
+        }
+    }
+
+    fn admit(&mut self, ops: u32, bytes: u64, now: Instant) -> bool {
+        let cutoff = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+        while self.events.front().is_some_and(|(t, _, _)| *t < cutoff) {
+            self.events.pop_front();
+        }
+        let (op_sum, byte_sum) = self.events.iter().fold((0u32, 0u64), |acc, (_, o, b)| {
+            (acc.0.saturating_add(*o), acc.1.saturating_add(*b))
+        });
+        if op_sum.saturating_add(ops) > DEFAULT_OPS_PER_SECOND
+            || byte_sum.saturating_add(bytes) > DEFAULT_BYTES_PER_SECOND as u64
+        {
+            return false;
+        }
+        self.events.push_back((now, ops, bytes));
+        true
+    }
 }
 
 pub struct RelaySession {
@@ -200,6 +246,8 @@ pub struct RelaySession {
     subscriptions: HashSet<String>,
     authorized: HashMap<String, [u8; 32]>,
     walk_snapshots: HashMap<String, Vec<StoredOp>>,
+    rate: RateWindow,
+    authed_peer: Option<[u8; 32]>,
 }
 
 impl RelaySession {
@@ -217,10 +265,15 @@ impl RelaySession {
     }
 
     fn unregister(&mut self) {
-        if self.subscriptions.is_empty() {
-            return;
-        }
         if let Ok(mut g) = self.inner.lock() {
+            if let Some(peer) = self.authed_peer.take()
+                && let Some(set) = g.connections.get_mut(&peer)
+            {
+                set.remove(&self.session_id);
+                if set.is_empty() {
+                    g.connections.remove(&peer);
+                }
+            }
             for ds in self.subscriptions.drain() {
                 if let Some(set) = g.subscribers.get_mut(&ds) {
                     set.remove(&self.session_id);
@@ -297,6 +350,7 @@ impl RelaySession {
         self.phase = Phase::Hello {
             claimed,
             pk,
+            protocol_version: version as u8,
             hello_caps,
         };
         Ok(vec![encode_env(
@@ -310,6 +364,7 @@ impl RelaySession {
         let Phase::Hello {
             claimed,
             pk,
+            protocol_version,
             hello_caps,
         } = &self.phase
         else {
@@ -323,10 +378,13 @@ impl RelaySession {
         };
         let claimed = *claimed;
         let pk = *pk;
+        let protocol_version = *protocol_version;
         let hello_caps = hello_caps.clone();
         let request_id = env.request_id;
         let sig = take64(map_get(&env.payload, "signature"))?;
-        if authenticate(&claimed, &pk, &self.nonce, &sig).is_err() {
+        let transcript =
+            AuthTranscript::for_relay_hello(claimed, pk, protocol_version, &hello_caps, self.nonce);
+        if authenticate(&claimed, &pk, &transcript, &sig).is_err() {
             self.close();
             return Ok(vec![error_frame(
                 request_id,
@@ -335,8 +393,18 @@ impl RelaySession {
                 true,
             )]);
         }
+        if !self.register_connection(claimed)? {
+            self.close();
+            return Ok(vec![error_frame(
+                request_id,
+                ERR_RATE_EXCEEDED,
+                "TOO_MANY_CONNECTIONS",
+                true,
+            )]);
+        }
         let offered: Vec<&str> = hello_caps.iter().map(|s| s.as_str()).collect();
         let caps = negotiate_capabilities(&offered, RELAY_CAPS);
+        self.authed_peer = Some(claimed);
         self.phase = Phase::Authed {
             caps: caps.iter().map(|c| (*c).to_string()).collect(),
             peer_id: claimed,
@@ -345,8 +413,11 @@ impl RelaySession {
             MSG_WELCOME,
             request_id,
             Cbor::Map(vec![
-                ("protocol_version".into(), Cbor::Uint(1)),
-                ("relay_level".into(), Cbor::Uint(2)),
+                (
+                    "protocol_version".into(),
+                    Cbor::Uint(DEFAULT_PROTOCOL_VERSION as u64),
+                ),
+                ("relay_level".into(), Cbor::Uint(DEFAULT_RELAY_LEVEL as u64)),
                 (
                     "capabilities".into(),
                     Cbor::Array(caps.iter().map(|c| Cbor::Text((*c).into())).collect()),
@@ -354,6 +425,16 @@ impl RelaySession {
                 ("limits".into(), default_limits()),
             ]),
         )])
+    }
+
+    fn register_connection(&self, peer_id: [u8; 32]) -> Result<bool, RelayError> {
+        let mut g = self.inner.lock().map_err(|_| RelayError::Poison)?;
+        let set = g.connections.entry(peer_id).or_default();
+        if set.len() >= DEFAULT_MAX_CONNECTIONS_PER_PEER as usize {
+            return Ok(false);
+        }
+        set.insert(self.session_id);
+        Ok(true)
     }
 
     fn on_ops(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
@@ -390,6 +471,17 @@ impl RelaySession {
                 env.request_id,
                 ERR_PAYLOAD_TOO_LARGE,
                 "PAYLOAD_TOO_LARGE",
+                false,
+            )]);
+        }
+        if !self
+            .rate
+            .admit(operations.len() as u32, encoded_ops as u64, Instant::now())
+        {
+            return Ok(vec![error_frame(
+                env.request_id,
+                ERR_RATE_EXCEEDED,
+                "RATE_EXCEEDED",
                 false,
             )]);
         }
@@ -648,8 +740,7 @@ impl RelaySession {
                 )]);
             }
         };
-        let mut entries = Vec::new();
-        let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
+        let mut pending = Vec::new();
         for item in list {
             let (ds, token) = match item {
                 Cbor::Text(_) => (text(item)?, None),
@@ -677,6 +768,24 @@ impl RelaySession {
                     )]);
                 }
             };
+            pending.push((ds, token));
+        }
+        let new_unique: HashSet<&str> = pending
+            .iter()
+            .map(|(ds, _)| ds.as_str())
+            .filter(|ds| !self.subscriptions.contains(*ds))
+            .collect();
+        if self.subscriptions.len() + new_unique.len() > DEFAULT_MAX_SUBSCRIPTIONS as usize {
+            return Ok(vec![error_frame(
+                env.request_id,
+                ERR_TOO_MANY_SUBS,
+                "TOO_MANY_SUBS",
+                false,
+            )]);
+        }
+        let mut entries = Vec::new();
+        let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
+        for (ds, token) in pending {
             let grants = guard.store.grants(&ds)?;
             if !guard.colluding && !grants.is_empty() {
                 let Some(token) = token else {
@@ -967,17 +1076,7 @@ fn chunk_delta_frames(
 }
 
 fn default_limits() -> Cbor {
-    Cbor::Map(vec![
-        (
-            "max_payload_bytes".into(),
-            Cbor::Uint(MAX_PAYLOAD_BYTES as u64),
-        ),
-        ("max_batch_ops".into(), Cbor::Uint(MAX_BATCH_OPS as u64)),
-        ("max_batch_bytes".into(), Cbor::Uint(MAX_BATCH_BYTES as u64)),
-        ("max_subscriptions".into(), Cbor::Uint(64)),
-        ("ops_per_second".into(), Cbor::Uint(100)),
-        ("bytes_per_second".into(), Cbor::Uint(10_485_760)),
-    ])
+    WelcomeLimits::advertised().to_cbor()
 }
 
 fn map_get<'a>(c: &'a Cbor, k: &str) -> &'a Cbor {

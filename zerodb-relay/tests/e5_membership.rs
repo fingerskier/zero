@@ -1,14 +1,14 @@
 //! Executable EXEMPLAR E5: datastore membership sharing and denial.
 
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use zerodb_core::auth::{
     AdmissionToken, DeviceCert, KnownGrant, SCOPE_READ, SCOPE_SYNC, device_pk_from_seed,
     issue_device_cert, sign_admission_token,
 };
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::relay::{
-    DOMAIN_RELAY_AUTH, MSG_AUTH, MSG_ERROR, MSG_HELLO, MSG_SUBSCRIBE, MSG_SUBSCRIBED,
-    MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, peer_id_from_pk,
+    MSG_AUTH, MSG_ERROR, MSG_HELLO, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
+    MSG_SYNC_RESPONSE, peer_id_from_pk, sign_auth_for_hello,
 };
 use zerodb_relay::{Relay, RelaySession};
 
@@ -82,9 +82,9 @@ fn handshake(session: &mut RelaySession, seed: &[u8; 32]) {
     );
     let challenge = session.handle(&hello).unwrap();
     let (_, payload) = decode_env(&challenge[0]);
-    let mut preimage = DOMAIN_RELAY_AUTH.to_vec();
-    preimage.extend_from_slice(as_bytes(map_get(&payload, "nonce")));
-    let signature = key.sign(&preimage).to_bytes();
+    let mut nonce = [0u8; 32];
+    nonce.copy_from_slice(as_bytes(map_get(&payload, "nonce")));
+    let signature = sign_auth_for_hello(seed, &public_key, &[] as &[&str], &nonce);
     let auth = encode_env(
         MSG_AUTH,
         1,

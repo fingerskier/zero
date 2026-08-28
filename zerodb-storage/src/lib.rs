@@ -42,9 +42,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 use zerodb_core::auth::{
-    GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD, KR_DEVICE_CERT,
-    KR_DEVICE_REVOKE, KR_GROUP_KEY, SCOPE_ADMIN, SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE,
-    datastore_id_from_genesis, genesis_envelope,
+    DeviceCert, GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD,
+    KR_DEVICE_CERT, KR_DEVICE_REVOKE, KR_GROUP_KEY, SCOPE_ADMIN, SCOPE_READ, SCOPE_SYNC,
+    SCOPE_WRITE, auth_error_tag, datastore_id_from_genesis, genesis_envelope, verify_device_cert,
 };
 use zerodb_core::cbor::Cbor;
 use zerodb_core::envelope::{ValueContext, open, seal};
@@ -74,6 +74,7 @@ pub const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
 const META_QUARANTINE: &str = "quarantine";
 const META_KEYRING: &str = "group_keyring";
 const META_KEY_CURRENT: &str = "group_key_current";
+const META_PRINCIPAL: &str = "principal_id";
 /// X25519 wrap: recipient/eph_pk 32, XChaCha20 nonce 24, key 32 + Poly1305 tag 16.
 const WRAP_RECIPIENT_LEN: usize = 32;
 const WRAP_EPH_PK_LEN: usize = 32;
@@ -402,9 +403,13 @@ impl<B: StoreBackend> LocalStore<B> {
         hex::encode(self.author_pk)
     }
 
-    /// Solo-device principal: `PrincipalId == PeerId`.
+    /// Principal id: `META_PRINCIPAL` when a `kr = 0` device binding matched
+    /// this device, otherwise solo-device `PrincipalId == PeerId`.
     pub fn principal_hex(&self) -> String {
-        hex::encode(self.author)
+        match self.backend.meta_get(META_PRINCIPAL) {
+            Ok(Some(raw)) if raw.len() == 32 => hex::encode(raw),
+            _ => hex::encode(self.author),
+        }
     }
 
     pub fn is_auth_enabled(&self) -> bool {
@@ -491,7 +496,7 @@ impl<B: StoreBackend> LocalStore<B> {
                     }
                     return Err(err);
                 }
-                if let Err(err) = apply_wire(tx, &entry.wire, &validated) {
+                if let Err(err) = apply_wire(tx, &entry.wire, &validated, &BTreeMap::new()) {
                     if push_permanent_reject(&err, &entry.wire.id, &mut rejects) {
                         continue;
                     }
@@ -578,7 +583,9 @@ impl<B: StoreBackend> LocalStore<B> {
     }
 
     /// Publish a `KeyRecord` `kr = 2` wrapping the current group key for
-    /// `recipients` (`PeerId` hex, Ed25519 `author_pk` hex).
+    /// `recipients` (`PrincipalId` hex, device Ed25519 `author_pk` hex).
+    /// ECDH uses the device public key; the wrap `recipient` field is the
+    /// principal. Solo-device stores still pass `principal == peer`.
     pub fn distribute_group_key(
         &mut self,
         recipients: &[(&str, &str)],
@@ -653,6 +660,13 @@ impl<B: StoreBackend> LocalStore<B> {
             let Some(enc_hex) = wire.body.get("encrypted").and_then(|v| v.as_str()) else {
                 continue;
             };
+            if self.is_auth_enabled() {
+                let applied = load_applied_wires(&self.backend)?;
+                let (peer, principal) = local_peer_and_principal(&self.backend)?;
+                if !subject_may_open_at(&applied, &wire.ds, &[peer, principal], wire.ts.p) {
+                    continue;
+                }
+            }
             let envelope = hex::decode(enc_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
             let ctx = value_context_from_wire(&wire)?;
             for key in ring.values() {
@@ -1283,6 +1297,7 @@ impl<B: StoreBackend> LocalStore<B> {
             let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
             let (mut held, held_wires) = quarantine_held(tx)?;
+            let known_kinds = wire_kind_map(bundle.ops.iter().chain(held_wires.iter()))?;
             if auth_on {
                 applied_auth.extend(held_wires);
             }
@@ -1308,7 +1323,7 @@ impl<B: StoreBackend> LocalStore<B> {
                         Err(err) => return Err(err),
                     }
                 }
-                check_wire_ingress(tx, op, &pending, &held, local_ep)?;
+                check_wire_ingress(tx, op, &pending, &held, &known_kinds, local_ep)?;
                 if exceeds_max_drift(op.ts.p, wall) || quarantine_has(tx, &op.id)? {
                     quarantine_push(tx, op, CLOCK_DRIFT, &mut rejects)?;
                     rejects.push(AuthReject {
@@ -1324,7 +1339,7 @@ impl<B: StoreBackend> LocalStore<B> {
                 }
                 (next_hlc_p, next_hlc_l) =
                     next_remote_hlc(next_hlc_p, next_hlc_l, op.ts.p, op.ts.l, wall)?;
-                match apply_wire(tx, op, validated) {
+                match apply_wire(tx, op, validated, &known_kinds) {
                     Ok(()) => {}
                     Err(err) => {
                         if let Some(reason) = per_op_ingress_tag(&err) {
@@ -1484,7 +1499,7 @@ impl<B: StoreBackend> LocalStore<B> {
             if wire.kind == KIND_GENESIS {
                 tx.meta_set(META_AUTH, &[1])?;
             }
-            apply_wire(tx, wire, &validated)?;
+            apply_wire(tx, wire, &validated, &BTreeMap::new())?;
             meta_set_u64(tx, "hlc_p", next_hlc_p)?;
             meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
             Ok(())
@@ -1631,6 +1646,7 @@ impl<B: StoreBackend> LocalStore<B> {
             let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
             let (mut held, held_wires) = quarantine_held(tx)?;
+            let known_kinds = wire_kind_map(wires.iter().chain(held_wires.iter()))?;
             if auth_on {
                 applied_auth.extend(held_wires);
             }
@@ -1642,7 +1658,7 @@ impl<B: StoreBackend> LocalStore<B> {
                 if auth_on {
                     authorize_wire(&ds, &applied_auth, wire)?;
                 }
-                check_wire_ingress(tx, wire, &pending, &held, local_ep)?;
+                check_wire_ingress(tx, wire, &pending, &held, &known_kinds, local_ep)?;
                 if exceeds_max_drift(wire.ts.p, wall) || quarantine_has(tx, &wire.id)? {
                     quarantine_push(tx, wire, CLOCK_DRIFT, &mut rejects)?;
                     rejects.push(AuthReject {
@@ -1659,7 +1675,7 @@ impl<B: StoreBackend> LocalStore<B> {
                     applied_auth.push(wire.clone());
                 }
                 (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, wall)?;
-                apply_wire(tx, wire, &validated)?;
+                apply_wire(tx, wire, &validated, &known_kinds)?;
                 pending.insert(validated.id);
             }
             meta_set_u64(tx, "hlc_p", next_p)?;
@@ -1968,6 +1984,7 @@ fn apply_wire(
     tx: &dyn BackendTxn,
     wire: &WireOp,
     validated: &ValidatedWire,
+    known_kinds: &BTreeMap<[u8; 32], u64>,
 ) -> Result<(), StoreError> {
     if wire.kind == KIND_SET_PROPERTY {
         let node = wire.body["node"]
@@ -2037,11 +2054,16 @@ fn apply_wire(
             let path = wire.body["path"]
                 .as_str()
                 .ok_or_else(|| StoreError::Invalid("body.path".into()))?;
-            rematerialize_prop(tx, node, path)?;
+            if !wire_waiting_on_key_record(tx, wire, known_kinds)? {
+                rematerialize_prop(tx, node, path)?;
+            }
         }
-        KIND_GENESIS | KIND_CAP_GRANT | KIND_CAP_REVOKE => {}
+        KIND_GENESIS | KIND_CAP_GRANT => {}
+        KIND_CAP_REVOKE => {
+            rematerialize_encrypted_props(tx)?;
+        }
         KIND_KEY_RECORD => {
-            apply_group_key_record(tx, wire, adopt_current)?;
+            apply_key_record(tx, wire, adopt_current)?;
             rematerialize_encrypted_props(tx)?;
         }
         _ => unreachable!("wire kind was validated"),
@@ -2145,6 +2167,7 @@ fn per_op_ingress_tag(err: &StoreError) -> Option<&'static str> {
     match err {
         StoreError::Invalid(msg) if msg == ENCRYPTED_PLAINTEXT => Some(ENCRYPTED_PLAINTEXT),
         StoreError::Invalid(msg) if msg == KEY_WRAP_INVALID => Some(KEY_WRAP_INVALID),
+        StoreError::Authz(reason) => Some(*reason),
         _ => None,
     }
 }
@@ -2574,6 +2597,15 @@ fn validate_group_key_wraps(
         let w = wrap
             .as_object()
             .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
+        let keys: BTreeSet<&str> = w.keys().map(String::as_str).collect();
+        if keys.len() != 4
+            || !keys.contains("recipient")
+            || !keys.contains("eph_pk")
+            || !keys.contains("nonce")
+            || !keys.contains("wrapped")
+        {
+            return Err(StoreError::Invalid(KEY_WRAP_INVALID.into()));
+        }
         wrap_hex_len(w, "recipient", WRAP_RECIPIENT_LEN)?;
         wrap_hex_len(w, "eph_pk", WRAP_EPH_PK_LEN)?;
         wrap_hex_len(w, "nonce", WRAP_NONCE_LEN)?;
@@ -2935,11 +2967,65 @@ fn body_to_payload(body: &serde_json::Value) -> Result<Payload, StoreError> {
 
 const MAX_DEPS: usize = 64;
 
+fn is_data_kind(kind: u64) -> bool {
+    matches!(
+        kind,
+        KIND_CREATE_NODE | KIND_CREATE_EDGE | KIND_SET_PROPERTY | KIND_TOMBSTONE
+    )
+}
+
+fn wire_kind_map<'a, I>(ops: I) -> Result<BTreeMap<[u8; 32], u64>, StoreError>
+where
+    I: IntoIterator<Item = &'a WireOp>,
+{
+    let mut map = BTreeMap::new();
+    for op in ops {
+        map.insert(decode32(&op.id)?, op.kind);
+    }
+    Ok(map)
+}
+
+fn dep_kind(
+    tx: &dyn BackendTxn,
+    id: &[u8; 32],
+    known: &BTreeMap<[u8; 32], u64>,
+) -> Result<Option<u64>, StoreError> {
+    if let Some(kind) = known.get(id) {
+        return Ok(Some(*kind));
+    }
+    match tx.op_wire_by_id(id)? {
+        Some(s) => {
+            let wire: WireOp =
+                serde_json::from_str(&s).map_err(|e| StoreError::Invalid(e.to_string()))?;
+            Ok(Some(wire.kind))
+        }
+        None => Ok(None),
+    }
+}
+
+fn wire_waiting_on_key_record(
+    tx: &dyn BackendTxn,
+    wire: &WireOp,
+    known: &BTreeMap<[u8; 32], u64>,
+) -> Result<bool, StoreError> {
+    for dep in &wire.deps {
+        let id = decode32(dep)?;
+        if tx.op_exists(&id)? {
+            continue;
+        }
+        if dep_kind(tx, &id, known)? == Some(KIND_KEY_RECORD) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn check_wire_ingress(
     tx: &dyn BackendTxn,
     wire: &WireOp,
     pending: &BTreeSet<[u8; 32]>,
     held: &BTreeSet<[u8; 32]>,
+    known_kinds: &BTreeMap<[u8; 32], u64>,
     local_ep: u64,
 ) -> Result<(), StoreError> {
     if wire.deps.len() > MAX_DEPS {
@@ -2950,9 +3036,16 @@ fn check_wire_ingress(
     }
     for dep in &wire.deps {
         let id = decode32(dep)?;
-        if !tx.op_exists(&id)? && !pending.contains(&id) && !held.contains(&id) {
-            return Err(StoreError::Invalid(format!("missing dep {}", dep)));
+        if tx.op_exists(&id)? || pending.contains(&id) || held.contains(&id) {
+            continue;
         }
+        // Missing deps are not satisfied. Data ops may persist only when every
+        // missing dep is a KeyRecord identified from this bundle / pending /
+        // stored ops; rematerialize waits for those records to apply.
+        if is_data_kind(wire.kind) && dep_kind(tx, &id, known_kinds)? == Some(KIND_KEY_RECORD) {
+            continue;
+        }
+        return Err(StoreError::Invalid(format!("missing dep {}", dep)));
     }
     Ok(())
 }
@@ -3381,6 +3474,161 @@ fn body_hex_field(v: &serde_json::Value, key: &str) -> Result<[u8; 32], StoreErr
     decode32(hex)
 }
 
+fn apply_key_record(
+    tx: &dyn BackendTxn,
+    wire: &WireOp,
+    adopt_as_current: bool,
+) -> Result<(), StoreError> {
+    match wire.body.get("kr").and_then(|v| v.as_u64()) {
+        Some(KR_DEVICE_CERT | KR_DEVICE_REVOKE) => apply_device_principal(tx, wire),
+        Some(KR_GROUP_KEY) => apply_group_key_record(tx, wire, adopt_as_current),
+        _ => Ok(()),
+    }
+}
+
+fn decode64(s: &str) -> Result<[u8; 64], StoreError> {
+    let b = hex::decode(s).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    b.try_into()
+        .map_err(|_| StoreError::Invalid("expected 64 bytes".into()))
+}
+
+fn device_cert_from_wire(body: &serde_json::Value) -> Result<DeviceCert, StoreError> {
+    let kr = body
+        .get("kr")
+        .and_then(|v| v.as_u64())
+        .ok_or(StoreError::Authz("CAP_INVALID"))?;
+    let expiry = match body.get("expiry") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(v.as_u64().ok_or(StoreError::Authz("CAP_INVALID"))?),
+    };
+    let revoke_of = match body.get("revoke_of") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => {
+            let hex = v.as_str().ok_or(StoreError::Authz("CAP_INVALID"))?;
+            Some(decode32(hex).map_err(|_| StoreError::Authz("CAP_INVALID"))?)
+        }
+    };
+    let cert_sig = body
+        .get("cert_sig")
+        .and_then(|v| v.as_str())
+        .ok_or(StoreError::Authz("CAP_INVALID"))?;
+    Ok(DeviceCert {
+        kr,
+        device_pk: body_hex_field(body, "device").map_err(|_| StoreError::Authz("CAP_INVALID"))?,
+        principal_id: body_hex_field(body, "principal")
+            .map_err(|_| StoreError::Authz("CAP_INVALID"))?,
+        root_pk: body_hex_field(body, "root_pk").map_err(|_| StoreError::Authz("CAP_INVALID"))?,
+        issued: body
+            .get("issued")
+            .and_then(|v| v.as_u64())
+            .ok_or(StoreError::Authz("CAP_INVALID"))?,
+        expiry,
+        revoke_of,
+        cert_sig: decode64(cert_sig).map_err(|_| StoreError::Authz("CAP_INVALID"))?,
+    })
+}
+
+fn apply_device_principal(tx: &dyn BackendTxn, wire: &WireOp) -> Result<(), StoreError> {
+    let cert = device_cert_from_wire(&wire.body)?;
+    verify_device_cert(&cert).map_err(|err| StoreError::Authz(auth_error_tag(&err)))?;
+    if cert.kr != KR_DEVICE_CERT {
+        return Ok(());
+    }
+    let Some(seed_raw) = tx.meta_get("seed")? else {
+        return Ok(());
+    };
+    let seed: [u8; 32] = seed_raw
+        .try_into()
+        .map_err(|_| StoreError::Invalid("seed length".into()))?;
+    let local_pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+    if cert.device_pk != local_pk {
+        return Ok(());
+    }
+    tx.meta_set(META_PRINCIPAL, &cert.principal_id)?;
+    Ok(())
+}
+
+fn local_peer_and_principal(tx: &dyn BackendTxn) -> Result<([u8; 32], [u8; 32]), StoreError> {
+    let Some(seed_raw) = tx.meta_get("seed")? else {
+        return Err(StoreError::Invalid("seed missing".into()));
+    };
+    let seed: [u8; 32] = seed_raw
+        .try_into()
+        .map_err(|_| StoreError::Invalid("seed length".into()))?;
+    let pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+    let peer = *blake3::hash(&pk).as_bytes();
+    let principal = match tx.meta_get(META_PRINCIPAL)? {
+        Some(raw) if raw.len() == 32 => {
+            let mut id = [0u8; 32];
+            id.copy_from_slice(&raw);
+            id
+        }
+        _ => peer,
+    };
+    Ok((peer, principal))
+}
+
+fn subject_may_open_at(applied: &[WireOp], ds: &str, subjects: &[[u8; 32]], note_p: u64) -> bool {
+    let subject_hex: BTreeSet<String> = subjects.iter().map(hex::encode).collect();
+    if let Some(genesis) = applied.iter().find(|op| op.kind == KIND_GENESIS)
+        && let Some(founder) = genesis.body.get("founder").and_then(|v| v.as_str())
+        && subject_hex.contains(founder)
+    {
+        return true;
+    }
+    let revokes: Vec<(&str, u64)> = applied
+        .iter()
+        .filter(|op| op.kind == KIND_CAP_REVOKE)
+        .filter_map(|op| {
+            let grant = op.body.get("grant").and_then(|v| v.as_str())?;
+            Some((grant, op.ts.p))
+        })
+        .collect();
+    for grant in applied.iter().filter(|op| op.kind == KIND_CAP_GRANT) {
+        let subject = grant
+            .body
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !subject_hex.contains(subject) {
+            continue;
+        }
+        let ds_bind = grant
+            .body
+            .get("ds_bind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if ds_bind != ds {
+            continue;
+        }
+        if grant.ts.p > note_p {
+            continue;
+        }
+        if grant
+            .body
+            .get("expiry")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|exp| note_p >= exp)
+        {
+            continue;
+        }
+        if revokes
+            .iter()
+            .any(|(id, at)| *id == grant.id.as_str() && *at <= note_p)
+        {
+            continue;
+        }
+        let Some(scopes) = grant.body.get("scopes").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        if !scopes.iter().any(|s| s.as_u64() == Some(SCOPE_READ)) {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
 fn apply_group_key_record(
     tx: &dyn BackendTxn,
     wire: &WireOp,
@@ -3395,9 +3643,7 @@ fn apply_group_key_record(
     let seed: [u8; 32] = seed_raw
         .try_into()
         .map_err(|_| StoreError::Invalid("seed length".into()))?;
-    let signing = SigningKey::from_bytes(&seed);
-    let pk = signing.verifying_key().to_bytes();
-    let me = *blake3::hash(&pk).as_bytes();
+    let (me_peer, me_principal) = local_peer_and_principal(tx)?;
     let ds = decode32(&wire.ds)?;
     let kid_hex = wire
         .body
@@ -3415,17 +3661,19 @@ fn apply_group_key_record(
         .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
     for wrap_json in wraps {
         let wrap = parse_wrap(wrap_json)?;
-        if wrap.recipient != me {
-            continue;
-        }
-        if let Ok(key) = unwrap_group_key(&wrap, &ds, &kid, &me, &seed) {
-            let mut ring = load_keyring(tx)?;
-            ring.insert(kid, key);
-            save_keyring(tx, &ring)?;
-            if adopt_as_current {
-                tx.meta_set(META_KEY_CURRENT, &kid)?;
+        for recipient in [me_peer, me_principal] {
+            if wrap.recipient != recipient {
+                continue;
             }
-            break;
+            if let Ok(key) = unwrap_group_key(&wrap, &ds, &kid, &recipient, &seed) {
+                let mut ring = load_keyring(tx)?;
+                ring.insert(kid, key);
+                save_keyring(tx, &ring)?;
+                if adopt_as_current {
+                    tx.meta_set(META_KEY_CURRENT, &kid)?;
+                }
+                return Ok(());
+            }
         }
     }
     Ok(())
@@ -3489,6 +3737,20 @@ fn open_encrypted_lww(
         ep: wire.ep,
         path: path.to_string(),
     };
+    if tx
+        .meta_get(META_AUTH)
+        .ok()
+        .flatten()
+        .is_some_and(|v| v.first() == Some(&1))
+    {
+        let applied = load_applied_wires(tx)?;
+        let (peer, principal) = local_peer_and_principal(tx)?;
+        if !subject_may_open_at(&applied, &wire.ds, &[peer, principal], winning.physical_ms) {
+            return Err(StoreError::Crypto(
+                "encrypted value: membership revoked at open".into(),
+            ));
+        }
+    }
     let ring = load_keyring(tx)?;
     for key in ring.values() {
         if let Ok(pt) = open(key, envelope, &ctx)
