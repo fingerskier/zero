@@ -87,6 +87,9 @@ pub trait BackendTxn {
     fn prop_get(&self, entity: &str, path: &str) -> Result<Option<String>, StoreError>;
     /// (path, value_json) pairs for an entity, ordered by path.
     fn prop_list(&self, entity: &str) -> Result<Vec<(String, String)>, StoreError>;
+    /// All properties as `(entity, path, value_json)`, ordered by entity then path.
+    /// One scan so `to_query_graph` / `list_nodes` are not N+1.
+    fn prop_list_all(&self) -> Result<Vec<(String, String, String)>, StoreError>;
 
     // edges
     /// Write the full derived edge projection (including its set-derived

@@ -25,6 +25,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [M1 LAN test](doc/M1-LAN-TEST.md) | Windows ↔ Pi trusted-LAN runbook for experimental TCP path |
 | [Execution Plan](plan/PLAN.md) | Live path-to-MVP delivery plan |
 | [Delivery Ledger](plan/LEDGER.md) | Live work tracker — M1 subtasks, post-M1 milestones |
+| [Performance review](plan/PERF.md) | Static review + Stage 0+1 / pinned Stage 2/3 disposition (not a benchmark report) |
 | [Archived reviews](plan/archive/) | Historical July 2026 FINDINGS (not the live backlog) |
 | [Node SDK (M2)](zerodb-napi/) | Experimental `@zerodb/node` NAPI binding — `npm install && npm run build && npm test` |
 | [TS→IR (M1)](tools/ts-to-ir/) | Minimal authoring JSON → schema pin IR for `schema-apply` |
@@ -81,4 +82,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-M3a durable convergence has exited experimentally. M3b-sig, AUTH membership + E5, E7 remainder, E8 clock quarantine (H1 closed), and E6 encrypted notes (I-10 live; KERNEL §7 on persist/ingest) are on. Highest-value remaining work is the M3b remainder (H10 leftovers, handshake/TLS, two-key split) then M3c. All formats remain draft-1 and unfrozen. Do not claim M3b exit.
+M3a durable convergence has exited experimentally. M3b-sig, AUTH membership + E5, E7 remainder, E8 clock quarantine (H1 closed), and E6 encrypted notes (I-10 live; KERNEL §7 on persist/ingest) are on. Current work is perf/DX Stage 0+1, then M3c (signed `SchemaEpoch` on that list). Pinned: Stage 2/3, H10 leftovers, handshake/TLS beyond advertised-limit enforcement, two-key split. All formats remain draft-1 and unfrozen. Do not claim M3b exit.

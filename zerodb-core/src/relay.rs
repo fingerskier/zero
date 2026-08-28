@@ -23,6 +23,8 @@ pub const RELAY_CAPS: &[&str] = &["dual-root", "merkle-walk-v1", "reject-ack", "
 pub const ERR_AUTH_FAILED: u16 = 0x201;
 /// RELAY §9.1 unsigned / bad signature (frame-level; per-op uses `REJECT`/`SIG`).
 pub const ERR_SIG_INVALID: u16 = 0x301;
+/// RELAY §10.2 operation or batch exceeds advertised limits.
+pub const ERR_PAYLOAD_TOO_LARGE: u16 = 0x303;
 
 /// `OP_ACK` reject reasons (RELAY §4.4).
 pub const REJECT_DECODE: &str = "DECODE";

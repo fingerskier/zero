@@ -7,7 +7,7 @@
 //! on every peer (I-1 extended to reads).
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::query::{Cmp, Dir, Expr, Item, Lit, Operand, Query};
 
@@ -44,6 +44,8 @@ pub struct GEdge {
 pub struct Graph {
     pub nodes: Vec<GNode>,
     pub edges: Vec<GEdge>,
+    node_by_id: HashMap<String, usize>,
+    edge_by_id: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
@@ -53,11 +55,30 @@ enum Ref {
 }
 
 impl Graph {
+    pub fn new(nodes: Vec<GNode>, edges: Vec<GEdge>) -> Self {
+        let node_by_id = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.id.clone(), i))
+            .collect();
+        let edge_by_id = edges
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.id.clone(), i))
+            .collect();
+        Self {
+            nodes,
+            edges,
+            node_by_id,
+            edge_by_id,
+        }
+    }
+
     fn node(&self, id: &str) -> Option<&GNode> {
-        self.nodes.iter().find(|n| n.id == id)
+        self.node_by_id.get(id).and_then(|&i| self.nodes.get(i))
     }
     fn edge(&self, id: &str) -> Option<&GEdge> {
-        self.edges.iter().find(|e| e.id == id)
+        self.edge_by_id.get(id).and_then(|&i| self.edges.get(i))
     }
 }
 

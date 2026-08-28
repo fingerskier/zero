@@ -283,10 +283,8 @@ pub fn serve_push<S: Read + Write, B: StoreBackend>(
         let s = guard
             .as_mut()
             .ok_or_else(|| SyncError::Protocol("store closed".into()))?;
+        // import_bundle already rematerializes; replay_all is the oracle/recovery API.
         let (summary, known) = serve_exchange(s, stream, hello, push)?;
-        if summary.accepted > 0 {
-            s.replay_all()?;
-        }
         (summary, known)
     };
     on_summary(&summary, push);
@@ -317,9 +315,6 @@ pub fn pull_push<S: Read + Write, B: StoreBackend>(
             .as_mut()
             .ok_or_else(|| SyncError::Protocol("store closed".into()))?;
         let (summary, known, push) = pull_exchange(s, stream, true)?;
-        if summary.accepted > 0 {
-            s.replay_all()?;
-        }
         (summary, known, push)
     };
     on_summary(&summary, push);
@@ -439,15 +434,11 @@ fn push_loop<S: Read + Write, B: StoreBackend>(
                         (0, 0)
                     } else {
                         let ds = s.datastore_id_hex();
-                        let (accepted, skipped) = s.import_bundle(&ExportBundle {
+                        s.import_bundle(&ExportBundle {
                             format: 1,
                             datastore_id: ds,
                             ops: msg.ops,
-                        })?;
-                        if accepted > 0 {
-                            s.replay_all()?;
-                        }
-                        (accepted, skipped)
+                        })?
                     }
                 };
                 write_msg(stream, &OpsAck { accepted, skipped })?;

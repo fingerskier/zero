@@ -62,20 +62,28 @@ fn set_ws_read_timeout(
     Ok(())
 }
 
-/// After each client frame the relay writes one or more binary envelopes
-/// then waits. Read the first (blocking), then drain extras with a short
-/// timeout so catch-up `OPS` after `SYNC_RESPONSE` are collected.
+/// After each client frame the relay writes one or more binary envelopes.
+/// Completion is request-id bound (known single-response types / `remaining`),
+/// not a 200 ms framing timeout. `SYNC_TIMEOUT` is a failure bound only.
+/// Non-merkle SYNC OPS catch-up is unsupported; merkle SYNC_RESPONSE is one frame.
 fn collect_ws_replies(
     ws: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+    request: &[u8],
 ) -> std::result::Result<Vec<Vec<u8>>, String> {
-    const DRAIN: Duration = Duration::from_millis(200);
+    let deadline = Instant::now() + SYNC_TIMEOUT;
     let mut out = Vec::new();
     let _ = set_ws_read_timeout(ws, Some(SYNC_TIMEOUT));
     loop {
+        if Instant::now() > deadline {
+            let _ = set_ws_read_timeout(ws, Some(SYNC_TIMEOUT));
+            return Err("relay reply timeout".into());
+        }
         match ws.read() {
             Ok(Message::Binary(data)) => {
                 out.push(data);
-                let _ = set_ws_read_timeout(ws, Some(DRAIN));
+                if zerodb_storage::relay_client::replies_complete(request, &out) {
+                    break;
+                }
             }
             Ok(Message::Close(_)) => break,
             Ok(_) => continue,
@@ -86,7 +94,11 @@ fn collect_ws_replies(
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
                 ) =>
             {
-                break;
+                if !out.is_empty() && zerodb_storage::relay_client::replies_complete(request, &out)
+                {
+                    break;
+                }
+                continue;
             }
             Err(e) => {
                 let _ = set_ws_read_timeout(ws, Some(SYNC_TIMEOUT));
@@ -608,14 +620,15 @@ impl Database {
     pub fn list_nodes(&self) -> Result<serde_json::Value> {
         self.with_store(|store| {
             let nodes = store.list_nodes().map_err(map_err)?;
+            let mut props_by = store.list_props_all().map_err(map_err)?;
             let mut arr = Vec::new();
             for (id, label, deleted) in nodes {
                 let props: serde_json::Map<String, serde_json::Value> = if deleted {
                     serde_json::Map::new()
                 } else {
-                    store
-                        .list_props(&id)
-                        .map_err(map_err)?
+                    props_by
+                        .remove(&id)
+                        .unwrap_or_default()
                         .into_iter()
                         .collect()
                 };
@@ -836,7 +849,7 @@ impl Database {
             zerodb_storage::relay_client::sync(store, datastore.as_deref(), |frame| {
                 ws.send(Message::Binary(frame.to_vec()))
                     .map_err(|e| e.to_string())?;
-                collect_ws_replies(&mut ws)
+                collect_ws_replies(&mut ws, frame)
             })
             .map_err(map_err)
         })?;

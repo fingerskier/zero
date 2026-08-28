@@ -217,17 +217,16 @@ impl ZeroDb {
     /// Nodes as a JS array of `{ id, label, deleted }`.
     #[wasm_bindgen(js_name = listNodes)]
     pub fn list_nodes(&self) -> Result<JsValue, JsError> {
-        let arr: Vec<serde_json::Value> = self
-            .store
-            .list_nodes()
-            .map_err(err)?
+        let listed = self.store.list_nodes().map_err(err)?;
+        let mut props_by = self.store.list_props_all().unwrap_or_default();
+        let arr: Vec<serde_json::Value> = listed
             .into_iter()
             .map(|(id, label, deleted)| {
                 let props: serde_json::Map<String, serde_json::Value> = if deleted {
                     serde_json::Map::new()
                 } else {
-                    self.store
-                        .list_props(&id)
+                    props_by
+                        .remove(&id)
                         .unwrap_or_default()
                         .into_iter()
                         .collect()
