@@ -4,7 +4,7 @@ Canonical work tracker. A gate closes only with **Exit evidence** (commit, fixtu
 
 **DRI:** `fingerskier` unless a row names someone else. Effort bands (rough solo): S ≤ 1 wk, M ≤ 1 mo, L > 1 mo. DQ-12 capacity ratification remains open.
 
-Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)`.
+Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)` · `pinned`.
 
 ---
 
@@ -17,6 +17,19 @@ Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)`.
 | DQ-1..DQ-8, DQ-10 | 2026-07-16/18 | AUTH / KERNEL / SCHEMA / WAL + Decision Log |
 | Historical plan reviews (Codex 07-16, Grok plan 07-15) | dispositioned | Decision Log |
 | July 2026 state reviews (FINDINGS.GROK / FINDINGS.CODEX) | archived 2026-08-14 | [plan/archive/](archive/) — CX-01/CX-02 closed in tree; do not treat as live backlog |
+| M1 local durable core (`v0.1.0-local`) | 2026-07-25 | Decision Log; [M1-LOCAL.md](../doc/M1-LOCAL.md); tag `v0.1.0-local`. Suites: `e1_e2_acceptance`, `e1_kill_clock`, `e4_crash_matrix`, `e9_delete_machine`, `m1_wave1`, `r0_stabilize`, `serve_bind`. Freeze still open. |
+| M2 Node/NAPI (`v0.1.0-sdk`) | 2026-08-14 | Decision Log; `zerodb-napi/`; `m2-*.test.mjs`; `applyCrdtVector`; CI [run 31836860347](https://github.com/fingerskier/zero/actions/runs/31836860347) @ `b352ca4`. M2-crdts deferred (app-trigger). Not SPEC-complete M2. |
+| M2a stabilize + schema | 2026-08-14 | Decision Log; `r0_stabilize`, `m2_schema`, CX-03..06 (109 vectors), CX-08 RELAY 0.2.2-draft |
+| M3a L2 relay + E3 | 2026-08-15 | Decision Log; `zerodb-relay`; `relay_client`; `m3a-relay.test.mjs`; `merkle-walk-v1`; `full_exemplar_e3_1000_ops_hard_crash_and_relay_only_catchup`; `relay-transcript` 6 |
+| M3b-sig | 2026-08-16 | `admit_experimental_op` + `m3b_admission`. Not M3b exit. |
+| M3b-auth-e5 | 2026-08-19 | `membership_grants` + peer AUTH §4 + `e5_membership` (storage + relay). Not M3b exit. |
+| M3b-e7 | 2026-08-27 | `e7_forged_replay` (storage + relay). Not M3b exit. |
+| M3b-e8 | 2026-08-27 | `e8_clock_quarantine` (storage + relay). H1 closed. Not M3b exit. |
+| M3b-e6 | 2026-08-27 | `e6_encrypted_notes` (storage + relay). Not H10-complete / M3b exit. |
+| perf-doc | 2026-08-28 | [PERF.md](PERF.md). Stage 0+1 **landed** `9903280`; Stage 2/3 and H10 leftovers pinned. Not a benchmark report. |
+| perf-s0 | 2026-08-28 | `perf_s0` fixtures/phase counters (1k). No invented README numbers. |
+| perf-s1 | 2026-08-28 | `import_replay_equiv` + `limits` + chunk tests. Advertised payload/batch; import≡replay. Not Stage 2/3. |
+| M4a-browser-slice / wasm-events / push-driver / idb-journal | experimental shipped | `zerodb-wasm`; `memory_backend.rs`; `sync-driver.test.mjs`; `examples/browser-peer`. M4a proper still waits on M3c. |
 
 Detailed resolved-issue audit prose lives in the [ISSUES Decision Log](../doc/ISSUES.md) only (no second copy here).
 
@@ -26,109 +39,39 @@ Detailed resolved-issue audit prose lives in the [ISSUES Decision Log](../doc/IS
 
 | ID | Status | Blocks |
 |----|--------|--------|
-| DQ-9 L2 catch-up mandatory for v0.1 | plan default **yes** (SPEC §10) | M3a |
+| DQ-9 L2 catch-up mandatory for v0.1 | **ratified** (M3a; default yes) | — |
 | DQ-11 approver + records | plan default: this ledger + Decision Log | — |
 | DQ-12 capacity/effort bands | **open** | schedule credibility |
 
 ---
 
-## M1 — Local durable core (`v0.1.0-local`)
+## Live work
 
-**Overall:** `done` — exit resolved 2026-07-25 (Decision Log; tag `v0.1.0-local`, experimental format, freeze still open). Implementation notes: [M1-LOCAL.md](../doc/M1-LOCAL.md).
+### M3c — Interop TS wire peer + release (`v0.1.0`)
 
-Depends: composite M0 model (done). Release: `v0.1.0-local`.
+Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`.
 
-### Implemented (non-exit)
+| ID | Work | Status | Notes |
+|----|------|--------|-------|
+| M3c | Interop TS wire peer + release (include signed `SchemaEpoch`) | open | SPEC M3c exit + Decision Log act at tag time. **Not** claimed until that act. |
+| M3c-epoch | Signed KERNEL kind 5 `SchemaEpoch` | open | Schema (including `encrypted: true`) is an op. Peers without the epoch fail closed (`EPOCH_UNKNOWN`). Do not freeze wrap-body here. |
+| M3c-ts-peer | Independent TypeScript wire peer | open | Evolved from the conformance runner, **not** NAPI-backed (SPEC M3c). |
+| M3c-harness | Two-language golden/negative harness (H9) | open | Relay+peer vectors in two languages. |
+| M3c-pack | Version/upgrade matrix, support profile | open | Packaging for the tag. |
 
-| ID | Work | Status | Evidence |
-|----|------|--------|----------|
-| M1-proto-store | SQLite LocalStore, signed ops, 5 property CRDTs, single-op txn | done (experimental) | `zerodb-storage`; [M1-LOCAL.md](../doc/M1-LOCAL.md) |
-| M1-proto-cli | init/CRUD/inspect/replay/export/import/sync | done (experimental) | `zerodb-cli` |
-| M1-proto-tcp | serve/pull one-way set-diff; LAN runbook | done (experimental) | CLI; [M1-LAN-TEST.md](../doc/M1-LAN-TEST.md); `scripts/test-mvp.ps1` |
-| M1-proto-ingress | full-bundle prevalidation, atomic adopt, shadow props, drift bound | done (experimental) | `f9cc660`; storage tests arrival/ingress |
+### Pinned / remainder
 
-### Exit / correctness backlog
+| ID | Work | Status | Notes |
+|----|------|--------|-------|
+| M3b | Security remainder | open/pinned | E5–E8 live + advertised payload/batch limits are the bar carried into M3c. Remainder: H10 leftovers, handshake H5/H6, rate/subscription/connection quotas, two-key principal/device split, TLS. **Not** M3b exit. |
+| perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
+| perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
 
-| ID | Work | Status | Effort | Exit evidence required | Source |
-|----|------|--------|--------|------------------------|--------|
-| M1-fix-rng | OS CSPRNG for seed/salt (`getrandom`) | done(`m1_wave1` seed test) | S | seed fill uses OS RNG; unit test | G-01 |
-| M1-fix-hlc | HLC on open/replay from durable oplog (DQ-7 backend) | done(`m1_wave1` HLC tests) | S | open/replay rewrite meta from oplog max | G-02 |
-| M1-fix-serve | Fail-closed serve defaults (loopback / unsafe flag) | done(`serve_bind` tests) | S | refuse non-loopback without `--allow-insecure-lan` | G-05 |
-| M1-e1 | Full E1 (restart, replay, larger load, HLC mono) | done(experimental; not full EXEMPLAR E1) | M | 50-todo is clean reopen (`e1_e2_acceptance`); kill and 1h clock-rollback are **separate** tests in `e1_kill_clock` (kill asserts `ops > prev_ops`, not pre-kill projection). Honesty leftovers: M2a-e1 | G-09 / G20-05a |
-| M1-e2-store | Store-level equal-ts / equivocation suite | done(`e1_e2_acceptance` e2_*) | S | same-author exclude + cross-peer total order | G-09 |
-| M1-e4 | Groups + WAL layer-2 crash injection | done(single-txn failpoints; not EXEMPLAR E4 / WAL SEAL-TRUNCATE) | L | 5 in-process failpoints × 3 commit paths in one SQLite txn (`e4_crash_matrix`) — rollback ≡ process death **before COMMIT**. `CRASH_AFTER_SEAL` / `CRASH_AFTER_TRUNCATE` N/A on this backend. GroupBuilder has no `create_edge`. Honesty leftovers: M2a-e4 | G-03 |
-| M1-e9 | H3 derived visibility + edges + late-edge E9 | done(derived visibility; same-id resurrection still M2a) | L | set-derived edge tombstone + derived visibility, no cascade; tombstone-before-edge, late edge to dead endpoint, replay/restart, query exclusion — `e9_delete_machine` (5). Recreate-under-**new**-id tested; same-id CreateNode after tombstone + conflicting labels: M2a-store | G-04 / G20-02 |
-| M1-schema | Schema apply / IR load; type pin; `ep` | done(JSON pin + CLI) | M | `apply_schema_json` + pin reject; `schema-apply` CLI; full CBOR IR/ep still draft | G-06/08 |
-| M1-query | O3 minimal query + repl | done(eval + CLI) | M | `LocalStore::query` + `zerodb query`; no interactive repl yet | G-08 |
-| M1-tsir | TS→IR compiler (≤ M1, O2) | done(minimal tool) | M | `tools/ts-to-ir` authoring JSON → pin IR; full CBOR SchemaId later | G-14 |
-| M1-fmtver | `storage_format_version` meta + freeze discipline | done(meta v1 + backfill; freeze still open) | S | meta written at init/open; freeze still needs Decision Log | G-07 |
-| M1-fix-init | Fail-closed init (no silent re-key) | done(`r0_stabilize` init tests) | S | re-init of empty-initialized and nonempty DB errors; identity+ops preserved | G20-03 |
-| M1-exit | Close M1 when exit criteria met | done(Decision Log 2026-07-25; tag `v0.1.0-local`) | — | SPEC §10 M1 checklist ticked with evidence (E1/E2/E4/E9 suites); scope narrowing Decision Log entry (CBOR IR + indexes + repl → M2/M3); format freeze deliberately still open | — |
-
----
-
-## Post-M1
+### Later gates
 
 | ID | Work | Status | Depends | Effort | Release |
 |----|------|--------|---------|--------|---------|
-| M2 | Node/NAPI SDK vertical (E11 provisional) | done | M1 (rides experimental LocalStore) | M | `v0.1.0-sdk` |
-
-### M2 subtasks
-
-| ID | Work | Status | Evidence |
-|----|------|--------|----------|
-| M2-napi-scaffold | `zerodb-napi` crate + `@zerodb/node` package | done | `zerodb-napi/`; `napi build` |
-| M2-napi-crud | Database init/open/mutate/get/inspect/export/import/close | done | `test/m2-basic.test.mjs` (3) |
-| M2-subscribe | `subscribe` / live change notifications | done (experimental) | `test/m2-subscribe.test.mjs` (3): op/import/replay events, unsubscribe |
-| M2-query | O3 query via NAPI | done (experimental) | `test/m2-query.test.mjs` (2): match/where/return + parse reject |
-| M2-ws-sync | `serve`/`connectPeer` WebSocket sync (protocol v2 two-way) | done (experimental) | `test/m2-sync.test.mjs` (6): converge both ways, stop/close, bad urls, LAN bind, timeouts |
-| M2-autosync | `autoConnect`/`disconnect` background re-sync (dirty flag + interval poll + backoff) | done (experimental) | `test/m2-autosync.test.mjs` (2): auto-converge both ways, disconnect stops, sync-error retry, clean close; `examples/webapp` two-process demo |
-| M2-lan-hardening | sync session timeout + non-loopback serve behind unsafe flag | done | 30s socket timeouts; per-connection serve threads; `serve(port, allowInsecureLan?)` binds 0.0.0.0 only with explicit flag; tests in `m2-sync.test.mjs` |
-| M2-push | v2 push capability: persistent sessions (server streams new ops; client pushes on dirty) negotiated via `Hello.push`/`HelloOk.push` (serde defaults — old peers fall back to one-shot; CBOR wire still reserved for v3) | done | `zerodb_storage::sync::{serve_push,pull_push}` + `tests/sync_push.rs` (3: two-way push w/o new session, plain-serve fallback, capability field compat); NAPI `serve(port, lan?, push?)` + `autoConnect` upgrade, `test/m2-push.test.mjs` (2: push latency well under interval, push-disabled server poll fallback) |
-| M2-ci | clean-checkout CI: NAPI build + JS suites; CRDT semantic + fixture parity | done([run 31836860347](https://github.com/fingerskier/zero/actions/runs/31836860347) @ `b352ca4`) | rust `--locked` + clippy `-D warnings` + fmt; napi ubuntu+windows; ts-to-ir; conformance required. Prior green: [run 30178840377](https://github.com/fingerskier/zero/actions/runs/30178840377) @ `3d5ae48` |
-| M2-schema | canonical CBOR IR + SchemaId + `ep`/`deps` in store + NAPI `applySchema` | done(`m2_schema` + `m2-schema.test.mjs`) | pin or IR JSON → persist IR/SchemaId/ep=1; local ops stamp ep; import rejects >64 or missing deps |
-| M2-crdts | MVRegister + resolve, RGA, LWWMap | deferred(app-trigger) | Decision Log 2026-07-25 / 2026-08-14 — not required for `v0.1.0-sdk` |
-| M2-parity | binding parity vectors vs core fixtures | done(`applyCrdtVector` + `m2-parity.test.mjs`) | NAPI replays all 9 `required/crdt` fixtures through `zerodb_core::apply_crdt_vector` (same runner as `conformance_crdt`); high-level semantic smoke kept |
-| M2-facade | thin promise/typed JS facade over sync NAPI | done(`zerodb-napi/zerodb.mjs`) | `ZeroDB.open/create/mutate/query`; NAPI remains the sync binding |
-| M2-exit | Close `v0.1.0-sdk` | done(Decision Log 2026-08-14; tag `v0.1.0-sdk`) | narrowed checklist + CI green; experimental format; not E11 / extra CRDTs / query-subscribe / repl |
-
-### M2a — Stabilize and schema (done)
-
-Blocks `v0.1.0-sdk` and any M3 start. Adopted 2026-08-14.
-
-| ID | Work | Status | Evidence / remaining |
-|----|------|--------|----------------------|
-| M2a-honesty | Tracker alignment + M2 scope Decision Log + FINDINGS archive | done(this refresh) | PLAN/LEDGER/M1-LOCAL/ISSUES/README/registry; `plan/archive/` |
-| M2a-store | Conflicting/same-id CreateNode; HLC meta-ahead; import pin; shuffle replay | done(`r0_stabilize` + `m1_wave1`) | same-id no resurrection; HLC-order labels; inflated meta rewritten; import pin; shuffle replay identity |
-| M2a-e1 | E1 honesty: do not claim EXEMPLAR E1 | done(LEDGER M1-e1 wording) | kill + clock remain separate suites; no pre-kill projection |
-| M2a-e4 | E4 honesty: SEAL/TRUNCATE N/A on single-txn backend | done(LEDGER M1-e4 wording) | failpoint matrix kept; not EXEMPLAR E4 |
-| M2a-m0 | CX-03 AAD slot-hash; CX-04 frontier tip; CX-05 resume; CX-06 WAL MUSTs + vectors | done(109 required vectors) | KERNEL §7 slot AAD; FrontierTip+HLC; delivery frontier cursor; WAL n/unique/visible + WAL-013..016 |
-| M2a-relay | CX-08 accepted-set + RELAY-SPEC §7.4 (docs only) | done(RELAY 0.2.2-draft + transcripts) | dual roots; frames in `M3a-transcripts`; no relay binary |
-| M2a-schema | persist M0b IR + SchemaId; stamp `ep`; enforce `deps`; NAPI `applySchema` | done(`m2_schema` + NAPI `applySchema`) | pin still accepted; compiles to IR |
-| M2a-bind | NAPI/wasm edges + `listNodes` props parity + query params + promise facade | done | `listNodes.props`; `createEdge`/`deleteEdge`; `query(q, params)`; `zerodb.mjs` |
-| M3a | L2 relay + offline catch-up (E3) | done(`merkle-walk-v1` + full E3) | M2, M0c/M0f | L | internal |
-| M3a-transcripts | RELAY 0.2.2 handshake / dual-root / resume / reject-ack frames | done(`relay-transcript` 6) | two-language vectors RELAY-HELLO-001/002/003, ROOT-001, RESUME-001, REJECT-001 |
-| M3a-relay | L2 `zerodb-relay` process | done(`m3a_process` + Merkle handlers) | handshake, SQLite validated oplog, dual-root SYNC, frozen walk snapshots, node/leaf responses, OpId delta batches; no authz (M3b) |
-| M3a-client | LocalStore + NAPI RELAY client | done(`relay_client` + `m3a-relay.test.mjs`) | handshake, signed-op push, aligned local tree, mismatch pruning, leaf OpId difference, delta apply; `Database.connectRelay` reports walk counts |
-| M3a-e2-live | E2-live CRDT matrix + E3-lite 3-peer catch-up | done(`relay_client` concurrent_crdts + three_peer + `m3a-relay.test.mjs` 3) | Historical smaller slice: concurrent LWW/ORSet/Flag/PNCounter; C offline; B clean close/reopen; C catches up from R alone; resume `received=0`. Full E3 and Merkle walk are evidenced by the next row. |
-| M3a-merkle-e3 | Merkle wire walk + full E3 | done(`merkle_walk_prunes_matching_subtrees` + `full_exemplar_e3_1000_ops_hard_crash_and_relay_only_catchup`) | `merkle-walk-v1`; frozen responder snapshot; matching-subtree pruning; 1,000 partition writes; B hard-abort/reopen; C catches up from R alone; roots equal; resume receives 0 |
-| M3b-sig | Relay signature + OpId + datastore bind | done(`admit_experimental_op` + `m3b_admission`) | unsigned/forged/tampered → `REJECT/SIG`; wrong `ds` → `REJECT/AUTHZ`; author = BLAKE3(pk); OpId = KERNEL preimage. Not AUTH membership / E5–E8 |
-| M3b-auth-e5 | Durable AUTH membership control plane + E5 | done(`membership_grants` + peer AUTH §4 + `e5_membership`) | First-class signed genesis/grant/revoke ops; LocalStore persist/import/ingest run AUTH.md §4; honest relay REJECT/AUTHZ on non-member writes; colluding relay still peer-rejected. Evidence: `zerodb-storage/tests/e5_membership.rs`, `zerodb-relay/tests/e5_membership.rs`. Not E6/E7/E8 / M3b exit |
-| M3b-e7 | Forged/replay E7 remainder (peer + colluding) | done(`e7_forged_replay`) | Peer `ingest_op` names `AUTH_SIG_INVALID` / `Duplicate`; honest relay `REJECT/SIG` + `DUPLICATE`; `memory_colluding` forwards forged/tampered; `wipe_dedup` replay has no double effect (I-3). Evidence: `zerodb-storage/tests/e7_forged_replay.rs`, `zerodb-relay/tests/e7_forged_replay.rs`. Not E8/E6 / M3b exit |
-| M3b-e8 | Far-future clock quarantine (H1 / E8) | done(`e8_clock_quarantine`) | Peer `CLOCK_DRIFT` quarantine (no LWW, no HLC advance) + release when `ts.p ≤ wall + 60_000`; C +30d member LWW does not silently win on A/B; after the window A/B/C converge. Honest/colluding relays persist/forward. Evidence: `zerodb-storage/tests/e8_clock_quarantine.rs`, `zerodb-relay/tests/e8_clock_quarantine.rs`. H1 closed. Not E6 / M3b exit / format freeze |
-| M3b-e6 | Encrypted private notes (I-10 / E6) | done(`e6_encrypted_notes`) | Schema-encrypted LWW sealed with KERNEL §7 before persist; `KeyRecord` `kr = 2` X25519-wraps the group key for {A,B}; R/C artifacts have ciphertext only (decrypt oracle empty); post-revoke rotation blinds B on new notes; SQLite reopen keeps A's keys. Evidence: `zerodb-storage/tests/e6_encrypted_notes.rs`, `zerodb-relay/tests/e6_encrypted_notes.rs`. Not H10-complete / M3b exit / format freeze |
-| perf-doc | Land [PERF.md](PERF.md) (review vs `bec091c`; header updated for `979ac65`) | done(`plan/PERF.md`) | Disposition: Stage 0+1 current; Stage 2/3 and H10 leftovers pinned. Not a benchmark report |
-| perf-s0 | Stage 0 minimum fixtures / phase counters (1k, not a 100k farm) | done(`perf_s0`) | Hot write, import, replay, one AUTH ingest; EXPLAIN notes for new order indexes. No invented README numbers |
-| perf-s1 | Stage 1 surgical wins | done(`import_replay_equiv` + `limits` + chunk tests) | Import≡replay then drop push `replay_all`; advertised payload/batch reject; batched relay SQLite inserts; request-id NAPI drain; clone-free chunking; order indexes + bulk props; one export in relay client sync. Not Stage 2/3 |
-| perf-s2 | Stage 2 targeted projections | pinned/open | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1 |
-| perf-s3 | Stage 3 bounded reconciliation | pinned/open | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1 |
-| M3b | Security: auth, envelope, negatives (E5–E8) | open | M3a, M0d | L | internal |
-| M3c | Interop TS wire peer + release (include signed `SchemaEpoch`) | open | M3b | M | `v0.1.0` |
 | M4a | Browser/WASM/WebRTC/React | open | M3c | L | feature |
-| M4a-browser-slice | Experimental wasm browser peer: `sqlite` feature gate + `MemoryBackend`, `zerodb-wasm` (`LocalStore<MemoryBackend>`), JS v2 sync driver + IndexedDB demo (`examples/browser-peer`) | done(memory_backend.rs 6 tests; sync-driver.test.mjs wasm<->NAPI convergence; wasm-pack build) | rides M1/M2 experimentally (M4a proper still needs M3c) | S | experiment |
-| M4a-wasm-events | wasm `ZeroDb.onChange`/`offChange` change events (op/import/replay, NAPI subscribe shapes; synchronous — callbacks must defer re-entry) | done(sync-driver.test.mjs onChange test) | M4a-browser-slice | S | experiment |
-| M4a-push-driver | JS `connectPush` persistent push session + `autoSync` push-preferred/poll-fallback | done(sync-driver.test.mjs pushed-op test: wasm receives NAPI push without re-sync) | M2-push | S | experiment |
-| M4a-idb-journal | Incremental IndexedDB persistence: per-op journal keyed by op id appended on onChange (compact/rewrite on load; reset clears journal); true OPFS/sqlite-wasm backend remains future work | done(`examples/browser-peer/index.html`) | M4a-wasm-events | S | experiment |
 | M4b | Migration/snapshots/upgrade (E10) | open | M3c | L | feature |
 | M5a | Operability (backup/restore, SLOs) | open | M3c | M | GA program |
 | M5b | Lifecycle safety (GC, rolling upgrade) | open | M4b, C7 | L | GA program |

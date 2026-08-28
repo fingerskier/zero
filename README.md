@@ -82,4 +82,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-M3a durable convergence has exited experimentally. M3b-sig, AUTH membership + E5, E7 remainder, E8 clock quarantine (H1 closed), and E6 encrypted notes (I-10 live; KERNEL §7 on persist/ingest) are on. Current work is perf/DX Stage 0+1, then M3c (signed `SchemaEpoch` on that list). Pinned: Stage 2/3, H10 leftovers, handshake/TLS beyond advertised-limit enforcement, two-key split. All formats remain draft-1 and unfrozen. Do not claim M3b exit.
+Current work is **M3c** (signed `SchemaEpoch`, independent TS wire peer). Pinned: Stage 2/3, H10 leftovers, handshake/TLS beyond payload/batch. All formats remain draft-1 and unfrozen. Do not claim M3b exit.

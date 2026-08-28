@@ -1,10 +1,8 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
-**Date:** 2026-08-28 (refreshed after perf/DX Stage 0+1)
-**Status:** active — composite M0, M1, M2, experimental **M3a durable convergence**, and M3b E5–E8 live evidence (membership, authenticity, clock quarantine, encrypted notes) are done. Stage 0+1 landed this PR. Current: **M3c** (signed `SchemaEpoch` on that list). M3b remainder is pinned (not closed). Formats remain draft/unfrozen. **Not** M3b exit.
+**Date:** 2026-08-28
+**Status:** current work **M3c**. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M3b exit, **not** `v0.1.0`.
 **Authority:** delivery/tracking only. [SPEC §10](../doc/SPEC.md) is the normative roadmap; [ISSUES.md](../doc/ISSUES.md) the issue ledger; [LEDGER.md](LEDGER.md) the live work tracker. On conflict, SPEC wins.
-
-Completed P0 readiness, M0 packages, M1 experimental exit, and dispositioned review findings are recorded in the [ISSUES Decision Log](../doc/ISSUES.md) and are **not** re-listed here. July 2026 review files live in [plan/archive/](archive/).
 
 ---
 
@@ -24,24 +22,37 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 | Gate | Status |
 |------|--------|
 | P0 readiness | **done** |
-| Composite M0 (contract-model, draft-1, 109 vectors) | **done** 2026-07-18 — CX-03..06 amended 2026-08-14; CX-08 dual-root direction in RELAY 0.2.1-draft |
-| Format freeze | **not done** — draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile |
-| Experimental M1 local store + file/TCP peer exchange | **done** (experimental) — [M1-LOCAL.md](../doc/M1-LOCAL.md) |
-| M1 exit (`v0.1.0-local`) | **done** 2026-07-25 — experimental format |
-| M2 Node/NAPI vertical | **done** 2026-08-14 — experimental `v0.1.0-sdk`; not SPEC-complete M2 |
-| M2a stabilize + schema | **done** — [LEDGER.md](LEDGER.md) |
-| M3a L2 relay | **done** 2026-08-15 — process + client, frozen-snapshot subtree/leaf Merkle walk, and full 1,000-write EXEMPLAR E3 with B hard-abort/reopen and C relay-only catch-up. |
+| Composite M0 (contract-model, draft-1, 109 vectors) | **done** |
+| M1 / `v0.1.0-local` | **done** (experimental) |
+| M2 / M2a / `v0.1.0-sdk` | **done** (experimental; not SPEC-complete M2) |
+| M3a L2 relay + E3 | **done** |
+| E5–E8 live evidence | **done** |
+| Stage 0+1 | **done** — landed `9903280` |
+| Format freeze | **not done** — draft-1, unfrozen |
+| M3b | **not done** — remainder pinned. **Not** M3b exit |
+| M3c | **open** — current work |
+| `v0.1.0` | **not done** |
+
+Detailed evidence lives in the [LEDGER Closed index](LEDGER.md) and the [ISSUES Decision Log](../doc/ISSUES.md).
 
 ---
 
-## 3. Ground rules
+## 3. Preserve
 
-- **No wire or persistent format freeze** without a Decision Log entry naming a versioned profile (composite M0 closed draft-1 only).
-- **GC disabled** until C7 safety tests pass (M5b).
-- **`zerodb-core` / `zerodb-storage` experimental** until freeze; types are not normative.
+Must not regress:
+
+- **Signed wire is source of truth.** Derived columns, order indexes, Merkle snapshots, and AUTH projections are acceleration only.
+- **`replay_all` remains the oracle / recovery API.** Success-path import must stay equivalent (see `import_replay_equiv`).
+- **CRDT convergence**, order-independent tombstones, E9 derived visibility.
+- **AUTH §4** on persist/import/ingest; honest relay REJECT/AUTHZ; colluding relay still peer-rejected (E5/E7).
+- **Encrypted LWW:** KERNEL §7 seal before persist; relay/non-recipient stay blind; `ENCRYPTED_PLAINTEXT`; set-before-create missing-node path treated encrypted if any IR label marks the path; admin-only `kr=2` current-key adoption (E6).
+- **`CLOCK_DRIFT` quarantine + release** (E8 / H1 closed).
+- **Frozen-snapshot Merkle walk**; matching-subtree prune (M3a / E3).
+- **Advertised payload/batch limits:** `max_payload_bytes` per-op, `max_batch_*` per OPS, pre-decode frame ceiling = batch + envelope (`197d1ef` / `9903280`). Rate/subscription/quotas still unenforced (pinned).
+- **Schema is still local meta.** Do not pretend `SchemaEpoch` exists.
+- **Formats draft-1 / unfrozen.** GC off until C7 (M5b). `zerodb-core` / `zerodb-storage` experimental until freeze.
 - **Approved-resolution checklist** (SPEC §10) is the only way a C/H issue closes.
-- Lean proofs do not gate M0 or v0.1.
-- Experimental multi-process TCP is **non-gating** for M1 exit unless SPEC/LEDGER say otherwise ([M1-LOCAL.md](../doc/M1-LOCAL.md)).
+- Keep `e5`/`e6`/`e7`/`e8` + `import_replay_equiv` + `limits` + m3a suites green.
 
 ---
 
@@ -49,41 +60,32 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 
 | ID | Decision | Blocks | Status |
 |----|----------|--------|--------|
-| DQ-9 | L2 durable catch-up mandatory for `v0.1.0`? | M3a | plan default **yes** (in SPEC §10) |
+| DQ-9 | L2 durable catch-up mandatory for `v0.1.0`? | M3a | **ratified** (default yes; evidence M3a) |
 | DQ-11 | Approver + records location | process | plan default: **LEDGER** + ISSUES Decision Log |
 | DQ-12 | Capacity / effort bands | schedule | **open** |
+
+2026-08-28 operating decision (not a DQ id): M3b remainder stays **pinned**, not closed. See ISSUES Decision Log.
 
 Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked here.
 
 ---
 
-## 5. Immediate next actions (ordered)
+## 5. Path forward (ordered)
 
-**Current work package:** **M3c**. Stage 0+1 landed this PR; M3b remainder stays pinned (not closed).
+This is the only live action list.
 
-1. ~~Golden two-language frames~~ **done**.
-2. ~~L2 relay process (`zerodb-relay`)~~ **done** (`9603a6c`).
-3. ~~RELAY 0.2.2 client (`connectRelay`)~~ **done** (`73a6b6d`).
-4. ~~E2-live / E3-lite on that client~~ **done** (`relay_client` + `m3a-relay.test.mjs`). Concurrent LWW/ORSet/Flag/PNCounter; 3-peer C-offline catch-up; B sqlite close/reopen (not process death); resume `received=0`.
-5. ~~Frozen-snapshot Merkle subtree/leaf walk~~ **done** (`merkle-walk-v1`).
-6. ~~Full 1,000-write EXEMPLAR E3~~ **done**: 3 peers, C offline, B hard-abort/reopen, relay-only catch-up, equal roots, resume no-redelivery.
-7. ~~Relay signature / OpId / datastore admission (M3b-sig)~~ **done** (`admit_experimental_op`, `m3b_admission`).
-8. ~~AUTH membership + executable E5~~ **done** (first-class grant/revoke ops, peer AUTH §4 on persist/import/ingest, honest-relay REJECT/AUTHZ, colluding-relay peer reject; `e5_membership` in storage + relay).
-9. ~~E7 remainder (forged/replay + colluding)~~ **done** (peer `AUTH_SIG_INVALID` / `Duplicate`; honest relay `REJECT/SIG` + `DUPLICATE`; colluding relay forwards forged/tampered; wipe-dedup replay has no double effect; `e7_forged_replay` in storage + relay).
-10. ~~E8 clock quarantine (H1)~~ **done** (peer `CLOCK_DRIFT` hold + release; C +30d LWW does not silently win on A/B; after the window A/B/C converge; honest/colluding relays persist/forward; `e8_clock_quarantine` in storage + relay).
-11. ~~E6 encrypted private notes (I-10)~~ **done** (KERNEL §7 seal/open on schema-encrypted LWW; `KeyRecord` `kr = 2` wrap/rotate; R/C blind including decrypt oracle; SQLite key persist; `e6_encrypted_notes` in storage + relay).
-12. ~~perf/DX Stage 0+1~~ **done** (fixtures/phase counters; advertised payload/batch limit enforcement; import≡replay then drop redundant push `replay_all`; batched relay inserts; request-id NAPI drain; clone-free chunking; order indexes + bulk props; one export in relay client sync. See [PERF.md](PERF.md)).
-13. **M3c** — interop TS wire peer + release. Include signed `SchemaEpoch` here so encrypted notes stop being a two-step ritual (apply schema, then write).
+1. **M3c-a `SchemaEpoch`** — signed KERNEL kind 5 so schema (including `encrypted: true`) is an op, not a two-step local ritual. Peers that have not applied the epoch must fail closed (`EPOCH_UNKNOWN` already exists). Do not freeze wrap-body here.
+2. **M3c-b TS wire peer** — independent TypeScript wire peer evolved from the conformance runner, **not** NAPI-backed (SPEC M3c).
+3. **M3c-c two-language harness** — golden/negative vectors for relay+peer in two languages (H9).
+4. **M3c-d packaging** — version/upgrade matrix, support profile.
+5. **`v0.1.0` tag** — only after M3c-a..d and a Decision Log act at tag time. Still not format freeze unless that act says so.
 
-**Shipped already (do not re-open as next work):** M1 experimental exit; M2a; M2-parity; `v0.1.0-sdk`; M3a relay/client, E2-live, Merkle walk, and full E3. Equal-ts E2 remains covered at model level; it is not an M3a blocker. E5–E8 live evidence is on; that is **not** M3b exit.
-
-**Deferred with triggers:**
-- **perf Stage 2** (targeted projections: derived `op_targets`, AUTH control projection, single-pass replay, persisted CRDT accumulators) — trigger: Stage 0 fixtures still show hot-write/replay dominated by broad oplog scans after Stage 1.
-- **perf Stage 3** (bounded reconciliation: replace full OpId manifests, missing-only relay upload, compact Merkle snapshot cache) — trigger: equal-replica / one-op-delta wire bytes still scale with full history after Stage 1.
-- **H10 leftovers** (offline revoke, two-key wrap, wrap-body freeze).
-- Handshake/TLS/resource hardening **beyond advertised-limit enforcement**; two-key principal/device split.
-- M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11 budgets; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm; WebRTC.
-
-Format freeze remains a separate Decision Log act.
+**Pinned (do not start):**
+- **perf Stage 2** — trigger: Stage 0 still scan-dominated
+- **perf Stage 3** — trigger: equal/one-op-delta still full-history
+- **H10 leftovers** (offline revoke, two-key wrap, wrap-body freeze)
+- Handshake/TLS/quotas beyond payload/batch; two-key principal/device split
+- M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm; WebRTC
+- Experimental browser-peer/IDB slice already shipped; M4a proper still waits on M3c
 
 Live rows: [LEDGER.md](LEDGER.md). Historical July reviews: [plan/archive/](archive/).
