@@ -11,11 +11,11 @@ use zerodb_core::auth::{
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::merkle::{BUCKET_WIDTH_MS, MERKLE_FORMAT_VERSION, MerkleTree};
 use zerodb_core::relay::{
-    ERR_AUTH_FAILED, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH,
-    MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE,
-    MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE,
-    MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS,
-    admit_experimental_op, authenticate, negotiate_capabilities, retransmit,
+    ERR_AUTH_FAILED, ERR_PAYLOAD_TOO_LARGE, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE,
+    MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST,
+    MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK,
+    MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME,
+    RELAY_CAPS, admit_experimental_op, authenticate, negotiate_capabilities, retransmit,
 };
 
 use crate::store::{OpStore, StoredOp, validated_root_hex};
@@ -32,6 +32,7 @@ pub enum RelayError {
 
 const MAX_BATCH_OPS: usize = 64;
 const MAX_BATCH_BYTES: usize = 16_777_216;
+const MAX_PAYLOAD_BYTES: usize = 1_048_576;
 
 pub struct Inner {
     pub store: Box<dyn OpStore>,
@@ -229,6 +230,14 @@ impl RelaySession {
     }
 
     pub fn handle(&mut self, frame: &[u8]) -> Result<Vec<Vec<u8>>, RelayError> {
+        if frame.len() > MAX_PAYLOAD_BYTES {
+            return Ok(vec![error_frame(
+                0,
+                ERR_PAYLOAD_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE",
+                false,
+            )]);
+        }
         let env = decode_env(frame)?;
         match env.ty {
             MSG_HELLO => self.on_hello(&env),
@@ -352,42 +361,65 @@ impl RelaySession {
                 return Ok(vec![error_frame(env.request_id, 0x400, "BAD_OPS", false)]);
             }
         };
+        if operations.len() > MAX_BATCH_OPS {
+            return Ok(vec![error_frame(
+                env.request_id,
+                ERR_PAYLOAD_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE",
+                false,
+            )]);
+        }
+        let encoded_ops: usize = operations
+            .iter()
+            .map(|op| cbor::encode(op).map(|b| b.len()).unwrap_or(0))
+            .sum();
+        if encoded_ops > MAX_BATCH_BYTES {
+            return Ok(vec![error_frame(
+                env.request_id,
+                ERR_PAYLOAD_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE",
+                false,
+            )]);
+        }
         let mut outcomes = Vec::new();
         let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         let colluding = guard.colluding;
-        for op in operations {
-            let (outcome, reason, parsed) = parse_stored(op, &ds, colluding);
-            if outcome == "REJECT" {
-                let mut m = vec![
-                    ("op_id".into(), op_id_cbor(op)),
-                    ("outcome".into(), Cbor::Text("REJECT".into())),
-                ];
-                if let Some(r) = reason {
-                    m.push(("reason".into(), Cbor::Text(r.into())));
+        guard.store.run_write(&mut |store| {
+            for op in operations {
+                let (outcome, reason, parsed) = parse_stored(op, &ds, colluding);
+                if outcome == "REJECT" {
+                    let mut m = vec![
+                        ("op_id".into(), op_id_cbor(op)),
+                        ("outcome".into(), Cbor::Text("REJECT".into())),
+                    ];
+                    if let Some(r) = reason {
+                        m.push(("reason".into(), Cbor::Text(r.into())));
+                    }
+                    outcomes.push(Cbor::Map(m));
+                    continue;
                 }
-                outcomes.push(Cbor::Map(m));
-                continue;
-            }
-            let parsed = parsed.expect("parsed");
-            let id = parsed.op_id;
-            if !colluding && !author_write_allowed(&mut *guard.store, &ds, op, parsed.author)? {
+                let parsed = parsed.expect("parsed");
+                let id = parsed.op_id;
+                if !colluding && !author_write_allowed(store, &ds, op, parsed.author)? {
+                    outcomes.push(Cbor::Map(vec![
+                        ("op_id".into(), Cbor::Bytes(id.to_vec())),
+                        ("outcome".into(), Cbor::Text("REJECT".into())),
+                        ("reason".into(), Cbor::Text("AUTHZ".into())),
+                    ]));
+                    continue;
+                }
+                let inserted = store.insert(&ds, parsed)?;
+                if inserted {
+                    apply_membership_from_op(store, &ds, op, id)?;
+                }
+                let tag = if inserted { "ACCEPT" } else { "DUPLICATE" };
                 outcomes.push(Cbor::Map(vec![
                     ("op_id".into(), Cbor::Bytes(id.to_vec())),
-                    ("outcome".into(), Cbor::Text("REJECT".into())),
-                    ("reason".into(), Cbor::Text("AUTHZ".into())),
+                    ("outcome".into(), Cbor::Text(tag.into())),
                 ]));
-                continue;
             }
-            let inserted = guard.store.insert(&ds, parsed)?;
-            if inserted {
-                apply_membership_from_op(&mut *guard.store, &ds, op, id)?;
-            }
-            let tag = if inserted { "ACCEPT" } else { "DUPLICATE" };
-            outcomes.push(Cbor::Map(vec![
-                ("op_id".into(), Cbor::Bytes(id.to_vec())),
-                ("outcome".into(), Cbor::Text(tag.into())),
-            ]));
-        }
+            Ok(())
+        })?;
         drop(guard);
         Ok(vec![encode_env(
             MSG_OP_ACK,
@@ -461,7 +493,17 @@ impl RelaySession {
             .filter(|o| want.contains(&hex::encode(o.op_id)))
             .map(stored_to_cbor)
             .collect();
-        out.extend(chunk_ops_frames(&ds, operations));
+        match chunk_ops_frames(&ds, operations) {
+            Ok(frames) => out.extend(frames),
+            Err(_) => {
+                return Ok(vec![error_frame(
+                    env.request_id,
+                    ERR_PAYLOAD_TOO_LARGE,
+                    "PAYLOAD_TOO_LARGE",
+                    false,
+                )]);
+            }
+        }
         Ok(out)
     }
 
@@ -571,7 +613,15 @@ impl RelaySession {
             .cloned()
             .map(stored_to_cbor)
             .collect();
-        Ok(chunk_delta_frames(&ds, env.request_id, operations))
+        match chunk_delta_frames(&ds, env.request_id, operations) {
+            Ok(frames) => Ok(frames),
+            Err(_) => Ok(vec![error_frame(
+                env.request_id,
+                ERR_PAYLOAD_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE",
+                false,
+            )]),
+        }
     }
 
     fn on_subscribe(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
@@ -773,28 +823,59 @@ fn ops_forward_frame(ds: &str, operations: Vec<Cbor>) -> Vec<u8> {
     )
 }
 
-fn chunk_ops_frames(ds: &str, operations: Vec<Cbor>) -> Vec<Vec<u8>> {
+fn cbor_array_header_len(n: usize) -> usize {
+    if n <= 23 {
+        1
+    } else if n <= 255 {
+        2
+    } else if n <= 65_535 {
+        3
+    } else {
+        5
+    }
+}
+
+fn chunk_ops_frames(ds: &str, operations: Vec<Cbor>) -> Result<Vec<Vec<u8>>, RelayError> {
     if operations.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
+    }
+    let empty_len = ops_forward_frame(ds, vec![]).len();
+    let frame_len = |n: usize, bytes: usize| empty_len - 1 + cbor_array_header_len(n) + bytes;
+    let mut sized = Vec::with_capacity(operations.len());
+    for op in operations {
+        let n = cbor::encode(&op)
+            .map_err(|e| RelayError::Protocol(e.to_string()))?
+            .len();
+        sized.push((op, n));
     }
     let mut frames = Vec::new();
     let mut chunk: Vec<Cbor> = Vec::new();
-    for op in operations {
-        if !chunk.is_empty() {
-            let over_count = chunk.len() >= MAX_BATCH_OPS;
-            let mut trial = chunk.clone();
-            trial.push(op.clone());
-            let over_bytes = ops_forward_frame(ds, trial).len() > MAX_BATCH_BYTES;
-            if over_count || over_bytes {
-                frames.push(ops_forward_frame(ds, std::mem::take(&mut chunk)));
+    let mut chunk_bytes = 0usize;
+    for (op, size) in sized {
+        let next_n = chunk.len() + 1;
+        let next_bytes = chunk_bytes + size;
+        let over = next_n > MAX_BATCH_OPS || frame_len(next_n, next_bytes) > MAX_BATCH_BYTES;
+        if over && chunk.is_empty() {
+            return Err(RelayError::Protocol(
+                "single op exceeds max_batch_bytes".into(),
+            ));
+        }
+        if over {
+            frames.push(ops_forward_frame(ds, std::mem::take(&mut chunk)));
+            chunk_bytes = 0;
+            if frame_len(1, size) > MAX_BATCH_BYTES {
+                return Err(RelayError::Protocol(
+                    "single op exceeds max_batch_bytes".into(),
+                ));
             }
         }
         chunk.push(op);
+        chunk_bytes += size;
     }
     if !chunk.is_empty() {
         frames.push(ops_forward_frame(ds, chunk));
     }
-    frames
+    Ok(frames)
 }
 
 fn delta_frame(ds: &str, request_id: u32, operations: Vec<Cbor>, remaining: usize) -> Vec<u8> {
@@ -809,38 +890,66 @@ fn delta_frame(ds: &str, request_id: u32, operations: Vec<Cbor>, remaining: usiz
     )
 }
 
-fn chunk_delta_frames(ds: &str, request_id: u32, operations: Vec<Cbor>) -> Vec<Vec<u8>> {
+fn chunk_delta_frames(
+    ds: &str,
+    request_id: u32,
+    operations: Vec<Cbor>,
+) -> Result<Vec<Vec<u8>>, RelayError> {
     if operations.is_empty() {
-        return vec![delta_frame(ds, request_id, vec![], 0)];
+        return Ok(vec![delta_frame(ds, request_id, vec![], 0)]);
+    }
+    // Size against remaining=u64::MAX so the final remaining field cannot
+    // push a frame over the advertised cap.
+    let empty_len = delta_frame(ds, request_id, vec![], usize::MAX).len();
+    let frame_len = |n: usize, bytes: usize| empty_len - 1 + cbor_array_header_len(n) + bytes;
+    let mut sized = Vec::with_capacity(operations.len());
+    for op in operations {
+        let n = cbor::encode(&op)
+            .map_err(|e| RelayError::Protocol(e.to_string()))?
+            .len();
+        sized.push((op, n));
     }
     let mut chunks: Vec<Vec<Cbor>> = Vec::new();
     let mut chunk = Vec::new();
-    for op in operations {
-        if !chunk.is_empty() {
-            let mut trial = chunk.clone();
-            trial.push(op.clone());
-            if chunk.len() >= MAX_BATCH_OPS
-                || delta_frame(ds, request_id, trial, 0).len() > MAX_BATCH_BYTES
-            {
-                chunks.push(std::mem::take(&mut chunk));
+    let mut chunk_bytes = 0usize;
+    for (op, size) in sized {
+        let next_n = chunk.len() + 1;
+        let next_bytes = chunk_bytes + size;
+        let over = next_n > MAX_BATCH_OPS || frame_len(next_n, next_bytes) > MAX_BATCH_BYTES;
+        if over && chunk.is_empty() {
+            return Err(RelayError::Protocol(
+                "single op exceeds max_batch_bytes".into(),
+            ));
+        }
+        if over {
+            chunks.push(std::mem::take(&mut chunk));
+            chunk_bytes = 0;
+            if frame_len(1, size) > MAX_BATCH_BYTES {
+                return Err(RelayError::Protocol(
+                    "single op exceeds max_batch_bytes".into(),
+                ));
             }
         }
         chunk.push(op);
+        chunk_bytes += size;
     }
     if !chunk.is_empty() {
         chunks.push(chunk);
     }
     let total = chunks.len();
-    chunks
+    Ok(chunks
         .into_iter()
         .enumerate()
         .map(|(i, chunk)| delta_frame(ds, request_id, chunk, total - i - 1))
-        .collect()
+        .collect())
 }
 
 fn default_limits() -> Cbor {
     Cbor::Map(vec![
-        ("max_payload_bytes".into(), Cbor::Uint(1_048_576)),
+        (
+            "max_payload_bytes".into(),
+            Cbor::Uint(MAX_PAYLOAD_BYTES as u64),
+        ),
         ("max_batch_ops".into(), Cbor::Uint(MAX_BATCH_OPS as u64)),
         ("max_batch_bytes".into(), Cbor::Uint(MAX_BATCH_BYTES as u64)),
         ("max_subscriptions".into(), Cbor::Uint(64)),
@@ -975,7 +1084,7 @@ fn author_write_allowed(
     ds: &str,
     op: &Cbor,
     author: [u8; 32],
-) -> Result<bool, RelayError> {
+) -> Result<bool, crate::store::StoreError> {
     let grants = store.grants(ds)?;
     if grants.is_empty() {
         return Ok(true);
@@ -1008,7 +1117,7 @@ fn apply_membership_from_op(
     ds: &str,
     op: &Cbor,
     op_id: [u8; 32],
-) -> Result<(), RelayError> {
+) -> Result<(), crate::store::StoreError> {
     let Some(wire) = wire_json(op) else {
         return Ok(());
     };
@@ -1145,4 +1254,40 @@ fn parse_frontier(cursor: &Cbor) -> Vec<FrontierTip> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+
+    fn small_op(n: u64) -> Cbor {
+        Cbor::Map(vec![("n".into(), Cbor::Uint(n))])
+    }
+
+    #[test]
+    fn chunk_ops_splits_on_count_without_prefix_clone() {
+        let ops: Vec<Cbor> = (0..70).map(small_op).collect();
+        let frames = chunk_ops_frames("ds", ops).unwrap();
+        assert!(frames.len() >= 2);
+        for frame in &frames {
+            let env = decode_env(frame).unwrap();
+            let Cbor::Array(a) = map_get(&env.payload, "operations") else {
+                panic!("ops");
+            };
+            assert!(a.len() <= MAX_BATCH_OPS);
+            assert!(!a.is_empty());
+        }
+    }
+
+    #[test]
+    fn chunk_delta_sets_remaining_and_rejects_single_oversize() {
+        let ops: Vec<Cbor> = (0..70).map(small_op).collect();
+        let frames = chunk_delta_frames("ds", 9, ops).unwrap();
+        assert!(frames.len() >= 2);
+        let last = decode_env(frames.last().unwrap()).unwrap();
+        assert_eq!(uint(map_get(&last.payload, "remaining")).unwrap(), 0);
+
+        let huge = vec![Cbor::Bytes(vec![0; MAX_BATCH_BYTES + 8])];
+        assert!(chunk_ops_frames("ds", huge).is_err());
+    }
 }

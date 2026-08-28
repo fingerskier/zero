@@ -233,6 +233,15 @@ impl BackendTxn for MemoryBackend {
             .map(|((_, p), (_, v))| (p.clone(), v.clone()))
             .collect())
     }
+    fn prop_list_all(&self) -> Result<Vec<(String, String, String)>, StoreError> {
+        Ok(self
+            .inner
+            .borrow()
+            .props
+            .iter()
+            .map(|((e, p), (_, v))| (e.clone(), p.clone(), v.clone()))
+            .collect())
+    }
 
     fn edge_upsert(
         &self,

@@ -415,6 +415,11 @@ impl<B: StoreBackend> LocalStore<B> {
             .is_some_and(|v| v.first() == Some(&1))
     }
 
+    /// In-memory HLC high-water (not rewritten from the oplog until replay/open).
+    pub fn hlc(&self) -> (u64, u16) {
+        (self.hlc_p, self.hlc_l)
+    }
+
     pub fn take_rejects(&mut self) -> Vec<AuthReject> {
         std::mem::take(&mut self.last_rejects)
     }
@@ -887,17 +892,21 @@ impl<B: StoreBackend> LocalStore<B> {
     }
 
     fn to_query_graph(&self) -> Result<Graph, StoreError> {
+        let mut props_by = BTreeMap::<String, BTreeMap<String, QValue>>::new();
+        for (entity, path, vj) in self.backend.prop_list_all()? {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&vj) {
+                props_by
+                    .entry(entity)
+                    .or_default()
+                    .insert(path, json_to_qvalue(&v));
+            }
+        }
         let mut nodes = Vec::new();
         for (id, label, deleted) in self.list_nodes()? {
             if deleted {
                 continue;
             }
-            let mut props = BTreeMap::new();
-            for (p, vj) in self.backend.prop_list(&id)? {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&vj) {
-                    props.insert(p, json_to_qvalue(&v));
-                }
-            }
+            let props = props_by.remove(&id).unwrap_or_default();
             nodes.push(GNode { id, label, props });
         }
         let mut edges = Vec::new();
@@ -910,7 +919,7 @@ impl<B: StoreBackend> LocalStore<B> {
                 props: BTreeMap::new(),
             });
         }
-        Ok(Graph { nodes, edges })
+        Ok(Graph::new(nodes, edges))
     }
 
     pub fn set_lww(&mut self, node: &str, path: &str, value: &str) -> Result<String, StoreError> {
@@ -1106,13 +1115,38 @@ impl<B: StoreBackend> LocalStore<B> {
         Ok(props)
     }
 
-    pub fn inspect(&self, path: &Path) -> Result<InspectReport, StoreError> {
-        let mut nodes = Vec::new();
-        for (id, label, deleted) in self.list_nodes()? {
-            let mut props = BTreeMap::new();
-            if !deleted {
-                props.extend(self.list_props(&id)?);
+    /// All materialized properties, grouped by entity. One backend scan.
+    pub fn list_props_all(
+        &self,
+    ) -> Result<BTreeMap<String, Vec<(String, serde_json::Value)>>, StoreError> {
+        let mut out: BTreeMap<String, Vec<(String, serde_json::Value)>> = BTreeMap::new();
+        for (entity, path, vj) in self.backend.prop_list_all()? {
+            if let Ok(v) = serde_json::from_str(&vj) {
+                out.entry(entity).or_default().push((path, v));
             }
+        }
+        Ok(out)
+    }
+
+    pub fn inspect(&self, path: &Path) -> Result<InspectReport, StoreError> {
+        let listed = self.list_nodes()?;
+        let mut props_by = self.list_props_all()?;
+        let live: BTreeSet<String> = listed
+            .iter()
+            .filter(|(_, _, deleted)| !*deleted)
+            .map(|(id, _, _)| id.clone())
+            .collect();
+        let mut nodes = Vec::new();
+        for (id, label, deleted) in listed {
+            let props = if deleted {
+                BTreeMap::new()
+            } else {
+                props_by
+                    .remove(&id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect()
+            };
             nodes.push(InspectNode {
                 id,
                 label,
@@ -1122,9 +1156,7 @@ impl<B: StoreBackend> LocalStore<B> {
         }
         let mut edges = Vec::new();
         for row in self.backend.edge_list()? {
-            let visible = !row.deleted
-                && self.backend.node_deleted_state(&row.src)? == Some(false)
-                && self.backend.node_deleted_state(&row.dst)? == Some(false);
+            let visible = !row.deleted && live.contains(&row.src) && live.contains(&row.dst);
             edges.push(InspectEdge {
                 id: row.id,
                 label: row.label,

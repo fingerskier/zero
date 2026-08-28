@@ -109,7 +109,7 @@ fn graph(v: &Json) -> Graph {
                 .collect()
         })
         .unwrap_or_default();
-    Graph { nodes, edges }
+    Graph::new(nodes, edges)
 }
 
 fn run_eval(v: &Json, path: &Path) {

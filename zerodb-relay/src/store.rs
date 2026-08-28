@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 use thiserror::Error;
 use zerodb_core::auth::KnownGrant;
 use zerodb_core::merkle::MerkleOp;
@@ -54,6 +54,12 @@ pub trait OpStore: Send {
     fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError>;
     fn grants(&self, ds: &str) -> Result<Vec<KnownGrant>, StoreError>;
     fn revoke_grant(&mut self, ds: &str, id: &[u8; 32]) -> Result<bool, StoreError>;
+    /// Run `f` in one write transaction when the backend supports it.
+    /// Memory store is already atomic per call; SQLite begins/commits.
+    fn run_write(
+        &mut self,
+        f: &mut dyn FnMut(&mut dyn OpStore) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError>;
 }
 
 pub fn validated_root_hex(ops: &[StoredOp]) -> String {
@@ -131,6 +137,13 @@ impl OpStore for MemoryStore {
         }
         Ok(false)
     }
+
+    fn run_write(
+        &mut self,
+        f: &mut dyn FnMut(&mut dyn OpStore) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        f(self)
+    }
 }
 
 pub struct SqliteStore {
@@ -169,20 +182,10 @@ impl SqliteStore {
 
 impl OpStore for SqliteStore {
     fn insert(&mut self, ds: &str, op: StoredOp) -> Result<bool, StoreError> {
-        let exists: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT 1 FROM ops WHERE ds = ?1 AND op_id = ?2",
-                params![ds, op.op_id.as_slice()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if exists.is_some() {
-            return Ok(false);
-        }
-        self.conn.execute(
+        let n = self.conn.execute(
             "INSERT INTO ops (ds, op_id, author, physical_ms, logical, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(ds, op_id) DO NOTHING",
             params![
                 ds,
                 op.op_id.as_slice(),
@@ -192,7 +195,7 @@ impl OpStore for SqliteStore {
                 op.body
             ],
         )?;
-        Ok(true)
+        Ok(n != 0)
     }
 
     fn list(&self, ds: &str) -> Result<Vec<StoredOp>, StoreError> {
@@ -292,5 +295,22 @@ impl OpStore for SqliteStore {
             "UPDATE membership_grants SET revoked=1 WHERE ds=?1 AND grant_id=?2",
             params![ds, id.as_slice()],
         )? != 0)
+    }
+
+    fn run_write(
+        &mut self,
+        f: &mut dyn FnMut(&mut dyn OpStore) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        match f(self) {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
     }
 }

@@ -89,6 +89,8 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
           dst TEXT NOT NULL,
           deleted INTEGER NOT NULL DEFAULT 0
         );
+        CREATE INDEX IF NOT EXISTS ops_order ON ops (physical_ms, logical, id);
+        CREATE INDEX IF NOT EXISTS ops_kind_order ON ops (kind, physical_ms, logical, id);
         ",
     )
     .map_err(sql_err)?;
@@ -184,6 +186,9 @@ impl BackendTxn for SqliteBackend {
     }
     fn prop_list(&self, entity: &str) -> Result<Vec<(String, String)>, StoreError> {
         prop_list(&self.conn, entity)
+    }
+    fn prop_list_all(&self) -> Result<Vec<(String, String, String)>, StoreError> {
+        prop_list_all(&self.conn)
     }
     fn edge_upsert(
         &self,
@@ -293,6 +298,9 @@ impl BackendTxn for SqliteTxn<'_> {
     }
     fn prop_list(&self, entity: &str) -> Result<Vec<(String, String)>, StoreError> {
         prop_list(self.conn, entity)
+    }
+    fn prop_list_all(&self) -> Result<Vec<(String, String, String)>, StoreError> {
+        prop_list_all(self.conn)
     }
     fn edge_upsert(
         &self,
@@ -623,6 +631,26 @@ fn prop_list(conn: &Connection, entity: &str) -> Result<Vec<(String, String)>, S
     Ok(out)
 }
 
+fn prop_list_all(conn: &Connection) -> Result<Vec<(String, String, String)>, StoreError> {
+    let mut stmt = conn
+        .prepare("SELECT entity, path, value_json FROM props ORDER BY entity, path")
+        .map_err(sql_err)?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(sql_err)?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(sql_err)?);
+    }
+    Ok(out)
+}
+
 fn edge_upsert(
     conn: &Connection,
     id: &str,
@@ -703,4 +731,69 @@ fn wipe_materialized(conn: &Connection) -> Result<(), StoreError> {
     conn.execute("DELETE FROM nodes", []).map_err(sql_err)?;
     conn.execute("DELETE FROM edges", []).map_err(sql_err)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod explain_tests {
+    use super::*;
+
+    fn plan(conn: &Connection, sql: &str) -> String {
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .map(|d| d.unwrap())
+            .collect::<Vec<_>>();
+        rows.join(" | ")
+    }
+
+    #[test]
+    fn order_indexes_used_for_hot_scans() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        let scan = plan(
+            &conn,
+            "SELECT kind, body_json, physical_ms, logical FROM ops ORDER BY physical_ms, logical, id",
+        );
+        let max_hlc = plan(
+            &conn,
+            "SELECT physical_ms, logical FROM ops ORDER BY physical_ms DESC, logical DESC LIMIT 1",
+        );
+        let kind_scan = plan(
+            &conn,
+            "SELECT kind, body_json FROM ops WHERE kind IN (1, 4) ORDER BY physical_ms, logical, id",
+        );
+        let props = plan(
+            &conn,
+            "SELECT entity, path, value_json FROM props ORDER BY entity, path",
+        );
+
+        // EXPLAIN QUERY PLAN (empty migrated store; structural, not timings):
+        // scan:     {scan}
+        // max_hlc:  {max_hlc}
+        // kind:     {kind_scan}
+        // props:    {props}
+        eprintln!("EXPLAIN ops ORDER BY (physical_ms, logical, id): {scan}");
+        eprintln!("EXPLAIN op_max_hlc: {max_hlc}");
+        eprintln!("EXPLAIN ops kind IN (1,4) ORDER BY: {kind_scan}");
+        eprintln!("EXPLAIN props ORDER BY entity, path: {props}");
+
+        assert!(
+            scan.contains("ops_order"),
+            "expected ops_order for HLC scan, got {scan}"
+        );
+        assert!(
+            max_hlc.contains("ops_order"),
+            "expected ops_order for max HLC, got {max_hlc}"
+        );
+        assert!(
+            kind_scan.contains("ops_kind_order") || kind_scan.contains("ops_order"),
+            "expected kind/order index, got {kind_scan}"
+        );
+        assert!(
+            props.contains("props") || props.contains("autoindex"),
+            "expected props index/pk, got {props}"
+        );
+    }
 }
