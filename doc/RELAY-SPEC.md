@@ -157,16 +157,38 @@ Relay sends a random nonce for the peer to sign, proving ownership of the claime
 
 #### `AUTH` (0x03) — P→R [L0]
 
-Peer signs the challenge nonce with domain separation:
+Peer signs the negotiated handshake transcript with domain separation (draft AUTH preimage; not a format freeze):
 
 ```
 {
-  signature:  Signature   // Ed25519.sign(private_key, "zerodb-relay-auth-v1" || nonce)
+  signature:  Signature   // Ed25519.sign(private_key, "zerodb-relay-auth-v2" || canonical_cbor(transcript))
 }
 ```
 
+`transcript` is a deterministic CBOR map:
+
+```
+{
+  hello: {
+    peer_id:            bytes
+    public_key:         bytes
+    protocol_version:   uint
+    capabilities:       [text]   // as offered in HELLO
+  }
+  nonce:                bytes    // CHALLENGE nonce
+  welcome: {
+    protocol_version:   uint     // version the relay is about to send
+    relay_level:        uint
+    capabilities:       [text]   // intersection the relay is about to send
+    limits:             { … }    // WELCOME.limits the relay is about to send
+  }
+}
+```
+
+AUTH is sent before WELCOME, so both sides reconstruct the WELCOME the relay will send (advertised limits + negotiated caps). A v1 nonce-only signature (`"zerodb-relay-auth-v1" || nonce`) MUST fail closed (`0x201`). A transcript whose limits or version bits differ from the relay's intended WELCOME MUST fail closed.
+
 The relay MUST verify:
-1. `Ed25519.verify("zerodb-relay-auth-v1" || nonce, signature, public_key)` for the key from `HELLO`
+1. `Ed25519.verify("zerodb-relay-auth-v2" || canonical_cbor(transcript), signature, public_key)` for the key from `HELLO`
 2. `BLAKE3(public_key) == peer_id` from `HELLO`
 
 If verification fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
@@ -487,7 +509,7 @@ Peer                            Relay
   │                               │
   │◄── CHALLENGE ─────────────────┤  (nonce)
   │                               │
-  ├── AUTH ──────────────────────►│  (domain-separated signature over nonce)
+  ├── AUTH ──────────────────────►│  (domain-separated signature over transcript)
   │                               │
   │◄── WELCOME ───────────────────┤  (protocol_version, relay_level, limits)
   │                               │
@@ -500,21 +522,21 @@ The handshake proves the peer controls the Ed25519 private key corresponding to 
 
 1. Peer sends `HELLO` with their `peer_id` and `public_key`.
 2. Relay generates 32 cryptographically random bytes as a `nonce`, fresh per connection.
-3. Peer signs `"zerodb-relay-auth-v1" || nonce` with their Ed25519 private key. The domain-separation prefix prevents the signature from being confused with any other ZeroDB signature (operations, future transcript bindings).
-4. Relay verifies the signature against the public key from `HELLO`.
+3. Peer signs `"zerodb-relay-auth-v2" || canonical_cbor(transcript)` with their Ed25519 private key. The transcript binds HELLO fields, the CHALLENGE nonce, and the WELCOME limits/version/caps the relay is about to send. A v1 nonce-only signature MUST fail closed.
+4. Relay verifies the transcript signature against the public key from `HELLO`.
 5. Relay verifies `BLAKE3(public_key) == peer_id`.
 
 If either check fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
 
-> Binding the signature to the full negotiated transcript (rather than the nonce alone) is tracked in ISSUES H5 → M3.
+> Draft AUTH preimage (unfrozen). Direct P2P reuse of this helper is parked with H6 → M4.
 
 ### 5.3 Relay Identity
 
-The relay is authenticated at the transport layer: peers verify the relay's TLS certificate (see §5.4). In-protocol mutual authentication (relay key pinning independent of the certificate chain) is deliberately excluded from this version; if a deployment threat model requires it, it will be added alongside the transcript binding (ISSUES H5 → M3) rather than as an ad-hoc field.
+The relay is authenticated at the transport layer: peers verify the relay's TLS certificate (see §5.4). In-protocol mutual authentication (relay key pinning independent of the certificate chain) is deliberately excluded from this version.
 
 ### 5.4 Transport Security
 
-Relay connections MUST use TLS (`wss://`) except for loopback and explicitly configured development environments.
+Relay connections MUST use TLS (`wss://`) except for loopback and explicitly configured development environments. The `zerodb-relay` binary does not terminate TLS and does not mint certificates. It refuses a non-loopback plaintext listen unless `--allow-insecure` is passed (loopback `127.0.0.1` / `localhost` / `::1` may listen plaintext without the flag).
 
 **Important:** TLS does NOT replace ZeroDB's E2E encryption of operation content (SPEC.md §6.2; whether the encryption unit is individual properties or whole operations is an open choice — ISSUES H8/H10). TLS protects the transport; E2E encryption protects operation content from the relay itself.
 
@@ -622,13 +644,17 @@ The relay announces its limits in the `WELCOME` message. Recommended defaults:
 
 When a peer exceeds its limits, or the relay is under global load (queue depth, memory, I/O):
 
-1. The relay MUST NOT silently drop operations — it MUST accept, reject with `ERROR`, or signal with `THROTTLE`.
-2. `THROTTLE` with `scope: "peer"` targets the offending peer; `scope: "relay"` asks all peers to slow down.
-3. Peers SHOULD respect `retry_after_ms`. If a peer persistently ignores throttling, the relay MAY disconnect it with `GOODBYE` (reason `3`).
+1. The relay MUST NOT silently drop operations — it MUST accept, reject with `ERROR`, or signal with `THROTTLE`. Rejected OPS MUST persist zero durable writes.
+2. `max_payload_bytes` / `max_batch_*` are enforced on every `OPS` (and as a pre-decode frame ceiling on `handle`, including before AUTH).
+3. `max_subscriptions` is enforced per session. A `SUBSCRIBE` that would exceed the cap is `ERROR` `0x305` `TOO_MANY_SUBS`. Re-subscribing an existing datastore does not increment the count.
+4. `ops_per_second` and `bytes_per_second` are enforced per session on admitted OPS count/bytes (sliding 1s window). Exceeding either is `ERROR` `0x304` `RATE_EXCEEDED`.
+5. Rate, subscription, and connection caps MUST NOT wait for a membership grant.
+6. `THROTTLE` with `scope: "peer"` targets the offending peer; `scope: "relay"` asks all peers to slow down.
+7. Peers SHOULD respect `retry_after_ms`. If a peer persistently ignores throttling, the relay MAY disconnect it with `GOODBYE` (reason `3`).
 
 ### 8.3 Abuse Mitigation
 
-Relay operators SHOULD limit concurrent connections per `PeerId` (RECOMMENDED: 3). IP-based rate limiting and DDoS mitigation are transport-level defenses outside this protocol, RECOMMENDED for production deployments.
+Relay operators SHOULD limit concurrent connections per `PeerId` (RECOMMENDED: 3). This implementation enforces 3: a fourth AUTH from the same `PeerId` is `ERROR` `0x304` `TOO_MANY_CONNECTIONS` (fatal) and the session is closed. IP-based rate limiting and DDoS mitigation are transport-level defenses outside this protocol, RECOMMENDED for production deployments.
 
 ---
 
@@ -844,7 +870,7 @@ An annotated example of a complete session. Shown as JSON for readability; the w
 
 // 4. Peer sends AUTH
 → { "type": 3, "request_id": 1, "payload": {
-      "signature": "<Ed25519 sig over 'zerodb-relay-auth-v1' || nonce, hex>"
+      "signature": "<Ed25519 sig over 'zerodb-relay-auth-v2' || canonical_cbor(transcript), hex>"
   } }
 
 // 5. Relay sends WELCOME
@@ -977,7 +1003,7 @@ Pruned (each removable without loss for any current milestone):
 Added / fixed:
 
 - `max_batch_bytes` and `bytes_per_second` in `WELCOME.limits` (ISSUES H9).
-- Domain-separated auth signature (`"zerodb-relay-auth-v1"` prefix, partial H5).
+- Domain-separated handshake AUTH (`"zerodb-relay-auth-v2"` ‖ canonical CBOR transcript; v1 nonce-only fails closed). Draft preimage; not a format freeze.
 - Dedup scoped per `(datastore, OpId)` (ISSUES C4 direction).
 - TLS now REQUIRED outside loopback/development.
 - Normative two-independent-sources censorship-resistance statement (ISSUES H8).

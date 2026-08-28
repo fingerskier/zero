@@ -9,9 +9,18 @@ import { hexToBytes, bytesToHex, encode } from './cbor.mjs';
 import { blake3 } from './blake3.mjs';
 import { merkleRootOnce } from './merkle.mjs';
 
-export const DOMAIN_RELAY_AUTH = new TextEncoder().encode('zerodb-relay-auth-v1');
+export const DOMAIN_RELAY_AUTH = new TextEncoder().encode('zerodb-relay-auth-v2');
+export const DOMAIN_RELAY_AUTH_V1 = new TextEncoder().encode('zerodb-relay-auth-v1');
 export const RELAY_CAPS = ['dual-root', 'merkle-walk-v1', 'reject-ack', 'resume-cursor'];
 export const ERR_AUTH_FAILED = 0x201;
+export const DEFAULT_LIMITS = {
+  max_payload_bytes: 1048576,
+  max_batch_ops: 64,
+  max_batch_bytes: 16777216,
+  max_subscriptions: 64,
+  ops_per_second: 100,
+  bytes_per_second: 10485760,
+};
 
 export const MSG_HELLO = 0x01;
 export const MSG_CHALLENGE = 0x02;
@@ -79,29 +88,80 @@ function ed25519Public(pk) {
   return createPublicKey({ key: Buffer.concat([Buffer.from(SPKI_PREFIX), Buffer.from(pk)]), format: 'der', type: 'spki' });
 }
 
-export function authPreimage(nonce) {
-  const out = new Uint8Array(DOMAIN_RELAY_AUTH.length + nonce.length);
+function tagged(value) {
+  if (value === null) return { t: 'null' };
+  if (typeof value === 'boolean') return { t: 'bool', v: value };
+  if (typeof value === 'number') return { t: 'uint', v: value };
+  if (typeof value === 'string') return { t: 'text', v: value };
+  if (value instanceof Uint8Array) return { t: 'bytes', hex: bytesToHex(value) };
+  if (Array.isArray(value)) return { t: 'array', v: value.map(tagged) };
+  if (typeof value === 'object') {
+    const v = {};
+    for (const [k, val] of Object.entries(value)) v[k] = tagged(val);
+    return { t: 'map', v };
+  }
+  throw new Error(`cannot tag ${typeof value}`);
+}
+
+export function negotiateWelcomeCaps(hello) {
+  return RELAY_CAPS.filter((c) => hello.includes(c));
+}
+
+export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce, limits) {
+  const hello = helloCaps instanceof Array ? helloCaps : [];
+  return {
+    peer_id: peerId instanceof Uint8Array ? peerId : hex32(peerId),
+    public_key: publicKey instanceof Uint8Array ? publicKey : hex32(publicKey),
+    hello_protocol_version: helloVersion,
+    hello_capabilities: hello,
+    nonce: nonce instanceof Uint8Array ? nonce : hex32(nonce),
+    welcome_protocol_version: 1,
+    relay_level: 2,
+    welcome_capabilities: negotiateWelcomeCaps(hello),
+    limits: limits || DEFAULT_LIMITS,
+  };
+}
+
+export function authTranscriptPreimage(t) {
+  const body = encode(
+    tagged({
+      hello: {
+        capabilities: t.hello_capabilities,
+        peer_id: t.peer_id,
+        protocol_version: t.hello_protocol_version,
+        public_key: t.public_key,
+      },
+      nonce: t.nonce,
+      welcome: {
+        capabilities: t.welcome_capabilities,
+        limits: t.limits,
+        protocol_version: t.welcome_protocol_version,
+        relay_level: t.relay_level,
+      },
+    }),
+  );
+  const out = new Uint8Array(DOMAIN_RELAY_AUTH.length + body.length);
   out.set(DOMAIN_RELAY_AUTH, 0);
-  out.set(nonce, DOMAIN_RELAY_AUTH.length);
+  out.set(body, DOMAIN_RELAY_AUTH.length);
   return out;
 }
 
-export function signAuth(seed, nonce) {
-  return new Uint8Array(edSign(null, Buffer.from(authPreimage(nonce)), ed25519Private(seed)));
+export function signAuth(seed, transcript) {
+  return new Uint8Array(edSign(null, Buffer.from(authTranscriptPreimage(transcript)), ed25519Private(seed)));
 }
 
-export function verifyAuth(pk, nonce, sig) {
+export function verifyAuth(pk, transcript, sig) {
   try {
-    return edVerify(null, Buffer.from(authPreimage(nonce)), ed25519Public(pk), Buffer.from(sig));
+    return edVerify(null, Buffer.from(authTranscriptPreimage(transcript)), ed25519Public(pk), Buffer.from(sig));
   } catch {
     return false;
   }
 }
 
-/** RELAY §4.1 / §5.2: signature over domain||nonce AND claimed PeerId == BLAKE3(pk). */
-export function authenticate(claimedPeerId, pk, nonce, sig) {
+/** RELAY §4.1 / §5.2: transcript signature AND claimed PeerId == BLAKE3(pk). */
+export function authenticate(claimedPeerId, pk, transcript, sig) {
   const claimed = claimedPeerId instanceof Uint8Array ? claimedPeerId : hex32(claimedPeerId);
-  const ok = verifyAuth(pk, nonce, sig) && bytesToHex(claimed) === bytesToHex(peerIdFromPk(pk));
+  const ok = verifyAuth(pk, transcript, sig) && bytesToHex(claimed) === bytesToHex(peerIdFromPk(pk));
   return ok ? null : ERR_AUTH_FAILED;
 }
 
@@ -446,10 +506,11 @@ function runHandshake(v) {
   const nonce = hex32(v.nonce);
   if (!v.peer_id) throw new Error('claimed HELLO.peer_id required');
   const pid = bytesToHex(peerIdFromPk(pk));
-  const honest = signAuth(seed, nonce);
+  const transcript = authTranscript(v.peer_id, pk, v.protocol_version ?? 1, v.hello_capabilities, nonce);
+  const honest = signAuth(seed, transcript);
   const wireSig = v.frames?.[2]?.payload?.signature;
   const sig = wireSig ? hex64(wireSig) : v.auth_signature ? hex64(v.auth_signature) : honest;
-  const err = authenticate(v.peer_id, pk, nonce, sig);
+  const err = authenticate(v.peer_id, pk, transcript, sig);
   const authOk = err === null;
   const expect = v.expect;
   if (authOk !== expect.auth_ok) {

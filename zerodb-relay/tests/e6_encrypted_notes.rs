@@ -2,13 +2,13 @@
 //! LWW SetProperty without learning plaintext. I-10 is peer-side;
 //! the relay treats ciphertext like any other signed member op.
 
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::envelope::{ValueContext, seal};
 use zerodb_core::op::{OpEnvelope, OpTs, json_to_cbor_body};
 use zerodb_core::relay::{
-    DOMAIN_RELAY_AUTH, MSG_AUTH, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_WELCOME, peer_id_from_pk,
+    MSG_AUTH, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_WELCOME, peer_id_from_pk, sign_auth_for_hello,
 };
 use zerodb_core::sign::sign_op;
 use zerodb_relay::Relay;
@@ -88,10 +88,9 @@ fn handshake(sess: &mut zerodb_relay::RelaySession, pk: &[u8; 32], sk: &[u8; 32]
     let out = sess.handle(&hello).unwrap();
     let (_, _, pl) = decode_env(&out[0]);
     let nonce = as_bytes(map_get(&pl, "nonce"));
-    let key = SigningKey::from_bytes(sk);
-    let mut msg = DOMAIN_RELAY_AUTH.to_vec();
-    msg.extend_from_slice(nonce);
-    let sig = key.sign(&msg).to_bytes();
+    let mut n = [0u8; 32];
+    n.copy_from_slice(nonce);
+    let sig = sign_auth_for_hello(sk, pk, &[] as &[&str], &n);
     let auth = encode_env(
         MSG_AUTH,
         1,

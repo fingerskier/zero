@@ -247,7 +247,7 @@ Lifecycle: red in `xfail/`, promote on both-runners-green. All four families pro
 ## 8. Out of scope (deliberate)
 
 - Entity-level ACLs (C6) — post-v0.1.
-- Group-key wrap for `KeyRecord` `kr = 2` is live for E6: X25519 ECDH + XChaCha20-Poly1305 per recipient, rotation republishes wraps for the remaining set, KERNEL §7 envelopes stay unchanged. Remaining H10: offline-peer revocation, bootstrap ordering beyond causal control deps, two-key principal/device wrap, and a frozen wrap body.
+- Group-key wrap for `KeyRecord` `kr = 2` is live: X25519 ECDH + XChaCha20-Poly1305 per recipient. Wrap **shape** (draft, not a format freeze): canonical CBOR/JSON map with exactly four fields, extra/missing rejected as `KEY_WRAP_INVALID` — `recipient` 32, `eph_pk` 32, `nonce` 24, `wrapped` 48 (32-byte key + 16-byte Poly1305 tag). `recipient` is the `PrincipalId`; ECDH uses the device public key (`kr` 0/1 sketches the device unwrap path; C5 cert verify is not claimed). `open` consults membership/epoch (post-revoke notes stay closed even with a cached key; pre-revoke notes stay readable). Encrypted values arriving before the matching KeyRecord are held in the oplog and rematerialized when the key applies — ciphertext MUST NOT persist as plaintext. H10 is **not closed**.
 - Multi-owner / k-of-n root — post-v0.1.
 - Social recovery of lost principal roots — product/docs only in v0.1.
 

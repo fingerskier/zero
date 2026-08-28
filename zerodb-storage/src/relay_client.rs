@@ -18,7 +18,7 @@ use zerodb_core::relay::{
     MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO,
     MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST,
     MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
-    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth,
+    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth_for_hello,
 };
 
 use crate::authz::bundle_datastore_id;
@@ -77,7 +77,7 @@ where
         2,
         Cbor::Map(vec![(
             "signature".into(),
-            Cbor::Bytes(sign_auth(&seed, &nonce).to_vec()),
+            Cbor::Bytes(sign_auth_for_hello(&seed, &pk, RELAY_CAPS, &nonce).to_vec()),
         )]),
     );
     let welcome = expect_type(

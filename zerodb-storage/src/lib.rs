@@ -74,6 +74,7 @@ pub const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
 const META_QUARANTINE: &str = "quarantine";
 const META_KEYRING: &str = "group_keyring";
 const META_KEY_CURRENT: &str = "group_key_current";
+const META_PRINCIPAL: &str = "principal_id";
 /// X25519 wrap: recipient/eph_pk 32, XChaCha20 nonce 24, key 32 + Poly1305 tag 16.
 const WRAP_RECIPIENT_LEN: usize = 32;
 const WRAP_EPH_PK_LEN: usize = 32;
@@ -402,9 +403,13 @@ impl<B: StoreBackend> LocalStore<B> {
         hex::encode(self.author_pk)
     }
 
-    /// Solo-device principal: `PrincipalId == PeerId`.
+    /// Principal id: `META_PRINCIPAL` when a `kr = 0` device binding matched
+    /// this device, otherwise solo-device `PrincipalId == PeerId`.
     pub fn principal_hex(&self) -> String {
-        hex::encode(self.author)
+        match self.backend.meta_get(META_PRINCIPAL) {
+            Ok(Some(raw)) if raw.len() == 32 => hex::encode(raw),
+            _ => hex::encode(self.author),
+        }
     }
 
     pub fn is_auth_enabled(&self) -> bool {
@@ -578,7 +583,9 @@ impl<B: StoreBackend> LocalStore<B> {
     }
 
     /// Publish a `KeyRecord` `kr = 2` wrapping the current group key for
-    /// `recipients` (`PeerId` hex, Ed25519 `author_pk` hex).
+    /// `recipients` (`PrincipalId` hex, device Ed25519 `author_pk` hex).
+    /// ECDH uses the device public key; the wrap `recipient` field is the
+    /// principal. Solo-device stores still pass `principal == peer`.
     pub fn distribute_group_key(
         &mut self,
         recipients: &[(&str, &str)],
@@ -653,6 +660,13 @@ impl<B: StoreBackend> LocalStore<B> {
             let Some(enc_hex) = wire.body.get("encrypted").and_then(|v| v.as_str()) else {
                 continue;
             };
+            if self.is_auth_enabled() {
+                let applied = load_applied_wires(&self.backend)?;
+                let (peer, principal) = local_peer_and_principal(&self.backend)?;
+                if !subject_may_open_at(&applied, &wire.ds, &[peer, principal], wire.ts.p) {
+                    continue;
+                }
+            }
             let envelope = hex::decode(enc_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
             let ctx = value_context_from_wire(&wire)?;
             for key in ring.values() {
@@ -2039,9 +2053,12 @@ fn apply_wire(
                 .ok_or_else(|| StoreError::Invalid("body.path".into()))?;
             rematerialize_prop(tx, node, path)?;
         }
-        KIND_GENESIS | KIND_CAP_GRANT | KIND_CAP_REVOKE => {}
+        KIND_GENESIS | KIND_CAP_GRANT => {}
+        KIND_CAP_REVOKE => {
+            rematerialize_encrypted_props(tx)?;
+        }
         KIND_KEY_RECORD => {
-            apply_group_key_record(tx, wire, adopt_current)?;
+            apply_key_record(tx, wire, adopt_current)?;
             rematerialize_encrypted_props(tx)?;
         }
         _ => unreachable!("wire kind was validated"),
@@ -2574,6 +2591,15 @@ fn validate_group_key_wraps(
         let w = wrap
             .as_object()
             .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
+        let keys: BTreeSet<&str> = w.keys().map(String::as_str).collect();
+        if keys.len() != 4
+            || !keys.contains("recipient")
+            || !keys.contains("eph_pk")
+            || !keys.contains("nonce")
+            || !keys.contains("wrapped")
+        {
+            return Err(StoreError::Invalid(KEY_WRAP_INVALID.into()));
+        }
         wrap_hex_len(w, "recipient", WRAP_RECIPIENT_LEN)?;
         wrap_hex_len(w, "eph_pk", WRAP_EPH_PK_LEN)?;
         wrap_hex_len(w, "nonce", WRAP_NONCE_LEN)?;
@@ -3381,6 +3407,110 @@ fn body_hex_field(v: &serde_json::Value, key: &str) -> Result<[u8; 32], StoreErr
     decode32(hex)
 }
 
+fn apply_key_record(
+    tx: &dyn BackendTxn,
+    wire: &WireOp,
+    adopt_as_current: bool,
+) -> Result<(), StoreError> {
+    match wire.body.get("kr").and_then(|v| v.as_u64()) {
+        Some(KR_DEVICE_CERT) => apply_device_principal(tx, wire),
+        Some(KR_GROUP_KEY) => apply_group_key_record(tx, wire, adopt_as_current),
+        _ => Ok(()),
+    }
+}
+
+fn apply_device_principal(tx: &dyn BackendTxn, wire: &WireOp) -> Result<(), StoreError> {
+    let Some(seed_raw) = tx.meta_get("seed")? else {
+        return Ok(());
+    };
+    let seed: [u8; 32] = seed_raw
+        .try_into()
+        .map_err(|_| StoreError::Invalid("seed length".into()))?;
+    let local_pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+    let device = body_hex_field(&wire.body, "device")?;
+    if device != local_pk {
+        return Ok(());
+    }
+    let principal = body_hex_field(&wire.body, "principal")?;
+    tx.meta_set(META_PRINCIPAL, &principal)?;
+    Ok(())
+}
+
+fn local_peer_and_principal(tx: &dyn BackendTxn) -> Result<([u8; 32], [u8; 32]), StoreError> {
+    let Some(seed_raw) = tx.meta_get("seed")? else {
+        return Err(StoreError::Invalid("seed missing".into()));
+    };
+    let seed: [u8; 32] = seed_raw
+        .try_into()
+        .map_err(|_| StoreError::Invalid("seed length".into()))?;
+    let pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+    let peer = *blake3::hash(&pk).as_bytes();
+    let principal = match tx.meta_get(META_PRINCIPAL)? {
+        Some(raw) if raw.len() == 32 => {
+            let mut id = [0u8; 32];
+            id.copy_from_slice(&raw);
+            id
+        }
+        _ => peer,
+    };
+    Ok((peer, principal))
+}
+
+fn subject_may_open_at(applied: &[WireOp], ds: &str, subjects: &[[u8; 32]], note_p: u64) -> bool {
+    let subject_hex: BTreeSet<String> = subjects.iter().map(|s| hex::encode(s)).collect();
+    if let Some(genesis) = applied.iter().find(|op| op.kind == KIND_GENESIS)
+        && let Some(founder) = genesis.body.get("founder").and_then(|v| v.as_str())
+        && subject_hex.contains(founder)
+    {
+        return true;
+    }
+    let revokes: Vec<(&str, u64)> = applied
+        .iter()
+        .filter(|op| op.kind == KIND_CAP_REVOKE)
+        .filter_map(|op| {
+            let grant = op.body.get("grant").and_then(|v| v.as_str())?;
+            Some((grant, op.ts.p))
+        })
+        .collect();
+    for grant in applied.iter().filter(|op| op.kind == KIND_CAP_GRANT) {
+        let subject = grant
+            .body
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !subject_hex.contains(subject) {
+            continue;
+        }
+        let ds_bind = grant
+            .body
+            .get("ds_bind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if ds_bind != ds {
+            continue;
+        }
+        if grant.ts.p > note_p {
+            continue;
+        }
+        if grant
+            .body
+            .get("expiry")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|exp| note_p >= exp)
+        {
+            continue;
+        }
+        if revokes
+            .iter()
+            .any(|(id, at)| *id == grant.id.as_str() && *at <= note_p)
+        {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
 fn apply_group_key_record(
     tx: &dyn BackendTxn,
     wire: &WireOp,
@@ -3395,9 +3525,7 @@ fn apply_group_key_record(
     let seed: [u8; 32] = seed_raw
         .try_into()
         .map_err(|_| StoreError::Invalid("seed length".into()))?;
-    let signing = SigningKey::from_bytes(&seed);
-    let pk = signing.verifying_key().to_bytes();
-    let me = *blake3::hash(&pk).as_bytes();
+    let (me_peer, me_principal) = local_peer_and_principal(tx)?;
     let ds = decode32(&wire.ds)?;
     let kid_hex = wire
         .body
@@ -3415,17 +3543,19 @@ fn apply_group_key_record(
         .ok_or_else(|| StoreError::Invalid("body.wraps".into()))?;
     for wrap_json in wraps {
         let wrap = parse_wrap(wrap_json)?;
-        if wrap.recipient != me {
-            continue;
-        }
-        if let Ok(key) = unwrap_group_key(&wrap, &ds, &kid, &me, &seed) {
-            let mut ring = load_keyring(tx)?;
-            ring.insert(kid, key);
-            save_keyring(tx, &ring)?;
-            if adopt_as_current {
-                tx.meta_set(META_KEY_CURRENT, &kid)?;
+        for recipient in [me_peer, me_principal] {
+            if wrap.recipient != recipient {
+                continue;
             }
-            break;
+            if let Ok(key) = unwrap_group_key(&wrap, &ds, &kid, &recipient, &seed) {
+                let mut ring = load_keyring(tx)?;
+                ring.insert(kid, key);
+                save_keyring(tx, &ring)?;
+                if adopt_as_current {
+                    tx.meta_set(META_KEY_CURRENT, &kid)?;
+                }
+                return Ok(());
+            }
         }
     }
     Ok(())
@@ -3489,6 +3619,20 @@ fn open_encrypted_lww(
         ep: wire.ep,
         path: path.to_string(),
     };
+    if tx
+        .meta_get(META_AUTH)
+        .ok()
+        .flatten()
+        .is_some_and(|v| v.first() == Some(&1))
+    {
+        let applied = load_applied_wires(tx)?;
+        let (peer, principal) = local_peer_and_principal(tx)?;
+        if !subject_may_open_at(&applied, &wire.ds, &[peer, principal], winning.physical_ms) {
+            return Err(StoreError::Crypto(
+                "encrypted value: membership revoked at open".into(),
+            ));
+        }
+    }
     let ring = load_keyring(tx)?;
     for key in ring.values() {
         if let Ok(pt) = open(key, envelope, &ctx)

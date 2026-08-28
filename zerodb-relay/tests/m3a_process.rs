@@ -2,12 +2,12 @@
 //! Speaks RELAY 0.2.2-draft envelopes. Persist path now requires M3b-sig
 //! admission; protocol fixtures mint signed experimental ops.
 
-use ed25519_dalek::{Signer, SigningKey};
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::relay::{
-    DIR_RELAY_TO_PEER, DOMAIN_RELAY_AUTH, ERR_AUTH_FAILED, MSG_AUTH, MSG_CHALLENGE, MSG_ERROR,
+    AuthTranscript, DIR_RELAY_TO_PEER, ERR_AUTH_FAILED, MSG_AUTH, MSG_CHALLENGE, MSG_ERROR,
     MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
     MSG_SYNC_RESPONSE, MSG_WELCOME, authenticate, mint_experimental_relay_op, peer_id_from_pk,
+    sign_auth_for_hello,
 };
 use zerodb_relay::{Relay, RelaySession};
 
@@ -96,10 +96,8 @@ fn auth_for(nonce: &[u8; 32]) -> Vec<u8> {
 }
 
 fn auth_for_rid(nonce: &[u8; 32], request_id: u32) -> Vec<u8> {
-    let key = SigningKey::from_bytes(&SK);
-    let mut msg = DOMAIN_RELAY_AUTH.to_vec();
-    msg.extend_from_slice(nonce);
-    let sig = key.sign(&msg).to_bytes();
+    let caps = ["dual-root", "resume-cursor", "reject-ack"];
+    let sig = sign_auth_for_hello(&SK, &PK, &caps, nonce);
     encode_env(
         MSG_AUTH,
         request_id,
@@ -294,7 +292,14 @@ fn claimed_peer_id_mismatch_is_auth_failed() {
     let (ty, _, pl) = decode_env(&out[0]);
     assert_eq!(ty, MSG_ERROR);
     assert_eq!(as_u64(map_get(&pl, "code")), ERR_AUTH_FAILED as u64);
-    let _ = authenticate(&[0xff; 32], &PK, &NONCE, &[0u8; 64]);
+    let t = AuthTranscript::for_relay_hello(
+        [0xff; 32],
+        PK,
+        1,
+        &["dual-root", "resume-cursor", "reject-ack"],
+        NONCE,
+    );
+    let _ = authenticate(&[0xff; 32], &PK, &t, &[0u8; 64]);
 }
 
 #[test]

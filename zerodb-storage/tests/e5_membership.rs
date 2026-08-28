@@ -11,8 +11,8 @@ use zerodb_core::auth::{SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE};
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::op::{OpEnvelope, OpTs};
 use zerodb_core::relay::{
-    DOMAIN_RELAY_AUTH, MSG_AUTH, MSG_ERROR, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST,
-    peer_id_from_pk,
+    MSG_AUTH, MSG_ERROR, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST, peer_id_from_pk,
+    sign_auth_for_hello,
 };
 use zerodb_core::sign::{DOMAIN_OP_SIG, sign_op};
 use zerodb_relay::{Relay, RelaySession};
@@ -172,9 +172,9 @@ fn handshake(session: &mut RelaySession, seed: &[u8; 32]) {
     let env = cbor::decode(&challenge[0]).unwrap();
     let nonce =
         as_bytes(map_get(map_get(&env, "payload").expect("payload"), "nonce").expect("nonce"));
-    let mut preimage = DOMAIN_RELAY_AUTH.to_vec();
-    preimage.extend_from_slice(nonce);
-    let signature = key.sign(&preimage).to_bytes();
+    let mut n = [0u8; 32];
+    n.copy_from_slice(nonce);
+    let signature = sign_auth_for_hello(seed, &public_key, &[] as &[&str], &n);
     let auth = encode_env(
         MSG_AUTH,
         1,

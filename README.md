@@ -82,4 +82,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-Current work is **M3c** (signed `SchemaEpoch`, independent TS wire peer). Pinned: Stage 2/3, H10 leftovers, handshake/TLS beyond payload/batch. All formats remain draft-1 and unfrozen. Do not claim M3b exit.
+Current work is **M3c** (signed `SchemaEpoch`, independent TS wire peer). Pinned: Stage 2/3, H6 P2P (M4), H10 open (leftovers implemented, not closed), M3b remainder. All formats remain draft-1 and unfrozen. Do not claim M3b exit.

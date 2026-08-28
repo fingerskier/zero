@@ -5,7 +5,7 @@
   "invariants": [
     "I-9"
   ],
-  "description": "HELLO/CHALLENGE/AUTH/WELCOME: claimed HELLO.peer_id MUST equal BLAKE3(pk); AUTH signs domain(relay_auth)||nonce; WELCOME capabilities are the sorted intersection (RELAY §4.1 / §5).",
+  "description": "HELLO/CHALLENGE/AUTH/WELCOME: claimed HELLO.peer_id MUST equal BLAKE3(pk); AUTH signs domain(relay_handshake)||canonical CBOR(transcript); WELCOME capabilities are the sorted intersection (RELAY §4.1 / §5). Draft AUTH preimage; not a format freeze.",
   "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
   "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
   "secret_key": "560295411cb3771a4892c53fab032abaa0dc96b7a6ed7be6c64865551d062dfa",
@@ -55,9 +55,9 @@
       "type": 3,
       "request_id": 1,
       "payload": {
-        "signature": "78ca520ac39feb33aa456fda8fdad1d0b887397382490aac652919dad57daf14e9cd8473ae3b41ba169414348a4702136d4b3ecc5a9315776e0d9471ea9a3005"
+        "signature": "360f4c65624891fae66cd43157089e37ccede33a9d19aa6c9afd2c14781032247c152ed83a3994b15e65835b5672345b7de8d454ff095333198f817675dd6708"
       },
-      "cbor_hex": "a3647479706503677061796c6f6164a1697369676e6174757265584078ca520ac39feb33aa456fda8fdad1d0b887397382490aac652919dad57daf14e9cd8473ae3b41ba169414348a4702136d4b3ecc5a9315776e0d9471ea9a30056a726571756573745f696401"
+      "cbor_hex": "a3647479706503677061796c6f6164a1697369676e61747572655840360f4c65624891fae66cd43157089e37ccede33a9d19aa6c9afd2c14781032247c152ed83a3994b15e65835b5672345b7de8d454ff095333198f817675dd67086a726571756573745f696401"
     },
     {
       "dir": "R→P",
@@ -91,6 +91,6 @@
       "reject-ack",
       "resume-cursor"
     ],
-    "signature": "78ca520ac39feb33aa456fda8fdad1d0b887397382490aac652919dad57daf14e9cd8473ae3b41ba169414348a4702136d4b3ecc5a9315776e0d9471ea9a3005"
+    "signature": "360f4c65624891fae66cd43157089e37ccede33a9d19aa6c9afd2c14781032247c152ed83a3994b15e65835b5672345b7de8d454ff095333198f817675dd6708"
   }
 }

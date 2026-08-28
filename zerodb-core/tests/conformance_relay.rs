@@ -8,11 +8,11 @@ use serde_json::Value as Json;
 use zerodb_core::cbor::{Cbor, encode};
 use zerodb_core::merkle::MerkleOp;
 use zerodb_core::relay::{
-    DIR_PEER_TO_RELAY, DIR_RELAY_TO_PEER, ERR_AUTH_FAILED, FrontierTip, HeldOp, MSG_AUTH,
-    MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE,
-    MSG_WELCOME, authenticate, expected_response_types, fixed_direction, is_request, is_response,
-    known_message_type, negotiate_capabilities, peer_id_from_pk, required_payload_keys,
-    required_sync_root, retransmit, root_hex, sign_auth,
+    AuthTranscript, DIR_PEER_TO_RELAY, DIR_RELAY_TO_PEER, ERR_AUTH_FAILED, FrontierTip, HeldOp,
+    MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST,
+    MSG_SYNC_RESPONSE, MSG_WELCOME, authenticate, expected_response_types, fixed_direction,
+    is_request, is_response, known_message_type, negotiate_capabilities, peer_id_from_pk,
+    required_payload_keys, required_sync_root, retransmit, root_hex, sign_auth,
 };
 
 fn hex_to_bytes(s: &str) -> Vec<u8> {
@@ -171,7 +171,10 @@ fn check_handshake(v: &Json, path: &Path) {
             .unwrap_or_else(|| panic!("{}: claimed HELLO.peer_id required", path.display())),
     );
     let pid = bytes_to_hex(&peer_id_from_pk(&pk));
-    let honest = sign_auth(&seed, &nonce);
+    let hello_caps = strs(&v["hello_capabilities"]);
+    let version = v["protocol_version"].as_u64().unwrap_or(1) as u8;
+    let transcript = AuthTranscript::for_relay_hello(claimed, pk, version, &hello_caps, nonce);
+    let honest = sign_auth(&seed, &transcript);
     let sig = if let Some(s) = v["frames"]
         .as_array()
         .and_then(|f| f.get(2))
@@ -183,7 +186,7 @@ fn check_handshake(v: &Json, path: &Path) {
     } else {
         honest
     };
-    let auth_ok = authenticate(&claimed, &pk, &nonce, &sig).is_ok();
+    let auth_ok = authenticate(&claimed, &pk, &transcript, &sig).is_ok();
     let expect = &v["expect"];
     assert_eq!(
         auth_ok,

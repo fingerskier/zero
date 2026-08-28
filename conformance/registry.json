@@ -59,6 +59,7 @@
     "value_aad":    "zerodb-value-aad-v1",
     "value_slot":   "zerodb-value-slot-v1",
     "relay_auth":   "zerodb-relay-auth-v1",
+    "relay_handshake": "zerodb-relay-auth-v2",
     "merkle_leaf":  "zerodb-merkle-leaf-v1",
     "merkle_node":  "zerodb-merkle-node-v1",
     "merkle_empty": "zerodb-merkle-empty-v1",

@@ -63,7 +63,10 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
-| M3b | Security remainder | open/pinned | E5–E8 live + advertised payload/batch limits are the bar carried into M3c. Remainder: H10 leftovers, handshake H5/H6, rate/subscription/connection quotas, two-key principal/device split, TLS. **Not** M3b exit. |
+| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH, session limits/TLS-outside-dev, and H10 leftovers landed as `M3b-h5` / `M3b-limits` / `M3b-h10-remain` below. H6 parked M4. **Not** M3b exit. |
+| M3b-h5 | Transcript AUTH (draft) | done(handshake + RELAY-HELLO-001 + limits H5 negatives) | `zerodb-relay-auth-v2` ‖ HELLO+nonce+intended WELCOME. v1 nonce-only `AUTH_FAILED`. Not a format freeze. |
+| M3b-limits | Session rate/sub/conn + plaintext listen | done(`zerodb-relay/tests/limits.rs`) | `0x305 TOO_MANY_SUBS`, `0x304 RATE_EXCEEDED` / `TOO_MANY_CONNECTIONS`, `--allow-insecure`. No global quota. |
+| M3b-h10-remain | H10 leftovers | done(`e6_encrypted_notes` H10 cases) | Offline-revoke at open, key-before/after-data hold, principal+device wrap, wrap-shape draft. **H10 not closed.** |
 | perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
 | perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
 
