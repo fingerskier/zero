@@ -2977,6 +2977,16 @@ fn check_wire_ingress(
     for dep in &wire.deps {
         let id = decode32(dep)?;
         if !tx.op_exists(&id)? && !pending.contains(&id) && !held.contains(&id) {
+            // Data ops may arrive before a matching KeyRecord (H10 bootstrap /
+            // offline rotate). Persist them so ciphertext is held, not dropped;
+            // rematerialize fail-closes until the key applies. Control ops
+            // still require their deps.
+            if matches!(
+                wire.kind,
+                KIND_CREATE_NODE | KIND_CREATE_EDGE | KIND_SET_PROPERTY | KIND_TOMBSTONE
+            ) {
+                continue;
+            }
             return Err(StoreError::Invalid(format!("missing dep {}", dep)));
         }
     }
@@ -3457,7 +3467,7 @@ fn local_peer_and_principal(tx: &dyn BackendTxn) -> Result<([u8; 32], [u8; 32]),
 }
 
 fn subject_may_open_at(applied: &[WireOp], ds: &str, subjects: &[[u8; 32]], note_p: u64) -> bool {
-    let subject_hex: BTreeSet<String> = subjects.iter().map(|s| hex::encode(s)).collect();
+    let subject_hex: BTreeSet<String> = subjects.iter().map(hex::encode).collect();
     if let Some(genesis) = applied.iter().find(|op| op.kind == KIND_GENESIS)
         && let Some(founder) = genesis.body.get("founder").and_then(|v| v.as_str())
         && subject_hex.contains(founder)

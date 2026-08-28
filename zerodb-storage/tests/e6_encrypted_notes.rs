@@ -799,16 +799,26 @@ fn e6_membership_at_open_blinds_same_key_after_revoke() {
 fn e6_encrypted_value_before_key_then_after() {
     let mut a = auth_store();
     let mut b = empty_store();
+    let mut c = empty_store();
     a.apply_schema_json(NOTE_SCHEMA).unwrap();
     a.grant_membership(&b.principal_hex(), &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC])
+        .unwrap();
+    a.grant_membership(&c.principal_hex(), &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC])
         .unwrap();
     let a_peer = a.principal_hex();
     let a_pk = a.author_pk_hex();
     let b_peer = b.principal_hex();
     let b_pk = b.author_pk_hex();
-    a.distribute_group_key(&pair(&a_peer, &a_pk, &b_peer, &b_pk))
-        .unwrap();
+    let c_peer = c.principal_hex();
+    let c_pk = c.author_pk_hex();
+    a.distribute_group_key(&[
+        (a_peer.as_str(), a_pk.as_str()),
+        (b_peer.as_str(), b_pk.as_str()),
+        (c_peer.as_str(), c_pk.as_str()),
+    ])
+    .unwrap();
     b.apply_schema_json(NOTE_SCHEMA).unwrap();
+    c.apply_schema_json(NOTE_SCHEMA).unwrap();
     let note = a.create_node("Note").unwrap();
     a.set_lww(&note, "body", SECRET).unwrap();
 
@@ -864,8 +874,6 @@ fn e6_encrypted_value_before_key_then_after() {
         "held ciphertext must open after the matching KeyRecord"
     );
 
-    let mut c = empty_store();
-    c.apply_schema_json(NOTE_SCHEMA).unwrap();
     c.import_bundle(&a.export_all().unwrap()).unwrap();
     assert_eq!(
         c.get_lww(&note, "body").unwrap().as_deref(),
@@ -879,6 +887,7 @@ fn e6_second_device_of_principal_opens_random_does_not() {
     let mut a = auth_store();
     let mut d1 = empty_store();
     a.apply_schema_json(NOTE_SCHEMA).unwrap();
+    d1.apply_schema_json(NOTE_SCHEMA).unwrap();
     a.grant_membership(&d1.principal_hex(), &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC])
         .unwrap();
     let d2_seed = [0xD2u8; 32];
