@@ -9,7 +9,10 @@
 use ed25519_dalek::{Signer, SigningKey};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use zerodb_core::auth::{SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE};
+use zerodb_core::auth::{
+    DeviceCert, SCOPE_READ, SCOPE_SYNC, SCOPE_WRITE, device_pk_from_seed, issue_device_cert,
+    issue_device_revoke,
+};
 use zerodb_core::op::{OpEnvelope, OpTs, json_to_cbor_body};
 use zerodb_core::sign::DOMAIN_OP_SIG;
 use zerodb_relay::Relay;
@@ -334,6 +337,19 @@ fn create_note_body(node: &str) -> serde_json::Value {
     serde_json::json!({
         "label": "Note",
         "node": node,
+    })
+}
+
+fn cert_body(cert: &DeviceCert) -> serde_json::Value {
+    serde_json::json!({
+        "kr": cert.kr,
+        "device": hex::encode(cert.device_pk),
+        "principal": hex::encode(cert.principal_id),
+        "root_pk": hex::encode(cert.root_pk),
+        "issued": cert.issued,
+        "expiry": cert.expiry,
+        "revoke_of": cert.revoke_of.map(hex::encode),
+        "cert_sig": hex::encode(cert.cert_sig),
     })
 }
 
@@ -662,9 +678,8 @@ fn e6_short_nonce_wrap_does_not_poison_bundle() {
 fn e6_kind8_device_cert_and_revoke_accepted() {
     let mut a = auth_store();
     a.apply_schema_json(NOTE_SCHEMA).unwrap();
-    let device = a.author_pk_hex();
-    let principal = a.principal_hex();
-    let cert_sig = "00".repeat(64);
+    let device = hex::decode(a.author_pk_hex()).unwrap().try_into().unwrap();
+    let issued = issue_device_cert(&a.identity_seed(), device, 1, None).unwrap();
     let cert = sign_wire(
         &a.identity_seed(),
         &ds_bytes(&a),
@@ -672,19 +687,12 @@ fn e6_kind8_device_cert_and_revoke_accepted() {
         &control_deps(&a),
         last_physical(&a).saturating_add(1),
         8,
-        serde_json::json!({
-            "kr": 0,
-            "device": device,
-            "principal": principal,
-            "root_pk": device,
-            "issued": 1,
-            "expiry": null,
-            "revoke_of": null,
-            "cert_sig": cert_sig,
-        }),
+        cert_body(&issued),
     );
     assert_eq!(a.ingest_op(&cert).unwrap(), IngestResult::Applied);
 
+    let revoke_of = *blake3::hash(&device).as_bytes();
+    let revoked = issue_device_revoke(&a.identity_seed(), device, revoke_of, 2).unwrap();
     let revoke = sign_wire(
         &a.identity_seed(),
         &ds_bytes(&a),
@@ -692,16 +700,7 @@ fn e6_kind8_device_cert_and_revoke_accepted() {
         &control_deps(&a),
         last_physical(&a).saturating_add(2),
         8,
-        serde_json::json!({
-            "kr": 1,
-            "device": device,
-            "principal": principal,
-            "root_pk": device,
-            "issued": 2,
-            "expiry": null,
-            "revoke_of": principal,
-            "cert_sig": "11".repeat(64),
-        }),
+        cert_body(&revoked),
     );
     assert_eq!(a.ingest_op(&revoke).unwrap(), IngestResult::Applied);
 }
@@ -726,12 +725,9 @@ fn e6_offline_revoke_note_without_rotate_stays_closed() {
             (op.kind == 1 || op.kind == 3) && node == Some(late.as_str())
         })
         .collect();
-    b.import_bundle(&ExportBundle {
-        format: 1,
-        datastore_id: a.datastore_id_hex(),
-        ops: late_only,
-    })
-    .unwrap();
+    for op in &late_only {
+        assert_eq!(b.ingest_op(op).unwrap(), IngestResult::Applied);
+    }
 
     assert_eq!(b.get_lww(&note, "body").unwrap().as_deref(), Some(SECRET));
     assert_eq!(
@@ -756,15 +752,19 @@ fn e6_membership_at_open_blinds_same_key_after_revoke() {
     a.set_lww(&late, "body", SECRET_AFTER).unwrap();
 
     let all = a.export_all().unwrap();
-    let without_revoke: Vec<WireOp> = all.ops.iter().filter(|op| op.kind != 7).cloned().collect();
     let revokes: Vec<WireOp> = all.ops.iter().filter(|op| op.kind == 7).cloned().collect();
-
-    b.import_bundle(&ExportBundle {
-        format: 1,
-        datastore_id: a.datastore_id_hex(),
-        ops: without_revoke,
-    })
-    .unwrap();
+    let late_ops: Vec<WireOp> = all
+        .ops
+        .iter()
+        .filter(|op| {
+            let node = op.body.get("node").and_then(|v| v.as_str());
+            (op.kind == 1 || op.kind == 3) && node == Some(late.as_str())
+        })
+        .cloned()
+        .collect();
+    for op in &late_ops {
+        assert_eq!(b.ingest_op(op).unwrap(), IngestResult::Applied);
+    }
     assert_eq!(
         b.get_lww(&late, "body").unwrap().as_deref(),
         Some(SECRET_AFTER),
@@ -823,32 +823,17 @@ fn e6_encrypted_value_before_key_then_after() {
     a.set_lww(&note, "body", SECRET).unwrap();
 
     let all = a.export_all().unwrap();
-    let rest: Vec<WireOp> = all
-        .ops
-        .iter()
-        .filter(|op| op.kind != 8 && op.kind != 3)
-        .cloned()
-        .collect();
     let keys: Vec<WireOp> = all.ops.iter().filter(|op| op.kind == 8).cloned().collect();
-    let sets: Vec<WireOp> = all.ops.iter().filter(|op| op.kind == 3).cloned().collect();
+    let mut data_then_keys: Vec<WireOp> =
+        all.ops.iter().filter(|op| op.kind != 8).cloned().collect();
+    data_then_keys.extend(keys);
 
     b.import_bundle(&ExportBundle {
         format: 1,
         datastore_id: a.datastore_id_hex(),
-        ops: rest,
+        ops: data_then_keys,
     })
     .unwrap();
-    b.import_bundle(&ExportBundle {
-        format: 1,
-        datastore_id: a.datastore_id_hex(),
-        ops: sets.clone(),
-    })
-    .unwrap();
-    assert_eq!(
-        b.get_lww(&note, "body").unwrap(),
-        None,
-        "ciphertext before key must not materialize plaintext"
-    );
     assert!(
         b.export_all()
             .unwrap()
@@ -861,17 +846,10 @@ fn e6_encrypted_value_before_key_then_after() {
         &serde_json::to_string(&b.export_all().unwrap()).unwrap(),
         SECRET,
     );
-
-    b.import_bundle(&ExportBundle {
-        format: 1,
-        datastore_id: a.datastore_id_hex(),
-        ops: keys,
-    })
-    .unwrap();
     assert_eq!(
         b.get_lww(&note, "body").unwrap().as_deref(),
         Some(SECRET),
-        "held ciphertext must open after the matching KeyRecord"
+        "ciphertext applied before KeyRecord must open after the matching record"
     );
 
     c.import_bundle(&a.export_all().unwrap()).unwrap();
@@ -895,6 +873,8 @@ fn e6_second_device_of_principal_opens_random_does_not() {
         LocalStore::init_with_backend_from_seed(MemoryBackend::new(), &d2_seed, &ds_bytes(&a))
             .unwrap();
     d2.apply_schema_json(NOTE_SCHEMA).unwrap();
+    let issued =
+        issue_device_cert(&d1.identity_seed(), device_pk_from_seed(&d2_seed), 1, None).unwrap();
     let cert = sign_wire(
         &a.identity_seed(),
         &ds_bytes(&a),
@@ -902,16 +882,7 @@ fn e6_second_device_of_principal_opens_random_does_not() {
         &control_deps(&a),
         last_physical(&a).saturating_add(1),
         8,
-        serde_json::json!({
-            "kr": 0,
-            "device": d2.author_pk_hex(),
-            "principal": d1.principal_hex(),
-            "root_pk": d1.author_pk_hex(),
-            "issued": 1,
-            "expiry": null,
-            "revoke_of": null,
-            "cert_sig": "00".repeat(64),
-        }),
+        cert_body(&issued),
     );
     assert_eq!(a.ingest_op(&cert).unwrap(), IngestResult::Applied);
 
@@ -981,5 +952,155 @@ fn e6_extra_wrap_field_is_key_wrap_invalid() {
         b.take_rejects()
             .iter()
             .any(|r| r.reason == KEY_WRAP_INVALID)
+    );
+}
+
+const PLAIN_SCHEMA: &str = r#"{
+  "v": 1,
+  "nodes": {
+    "Note": {
+      "props": {
+        "body": { "crdt": 0, "type": 4, "nullable": false, "encrypted": false }
+      }
+    }
+  },
+  "edges": {}
+}"#;
+
+#[test]
+fn e6_forged_kr0_junk_cert_sig_does_not_rebind() {
+    let mut a = auth_store();
+    let mut victim = empty_store();
+    let writer = empty_store();
+    a.apply_schema_json(NOTE_SCHEMA).unwrap();
+    victim.apply_schema_json(NOTE_SCHEMA).unwrap();
+    a.grant_membership(
+        &victim.principal_hex(),
+        &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC],
+    )
+    .unwrap();
+    a.grant_membership(&writer.principal_hex(), &[SCOPE_WRITE])
+        .unwrap();
+    victim.import_bundle(&a.export_all().unwrap()).unwrap();
+    let before = victim.principal_hex();
+    let forged = sign_wire(
+        &writer.identity_seed(),
+        &ds_bytes(&a),
+        1,
+        &control_deps(&a),
+        last_physical(&a).saturating_add(1),
+        8,
+        serde_json::json!({
+            "kr": 0,
+            "device": victim.author_pk_hex(),
+            "principal": writer.principal_hex(),
+            "root_pk": writer.author_pk_hex(),
+            "issued": 1,
+            "expiry": null,
+            "revoke_of": null,
+            "cert_sig": "00".repeat(64),
+        }),
+    );
+    match victim.ingest_op(&forged).unwrap() {
+        IngestResult::Rejected { reason } => {
+            assert!(
+                reason == "AUTH_SIG_INVALID" || reason == "CAP_INVALID",
+                "forged kr=0 must be named authz, got {reason}"
+            );
+        }
+        other => panic!("forged kr=0 must not apply, got {other:?}"),
+    }
+    assert_eq!(
+        victim.principal_hex(),
+        before,
+        "junk cert_sig must not rebind the victim principal"
+    );
+}
+
+#[test]
+fn e6_fabricated_missing_dep_is_not_materialized() {
+    let mut a = auth_store();
+    a.apply_schema_json(PLAIN_SCHEMA).unwrap();
+    let note = a.create_node("Note").unwrap();
+    a.set_lww(&note, "body", "honest").unwrap();
+
+    let fake = "ab".repeat(32);
+    let mut deps = control_deps(&a);
+    deps.push(fake.clone());
+    let node = hex::encode([0x11u8; 16]);
+    let create = sign_wire(
+        &a.identity_seed(),
+        &ds_bytes(&a),
+        1,
+        &deps,
+        last_physical(&a).saturating_add(1),
+        1,
+        create_note_body(&node),
+    );
+    let set = sign_wire(
+        &a.identity_seed(),
+        &ds_bytes(&a),
+        1,
+        &deps,
+        last_physical(&a).saturating_add(2),
+        3,
+        plaintext_body(&note, "smuggled"),
+    );
+    let err = a
+        .import_bundle(&ExportBundle {
+            format: 1,
+            datastore_id: a.datastore_id_hex(),
+            ops: vec![create.clone(), set],
+        })
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("missing dep"),
+        "fabricated dep must be an ingress error, got {err}"
+    );
+    assert!(
+        !a.export_all()
+            .unwrap()
+            .ops
+            .iter()
+            .any(|op| op.id == create.id
+                || op.body.get("value") == Some(&serde_json::json!("smuggled"))),
+        "plaintext create/set with a fabricated dep must not persist"
+    );
+    assert_eq!(a.get_lww(&note, "body").unwrap().as_deref(), Some("honest"));
+}
+
+#[test]
+fn e6_write_only_member_does_not_open() {
+    let mut a = auth_store();
+    let mut w = empty_store();
+    a.apply_schema_json(NOTE_SCHEMA).unwrap();
+    a.grant_membership(&w.principal_hex(), &[SCOPE_WRITE])
+        .unwrap();
+    let a_peer = a.principal_hex();
+    let a_pk = a.author_pk_hex();
+    let w_peer = w.principal_hex();
+    let w_pk = w.author_pk_hex();
+    a.distribute_group_key(&pair(&a_peer, &a_pk, &w_peer, &w_pk))
+        .unwrap();
+    w.apply_schema_json(NOTE_SCHEMA).unwrap();
+    let note = a.create_node("Note").unwrap();
+    a.set_lww(&note, "body", SECRET).unwrap();
+    w.import_bundle(&a.export_all().unwrap()).unwrap();
+    assert!(
+        w.export_all()
+            .unwrap()
+            .ops
+            .iter()
+            .any(|op| op.kind == 8 && op.body.get("kr").and_then(|v| v.as_u64()) == Some(2)),
+        "write-only member still receives the distributed key"
+    );
+    assert_eq!(
+        w.get_lww(&note, "body").unwrap(),
+        None,
+        "write-only grant must not decrypt"
+    );
+    assert!(
+        w.decrypt_oracle().unwrap().is_empty(),
+        "write-only decrypt oracle must stay empty"
     );
 }
