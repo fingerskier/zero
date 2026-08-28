@@ -65,6 +65,7 @@ fn set_ws_read_timeout(
 /// After each client frame the relay writes one or more binary envelopes.
 /// Completion is request-id bound (known single-response types / `remaining`),
 /// not a 200 ms framing timeout. `SYNC_TIMEOUT` is a failure bound only.
+/// Non-merkle SYNC OPS catch-up is unsupported; merkle SYNC_RESPONSE is one frame.
 fn collect_ws_replies(
     ws: &mut WebSocket<MaybeTlsStream<TcpStream>>,
     request: &[u8],
@@ -81,9 +82,6 @@ fn collect_ws_replies(
             Ok(Message::Binary(data)) => {
                 out.push(data);
                 if zerodb_storage::relay_client::replies_complete(request, &out) {
-                    if zerodb_storage::relay_client::replies_need_ready_drain(request, &out) {
-                        drain_ready_frames(ws, &mut out);
-                    }
                     break;
                 }
             }
@@ -113,29 +111,6 @@ fn collect_ws_replies(
         return Err("relay sent no reply".into());
     }
     Ok(out)
-}
-
-/// Pull frames already in the socket buffer (legacy SYNC OPS). Zero/1 ms —
-/// not a framing wait.
-fn drain_ready_frames(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, out: &mut Vec<Vec<u8>>) {
-    let _ = set_ws_read_timeout(ws, Some(Duration::from_millis(1)));
-    loop {
-        match ws.read() {
-            Ok(Message::Binary(data)) => out.push(data),
-            Ok(Message::Close(_)) => break,
-            Ok(_) => continue,
-            Err(tungstenite::Error::ConnectionClosed) => break,
-            Err(tungstenite::Error::Io(e))
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                break;
-            }
-            Err(_) => break,
-        }
-    }
 }
 
 type Subscriber = ThreadsafeFunction<serde_json::Value, (), serde_json::Value, Status, false, true>;

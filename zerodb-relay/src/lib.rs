@@ -8,4 +8,4 @@
 mod session;
 mod store;
 
-pub use session::{Relay, RelayError, RelaySession};
+pub use session::{MAX_FRAME_BYTES, Relay, RelayError, RelaySession};

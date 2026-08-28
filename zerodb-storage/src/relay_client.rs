@@ -86,7 +86,7 @@ where
         "WELCOME",
     )?;
     let (_, _, welcome_pl) = decode_env(&welcome)?;
-    let (max_batch_ops, max_batch_bytes) = welcome_limits(&welcome_pl);
+    let (max_batch_ops, max_batch_bytes, max_payload_bytes) = welcome_limits(&welcome_pl);
 
     let ds = join_ds
         .map(str::to_string)
@@ -107,7 +107,13 @@ where
             .iter()
             .map(wire_to_relay)
             .collect::<Result<Vec<_>, _>>()?;
-        for batch in split_ops_batches(&ds, &ops_cbor, max_batch_ops, max_batch_bytes)? {
+        for batch in split_ops_batches(
+            &ds,
+            &ops_cbor,
+            max_batch_ops,
+            max_batch_bytes,
+            max_payload_bytes,
+        )? {
             let frame = encode_env(MSG_OPS, request_id, ops_payload(&ds, &batch));
             request_id = request_id.saturating_add(1);
             let ack = expect_type(
@@ -373,8 +379,9 @@ where
 
 const DEFAULT_MAX_BATCH_OPS: usize = 64;
 const DEFAULT_MAX_BATCH_BYTES: usize = 16_777_216;
+const DEFAULT_MAX_PAYLOAD_BYTES: usize = 1_048_576;
 
-fn welcome_limits(welcome: &Cbor) -> (usize, usize) {
+fn welcome_limits(welcome: &Cbor) -> (usize, usize, usize) {
     let limits = map_get(welcome, "limits");
     let ops = match map_get(limits, "max_batch_ops") {
         Cbor::Uint(n) if *n > 0 => *n as usize,
@@ -384,7 +391,11 @@ fn welcome_limits(welcome: &Cbor) -> (usize, usize) {
         Cbor::Uint(n) if *n > 0 => *n as usize,
         _ => DEFAULT_MAX_BATCH_BYTES,
     };
-    (ops, bytes)
+    let payload = match map_get(limits, "max_payload_bytes") {
+        Cbor::Uint(n) if *n > 0 => *n as usize,
+        _ => DEFAULT_MAX_PAYLOAD_BYTES,
+    };
+    (ops, bytes, payload)
 }
 
 fn ops_payload(ds: &str, ops: &[Cbor]) -> Cbor {
@@ -411,6 +422,7 @@ fn split_ops_batches(
     ops: &[Cbor],
     max_ops: usize,
     max_bytes: usize,
+    max_payload: usize,
 ) -> Result<Vec<Vec<Cbor>>, StoreError> {
     let max_ops = max_ops.max(1);
     let empty_len = encode_env(MSG_OPS, 0, ops_payload(ds, &[])).len();
@@ -418,6 +430,9 @@ fn split_ops_batches(
     let mut sized = Vec::with_capacity(ops.len());
     for op in ops {
         let n = cbor::encode(op).map_err(|e| err(&e.to_string()))?.len();
+        if n > max_payload {
+            return Err(err("single op exceeds max_payload_bytes"));
+        }
         sized.push((op.clone(), n));
     }
 
@@ -613,17 +628,16 @@ fn frontier_from_ops(ops: &[WireOp], ds: &str) -> Result<Cbor, StoreError> {
 /// Whether `replies` is a complete response to `request` (request-id bound).
 /// Single-response types complete on the matching frame; `DELTA_BATCH` uses
 /// `remaining`; merkle `SYNC_RESPONSE` is one frame. Not a timeout heuristic.
+/// Non-merkle SYNC OPS catch-up is unsupported.
 pub fn replies_complete(request: &[u8], replies: &[Vec<u8>]) -> bool {
     let Ok((req_ty, req_id, _)) = decode_env(request) else {
         return !replies.is_empty();
     };
-    let mut saw_sync = false;
-    let mut sync_is_merkle = false;
-    for frame in replies {
+    for (i, frame) in replies.iter().enumerate() {
         let Ok((ty, id, pl)) = decode_env(frame) else {
             continue;
         };
-        if ty == MSG_ERROR && id == req_id {
+        if ty == MSG_ERROR && (id == req_id || (id == 0 && i == 0)) {
             return true;
         }
         if id != req_id && ty != MSG_OPS {
@@ -641,34 +655,8 @@ pub fn replies_complete(request: &[u8], replies: &[Vec<u8>]) -> bool {
                     return true;
                 }
             }
-            MSG_SYNC_REQUEST if ty == MSG_SYNC_RESPONSE && id == req_id => {
-                saw_sync = true;
-                sync_is_merkle = !matches!(map_get(&pl, "merkle_format_version"), Cbor::Null);
-                if sync_is_merkle {
-                    return true;
-                }
-            }
+            MSG_SYNC_REQUEST if ty == MSG_SYNC_RESPONSE && id == req_id => return true,
             _ => {}
-        }
-    }
-    // Legacy SYNC (no merkle): SYNC_RESPONSE plus any OPS already collected.
-    saw_sync && !sync_is_merkle
-}
-
-/// Legacy SYNC may append `OPS` frames already on the wire after `SYNC_RESPONSE`.
-pub fn replies_need_ready_drain(request: &[u8], replies: &[Vec<u8>]) -> bool {
-    let Ok((req_ty, req_id, _)) = decode_env(request) else {
-        return false;
-    };
-    if req_ty != MSG_SYNC_REQUEST {
-        return false;
-    }
-    for frame in replies {
-        let Ok((ty, id, pl)) = decode_env(frame) else {
-            continue;
-        };
-        if ty == MSG_SYNC_RESPONSE && id == req_id {
-            return matches!(map_get(&pl, "merkle_format_version"), Cbor::Null);
         }
     }
     false
@@ -691,7 +679,7 @@ mod split_tests {
         let ops: Vec<Cbor> = (0..5)
             .map(|i| Cbor::Map(vec![("n".into(), Cbor::Uint(i))]))
             .collect();
-        let batches = split_ops_batches("ds", &ops, 2, 1_000_000).unwrap();
+        let batches = split_ops_batches("ds", &ops, 2, 1_000_000, 1_000_000).unwrap();
         assert_eq!(batches.len(), 3);
         assert_eq!(batches[0].len(), 2);
         assert_eq!(batches[1].len(), 2);
@@ -701,8 +689,17 @@ mod split_tests {
     #[test]
     fn split_rejects_single_op_over_byte_cap() {
         let huge = Cbor::Bytes(vec![0; 64]);
-        let err = split_ops_batches("ds", std::slice::from_ref(&huge), 8, 20).unwrap_err();
+        let err =
+            split_ops_batches("ds", std::slice::from_ref(&huge), 8, 20, 1_000_000).unwrap_err();
         assert!(err.to_string().contains("exceeds"), "got {err}");
+    }
+
+    #[test]
+    fn split_rejects_single_op_over_payload_cap() {
+        let huge = Cbor::Bytes(vec![0; 64]);
+        let err =
+            split_ops_batches("ds", std::slice::from_ref(&huge), 8, 1_000_000, 20).unwrap_err();
+        assert!(err.to_string().contains("max_payload_bytes"), "got {err}");
     }
 
     #[test]
@@ -725,5 +722,22 @@ mod split_tests {
         );
         assert!(!replies_complete(&dreq, std::slice::from_ref(&more)));
         assert!(replies_complete(&dreq, &[more, last]));
+    }
+
+    #[test]
+    fn replies_complete_error_matching_or_id0_first() {
+        let req = encode_env(MSG_OPS, 7, Cbor::Map(vec![]));
+        let err_match = encode_env(MSG_ERROR, 7, Cbor::Map(vec![]));
+        let err0 = encode_env(MSG_ERROR, 0, Cbor::Map(vec![]));
+        let err_other = encode_env(MSG_ERROR, 3, Cbor::Map(vec![]));
+        assert!(replies_complete(&req, &[err_match]));
+        assert!(replies_complete(&req, &[err0.clone()]));
+        assert!(!replies_complete(&req, &[err_other]));
+        let stray = encode_env(MSG_OPS, 0, Cbor::Map(vec![]));
+        assert!(!replies_complete(&req, &[stray, err0]));
+
+        let sreq = encode_env(MSG_SYNC_REQUEST, 4, Cbor::Map(vec![]));
+        let sresp = encode_env(MSG_SYNC_RESPONSE, 4, Cbor::Map(vec![]));
+        assert!(replies_complete(&sreq, &[sresp]));
     }
 }

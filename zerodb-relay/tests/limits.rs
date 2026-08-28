@@ -7,7 +7,7 @@ use zerodb_core::relay::{
     DOMAIN_RELAY_AUTH, ERR_PAYLOAD_TOO_LARGE, MSG_AUTH, MSG_ERROR, MSG_HELLO, MSG_OPS, MSG_WELCOME,
     mint_experimental_relay_op, peer_id_from_pk,
 };
-use zerodb_relay::Relay;
+use zerodb_relay::{MAX_FRAME_BYTES, Relay};
 
 const PK: [u8; 32] = [
     0x26, 0xb7, 0x07, 0x2d, 0x6b, 0x2b, 0x0e, 0x99, 0x27, 0xbe, 0x59, 0xf4, 0x7b, 0x3b, 0x9a, 0xb7,
@@ -96,14 +96,73 @@ fn handshake(sess: &mut zerodb_relay::RelaySession) {
     assert_eq!(decode_env(&out[0]).0, MSG_WELCOME);
 }
 
+fn pad_op(op: Cbor, pad: usize) -> Cbor {
+    let Cbor::Map(mut ents) = op else {
+        panic!("op map");
+    };
+    ents.push(("pad".into(), Cbor::Bytes(vec![0; pad])));
+    Cbor::Map(ents)
+}
+
 #[test]
 fn oversized_frame_rejected_before_decode() {
     let relay = Relay::memory();
     let mut sess = relay.accept();
-    let huge = vec![0u8; 1_048_576 + 1];
+    let huge = vec![0u8; MAX_FRAME_BYTES + 1];
     let out = sess.handle(&huge).unwrap();
-    let (ty, _, pl) = decode_env(&out[0]);
+    let (ty, rid, pl) = decode_env(&out[0]);
     assert_eq!(ty, MSG_ERROR);
+    assert_eq!(rid, 0);
+    assert_eq!(as_u64(map_get(&pl, "code")), ERR_PAYLOAD_TOO_LARGE as u64);
+    assert_eq!(as_text(map_get(&pl, "message")), "PAYLOAD_TOO_LARGE");
+    assert_eq!(relay.op_count(DS).unwrap(), 0);
+}
+
+#[test]
+fn multi_op_over_one_mib_under_batch_is_decoded() {
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    handshake(&mut sess);
+    let ops = vec![
+        pad_op(mint_experimental_relay_op(&SK, DS, 40, 0, 1), 600_000),
+        pad_op(mint_experimental_relay_op(&SK, DS, 41, 0, 2), 600_000),
+    ];
+    let frame = encode_env(
+        MSG_OPS,
+        11,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text(DS.into())),
+            ("operations".into(), Cbor::Array(ops)),
+        ]),
+    );
+    assert!(frame.len() > 1_048_576);
+    assert!(frame.len() <= MAX_FRAME_BYTES);
+    let out = sess.handle(&frame).unwrap();
+    let (ty, rid, _) = decode_env(&out[0]);
+    assert_eq!(rid, 11);
+    assert_ne!(ty, MSG_ERROR, "aggregate >1 MiB must not be frame-rejected");
+    assert_eq!(ty, zerodb_core::relay::MSG_OP_ACK);
+}
+
+#[test]
+fn single_op_over_payload_rejected_with_request_id() {
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    handshake(&mut sess);
+    let op = pad_op(mint_experimental_relay_op(&SK, DS, 50, 0, 1), 1_048_576 + 8);
+    let frame = encode_env(
+        MSG_OPS,
+        12,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text(DS.into())),
+            ("operations".into(), Cbor::Array(vec![op])),
+        ]),
+    );
+    assert!(frame.len() <= MAX_FRAME_BYTES);
+    let out = sess.handle(&frame).unwrap();
+    let (ty, rid, pl) = decode_env(&out[0]);
+    assert_eq!(ty, MSG_ERROR);
+    assert_eq!(rid, 12);
     assert_eq!(as_u64(map_get(&pl, "code")), ERR_PAYLOAD_TOO_LARGE as u64);
     assert_eq!(as_text(map_get(&pl, "message")), "PAYLOAD_TOO_LARGE");
     assert_eq!(relay.op_count(DS).unwrap(), 0);
@@ -130,8 +189,9 @@ fn batch_over_max_ops_rejected_zero_writes() {
         "65 small ops must be under payload cap so the batch-ops check is what fires"
     );
     let out = sess.handle(&frame).unwrap();
-    let (ty, _, pl) = decode_env(&out[0]);
+    let (ty, rid, pl) = decode_env(&out[0]);
     assert_eq!(ty, MSG_ERROR);
+    assert_eq!(rid, 9);
     assert_eq!(as_u64(map_get(&pl, "code")), ERR_PAYLOAD_TOO_LARGE as u64);
     assert_eq!(relay.op_count(DS).unwrap(), 0);
 }

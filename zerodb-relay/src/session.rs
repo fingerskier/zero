@@ -33,6 +33,9 @@ pub enum RelayError {
 const MAX_BATCH_OPS: usize = 64;
 const MAX_BATCH_BYTES: usize = 16_777_216;
 const MAX_PAYLOAD_BYTES: usize = 1_048_576;
+/// Pre-decode ceiling: advertised per-OPS batch plus envelope wrap.
+/// `max_payload_bytes` is per-operation (enforced after decode).
+pub const MAX_FRAME_BYTES: usize = MAX_BATCH_BYTES + 1024;
 
 pub struct Inner {
     pub store: Box<dyn OpStore>,
@@ -230,7 +233,7 @@ impl RelaySession {
     }
 
     pub fn handle(&mut self, frame: &[u8]) -> Result<Vec<Vec<u8>>, RelayError> {
-        if frame.len() > MAX_PAYLOAD_BYTES {
+        if frame.len() > MAX_FRAME_BYTES {
             return Ok(vec![error_frame(
                 0,
                 ERR_PAYLOAD_TOO_LARGE,
@@ -369,10 +372,19 @@ impl RelaySession {
                 false,
             )]);
         }
-        let encoded_ops: usize = operations
-            .iter()
-            .map(|op| cbor::encode(op).map(|b| b.len()).unwrap_or(0))
-            .sum();
+        let mut encoded_ops = 0usize;
+        for op in operations {
+            let n = cbor::encode(op).map(|b| b.len()).unwrap_or(0);
+            if n > MAX_PAYLOAD_BYTES {
+                return Ok(vec![error_frame(
+                    env.request_id,
+                    ERR_PAYLOAD_TOO_LARGE,
+                    "PAYLOAD_TOO_LARGE",
+                    false,
+                )]);
+            }
+            encoded_ops = encoded_ops.saturating_add(n);
+        }
         if encoded_ops > MAX_BATCH_BYTES {
             return Ok(vec![error_frame(
                 env.request_id,
@@ -846,6 +858,11 @@ fn chunk_ops_frames(ds: &str, operations: Vec<Cbor>) -> Result<Vec<Vec<u8>>, Rel
         let n = cbor::encode(&op)
             .map_err(|e| RelayError::Protocol(e.to_string()))?
             .len();
+        if n > MAX_PAYLOAD_BYTES {
+            return Err(RelayError::Protocol(
+                "single op exceeds max_payload_bytes".into(),
+            ));
+        }
         sized.push((op, n));
     }
     let mut frames = Vec::new();
@@ -907,6 +924,11 @@ fn chunk_delta_frames(
         let n = cbor::encode(&op)
             .map_err(|e| RelayError::Protocol(e.to_string()))?
             .len();
+        if n > MAX_PAYLOAD_BYTES {
+            return Err(RelayError::Protocol(
+                "single op exceeds max_payload_bytes".into(),
+            ));
+        }
         sized.push((op, n));
     }
     let mut chunks: Vec<Vec<Cbor>> = Vec::new();
