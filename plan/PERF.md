@@ -1,12 +1,12 @@
 # ZeroDB performance review
 
 **Review date:** 2026-08-27  
-**Scope:** written against `bec091c`; current `main` is `979ac65` (set-before-create follow-on). Local SQLite/materialization/query paths, direct peer sync, relay sync, and relay persistence.  
+**Scope:** written against `bec091c`; Stage 0+1 landed on `9903280`. Local SQLite/materialization/query paths, direct peer sync, relay sync, and relay persistence.  
 **Status:** static code review, not a benchmark report. The repository has strong conformance and end-to-end coverage, but no repeatable performance benchmark suite yet. Claims below distinguish observed algorithmic work from hypotheses that still need measurement.
 
 ## Disposition
 
-**Stage 0+1** is current work (this PR): small deterministic fixtures/phase counters, advertised relay limit enforcement, prove import≡replay then drop redundant push `replay_all`, batched relay SQLite inserts, request-id-bound NAPI drain, clone-free batch chunking, cheap order indexes + bulk property reads, and one ordered export in relay client sync.
+**Stage 0+1** landed on `9903280`. **Stage 2/3** still pinned.
 
 **Stage 2** is pinned (targeted projections): derived `op_targets` columns, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators.
 
