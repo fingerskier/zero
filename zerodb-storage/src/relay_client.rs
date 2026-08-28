@@ -731,7 +731,7 @@ mod split_tests {
         let err0 = encode_env(MSG_ERROR, 0, Cbor::Map(vec![]));
         let err_other = encode_env(MSG_ERROR, 3, Cbor::Map(vec![]));
         assert!(replies_complete(&req, &[err_match]));
-        assert!(replies_complete(&req, &[err0.clone()]));
+        assert!(replies_complete(&req, std::slice::from_ref(&err0)));
         assert!(!replies_complete(&req, &[err_other]));
         let stray = encode_env(MSG_OPS, 0, Cbor::Map(vec![]));
         assert!(!replies_complete(&req, &[stray, err0]));
