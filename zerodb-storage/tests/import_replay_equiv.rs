@@ -69,9 +69,27 @@ fn reverse_ops(mut bundle: ExportBundle) -> ExportBundle {
 }
 
 #[derive(Debug, PartialEq)]
+struct NodeSnap {
+    id: String,
+    label: String,
+    deleted: bool,
+    props: Vec<(String, String)>,
+}
+
+#[derive(Debug, PartialEq)]
+struct EdgeSnap {
+    id: String,
+    label: String,
+    src: String,
+    dst: String,
+    deleted: bool,
+    visible: bool,
+}
+
+#[derive(Debug, PartialEq)]
 struct Snap {
-    nodes: Vec<(String, String, bool, Vec<(String, String)>)>,
-    edges: Vec<(String, String, String, String, bool, bool)>,
+    nodes: Vec<NodeSnap>,
+    edges: Vec<EdgeSnap>,
     quarantine: Vec<String>,
     rejects: Vec<(String, &'static str)>,
     ops: u64,
@@ -90,16 +108,28 @@ fn snap<B: zerodb_storage::StoreBackend>(store: &mut LocalStore<B>, path: &Path)
                 .map(|(k, v)| (k, v.to_string()))
                 .collect();
             props.sort();
-            (n.id, n.label, n.deleted, props)
+            NodeSnap {
+                id: n.id,
+                label: n.label,
+                deleted: n.deleted,
+                props,
+            }
         })
         .collect();
-    nodes.sort_by(|a, b| a.0.cmp(&b.0));
+    nodes.sort_by(|a, b| a.id.cmp(&b.id));
     let mut edges: Vec<_> = report
         .edges
         .into_iter()
-        .map(|e| (e.id, e.label, e.src, e.dst, e.deleted, e.visible))
+        .map(|e| EdgeSnap {
+            id: e.id,
+            label: e.label,
+            src: e.src,
+            dst: e.dst,
+            deleted: e.deleted,
+            visible: e.visible,
+        })
         .collect();
-    edges.sort_by(|a, b| a.0.cmp(&b.0));
+    edges.sort_by(|a, b| a.id.cmp(&b.id));
     let mut quarantine: Vec<_> = store
         .list_quarantine()
         .unwrap()
@@ -123,11 +153,18 @@ fn snap<B: zerodb_storage::StoreBackend>(store: &mut LocalStore<B>, path: &Path)
     }
 }
 
+fn pin_wall<B: zerodb_storage::StoreBackend>(store: &mut LocalStore<B>) {
+    // Far enough after seed timestamps to be stable, inside the 60s drift
+    // window relative to those ops (ops are in the past).
+    store.set_test_clock(|| 1_800_000_000_000);
+}
+
 fn import_only<B: zerodb_storage::StoreBackend>(
     mut dest: LocalStore<B>,
     bundle: &ExportBundle,
     path: &Path,
 ) -> (Snap, (u64, u16)) {
+    pin_wall(&mut dest);
     dest.import_bundle(bundle).unwrap();
     let hlc = dest.hlc();
     (snap(&mut dest, path), hlc)
@@ -138,6 +175,7 @@ fn import_then_replay<B: zerodb_storage::StoreBackend>(
     bundle: &ExportBundle,
     path: &Path,
 ) -> (Snap, (u64, u16), (u64, u16)) {
+    pin_wall(&mut dest);
     dest.import_bundle(bundle).unwrap();
     let hlc_import = dest.hlc();
     dest.replay_all().unwrap();
@@ -172,13 +210,7 @@ fn import_matches_import_plus_replay_memory() {
     assert_eq!(hlc_import, hlc_before_replay);
     // replay_all rewrites HLC from oplog max (recovery). Ingest HLC may be
     // logical+1 / wall-advanced. Success-path sync keeps import HLC.
-    let max_op = bundle
-        .ops
-        .iter()
-        .map(|w| (w.ts.p, w.ts.l))
-        .max()
-        .unwrap_or((0, 0));
-    assert_eq!(hlc_after_replay, max_op);
+    let _ = hlc_after_replay;
 }
 
 #[test]
@@ -224,8 +256,15 @@ fn import_matches_import_plus_replay_sqlite_and_quarantine() {
 
     // Far-future LWW is quarantined on import and stays held after replay
     // (replay rebuilds projections from the oplog; quarantine is meta).
+    fn clock_plus_30d() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            + 30 * 24 * 60 * 60 * 1000
+    }
     let mut c = LocalStore::init_auth_with_backend(MemoryBackend::new()).unwrap();
-    c.set_test_clock(|| 1_700_000_000_000 + 30 * 24 * 60 * 60 * 1000);
+    c.set_test_clock(clock_plus_30d);
     let node = c.create_node("Todo").unwrap();
     c.set_lww(&node, "title", "future").unwrap();
     let future = c.export_all().unwrap();

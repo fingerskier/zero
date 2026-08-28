@@ -468,15 +468,18 @@ fn catch_up_chunks_ops_to_batch_limit() {
     let mut a = relay.accept();
     handshake(&mut a);
     let operations: Vec<Cbor> = (1u16..=70).map(|i| signed_op(&SK, i, i as u64)).collect();
-    a.handle(&encode_env(
-        MSG_OPS,
-        20,
-        Cbor::Map(vec![
-            ("datastore".into(), Cbor::Text(TEST_DS.into())),
-            ("operations".into(), Cbor::Array(operations)),
-        ]),
-    ))
-    .unwrap();
+    // Incoming OPS now enforces advertised max_batch_ops=64.
+    for (i, chunk) in operations.chunks(64).enumerate() {
+        a.handle(&encode_env(
+            MSG_OPS,
+            20 + i as u32,
+            Cbor::Map(vec![
+                ("datastore".into(), Cbor::Text(TEST_DS.into())),
+                ("operations".into(), Cbor::Array(chunk.to_vec())),
+            ]),
+        ))
+        .unwrap();
+    }
 
     let mut b = relay.accept();
     handshake(&mut b);

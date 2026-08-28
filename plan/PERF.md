@@ -110,7 +110,27 @@ Stage 1 adds `ops_order` / `ops_kind_order` after checking the plans below. Bulk
 
 #### EXPLAIN QUERY PLAN (after Stage 1 indexes)
 
-Paste of actual `EXPLAIN QUERY PLAN` output lives in `zerodb-storage/tests/perf_s0.rs` (not timings). Recorded after `ops_order` / `ops_kind_order` migrate on an empty store.
+Recorded by `sqlite_backend::explain_tests::order_indexes_used_for_hot_scans` on an empty migrated store (structural, not timings):
+
+```
+SELECT kind, body_json, physical_ms, logical FROM ops
+  ORDER BY physical_ms, logical, id;
+-- SCAN ops USING INDEX ops_order
+
+SELECT physical_ms, logical FROM ops
+  ORDER BY physical_ms DESC, logical DESC LIMIT 1;
+-- SCAN ops USING COVERING INDEX ops_order
+
+SELECT kind, body_json FROM ops
+  WHERE kind IN (1, 4) ORDER BY physical_ms, logical, id;
+-- SEARCH ops USING INDEX ops_kind_order (kind=?) | USE TEMP B-TREE FOR ORDER BY
+
+SELECT entity, path, value_json FROM props
+  ORDER BY entity, path;
+-- SCAN props USING INDEX sqlite_autoindex_props_1
+```
+
+The kind-IN scan uses `ops_kind_order` for the filter; SQLite still sorts with a temp B-tree because `IN (1, 4)` is two kind keys. Targeted `(kind, entity, …)` columns remain Stage 2.
 
 ## Over-the-wire findings
 

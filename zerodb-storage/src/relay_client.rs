@@ -17,8 +17,8 @@ use zerodb_core::merkle::{
 use zerodb_core::relay::{
     MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO,
     MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST,
-    MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE,
-    MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth,
+    MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
+    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth,
 };
 
 use crate::authz::bundle_datastore_id;
@@ -723,7 +723,7 @@ mod split_tests {
             3,
             Cbor::Map(vec![("remaining".into(), Cbor::Uint(0))]),
         );
-        assert!(!replies_complete(&dreq, &[more.clone()]));
+        assert!(!replies_complete(&dreq, std::slice::from_ref(&more)));
         assert!(replies_complete(&dreq, &[more, last]));
     }
 }
