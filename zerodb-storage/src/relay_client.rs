@@ -8,6 +8,7 @@
 //! membership is enforced by peers on apply.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
 use zerodb_core::cbor::{self, Cbor};
@@ -15,10 +16,11 @@ use zerodb_core::merkle::{
     BUCKET_WIDTH_MS, MERKLE_FORMAT_VERSION, MerkleOp, MerkleTree, merkle_root,
 };
 use zerodb_core::relay::{
-    MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO,
-    MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST,
-    MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
-    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth_for_hello,
+    DEFAULT_BYTES_PER_SECOND, DEFAULT_OPS_PER_SECOND, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH,
+    MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE,
+    MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE,
+    MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk,
+    sign_auth_for_hello,
 };
 
 use crate::authz::bundle_datastore_id;
@@ -86,7 +88,7 @@ where
         "WELCOME",
     )?;
     let (_, _, welcome_pl) = decode_env(&welcome)?;
-    let (max_batch_ops, max_batch_bytes, max_payload_bytes) = welcome_limits(&welcome_pl);
+    let limits = welcome_limits(&welcome_pl);
 
     let ds = join_ds
         .map(str::to_string)
@@ -107,13 +109,27 @@ where
             .iter()
             .map(wire_to_relay)
             .collect::<Result<Vec<_>, _>>()?;
+        let mut window_ops = 0u32;
+        let mut window_bytes = 0u64;
+        let mut window_start = Instant::now();
         for batch in split_ops_batches(
             &ds,
             &ops_cbor,
-            max_batch_ops,
-            max_batch_bytes,
-            max_payload_bytes,
+            limits.max_batch_ops,
+            limits.max_batch_bytes,
+            limits.max_payload_bytes,
         )? {
+            let batch_ops = batch.len() as u32;
+            let batch_bytes = batch_encoded_bytes(&batch);
+            pace_ops_window(
+                &mut window_ops,
+                &mut window_bytes,
+                &mut window_start,
+                batch_ops,
+                batch_bytes,
+                limits.ops_per_second,
+                limits.bytes_per_second,
+            );
             let frame = encode_env(MSG_OPS, request_id, ops_payload(&ds, &batch));
             request_id = request_id.saturating_add(1);
             let ack = expect_type(
@@ -123,6 +139,8 @@ where
             )?;
             let (_, _, ack_pl) = decode_env(&ack)?;
             tally_ack(&mut summary, &ack_pl);
+            window_ops = window_ops.saturating_add(batch_ops);
+            window_bytes = window_bytes.saturating_add(batch_bytes);
         }
     }
 
@@ -381,21 +399,98 @@ const DEFAULT_MAX_BATCH_OPS: usize = 64;
 const DEFAULT_MAX_BATCH_BYTES: usize = 16_777_216;
 const DEFAULT_MAX_PAYLOAD_BYTES: usize = 1_048_576;
 
-fn welcome_limits(welcome: &Cbor) -> (usize, usize, usize) {
+/// Client-side estimate of the relay's sliding 1s OPS window (RELAY §8).
+/// Slightly longer than the server's 1s cutoff so a paced retry is admitted.
+const RATE_WINDOW: Duration = Duration::from_millis(1_100);
+
+struct ClientLimits {
+    max_batch_ops: usize,
+    max_batch_bytes: usize,
+    max_payload_bytes: usize,
+    ops_per_second: u32,
+    bytes_per_second: u64,
+}
+
+fn welcome_limits(welcome: &Cbor) -> ClientLimits {
     let limits = map_get(welcome, "limits");
-    let ops = match map_get(limits, "max_batch_ops") {
+    let max_batch_ops = match map_get(limits, "max_batch_ops") {
         Cbor::Uint(n) if *n > 0 => *n as usize,
         _ => DEFAULT_MAX_BATCH_OPS,
     };
-    let bytes = match map_get(limits, "max_batch_bytes") {
+    let max_batch_bytes = match map_get(limits, "max_batch_bytes") {
         Cbor::Uint(n) if *n > 0 => *n as usize,
         _ => DEFAULT_MAX_BATCH_BYTES,
     };
-    let payload = match map_get(limits, "max_payload_bytes") {
+    let max_payload_bytes = match map_get(limits, "max_payload_bytes") {
         Cbor::Uint(n) if *n > 0 => *n as usize,
         _ => DEFAULT_MAX_PAYLOAD_BYTES,
     };
-    (ops, bytes, payload)
+    let ops_per_second = match map_get(limits, "ops_per_second") {
+        Cbor::Uint(n) if *n > 0 => *n as u32,
+        Cbor::Null => u32::MAX,
+        _ => DEFAULT_OPS_PER_SECOND,
+    };
+    let bytes_per_second = match map_get(limits, "bytes_per_second") {
+        Cbor::Uint(n) if *n > 0 => *n,
+        Cbor::Null => u64::MAX,
+        _ => DEFAULT_BYTES_PER_SECOND as u64,
+    };
+    ClientLimits {
+        max_batch_ops,
+        max_batch_bytes,
+        max_payload_bytes,
+        ops_per_second,
+        bytes_per_second,
+    }
+}
+
+fn batch_encoded_bytes(ops: &[Cbor]) -> u64 {
+    ops.iter()
+        .map(|op| cbor::encode(op).map(|b| b.len()).unwrap_or(0) as u64)
+        .fold(0u64, u64::saturating_add)
+}
+
+fn window_exhausted(
+    used_ops: u32,
+    used_bytes: u64,
+    next_ops: u32,
+    next_bytes: u64,
+    max_ops: u32,
+    max_bytes: u64,
+) -> bool {
+    used_ops.saturating_add(next_ops) > max_ops || used_bytes.saturating_add(next_bytes) > max_bytes
+}
+
+fn pace_ops_window(
+    window_ops: &mut u32,
+    window_bytes: &mut u64,
+    window_start: &mut Instant,
+    next_ops: u32,
+    next_bytes: u64,
+    max_ops: u32,
+    max_bytes: u64,
+) {
+    if window_start.elapsed() >= RATE_WINDOW {
+        *window_ops = 0;
+        *window_bytes = 0;
+        *window_start = Instant::now();
+    }
+    if window_exhausted(
+        *window_ops,
+        *window_bytes,
+        next_ops,
+        next_bytes,
+        max_ops,
+        max_bytes,
+    ) {
+        let remain = RATE_WINDOW.saturating_sub(window_start.elapsed());
+        if !remain.is_zero() {
+            std::thread::sleep(remain);
+        }
+        *window_ops = 0;
+        *window_bytes = 0;
+        *window_start = Instant::now();
+    }
 }
 
 fn ops_payload(ds: &str, ops: &[Cbor]) -> Cbor {
@@ -725,6 +820,31 @@ mod split_tests {
     }
 
     #[test]
+    fn welcome_limits_reads_advertised_rate() {
+        let welcome = Cbor::Map(vec![(
+            "limits".into(),
+            Cbor::Map(vec![
+                ("max_batch_ops".into(), Cbor::Uint(16)),
+                ("max_batch_bytes".into(), Cbor::Uint(1024)),
+                ("max_payload_bytes".into(), Cbor::Uint(256)),
+                ("ops_per_second".into(), Cbor::Uint(100)),
+                ("bytes_per_second".into(), Cbor::Uint(4096)),
+            ]),
+        )]);
+        let limits = welcome_limits(&welcome);
+        assert_eq!(limits.max_batch_ops, 16);
+        assert_eq!(limits.ops_per_second, 100);
+        assert_eq!(limits.bytes_per_second, 4096);
+    }
+
+    #[test]
+    fn window_exhausted_matches_relay_admit() {
+        assert!(!window_exhausted(64, 100, 36, 50, 100, 200));
+        assert!(window_exhausted(64, 100, 64, 50, 100, 200));
+        assert!(window_exhausted(10, 180, 1, 30, 100, 200));
+        assert!(!window_exhausted(0, 0, 64, 10, 100, 200));
+    }
+
     fn replies_complete_error_matching_or_id0_first() {
         let req = encode_env(MSG_OPS, 7, Cbor::Map(vec![]));
         let err_match = encode_env(MSG_ERROR, 7, Cbor::Map(vec![]));
