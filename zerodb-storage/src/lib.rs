@@ -1356,7 +1356,19 @@ impl<B: StoreBackend> LocalStore<B> {
                         Err(err) => return Err(err),
                     }
                 }
-                check_wire_ingress(tx, op, &pending, &held, &known_kinds, local_ep)?;
+                if let Err(err) =
+                    check_wire_ingress(tx, op, &pending, &held, &known_kinds, local_ep)
+                {
+                    if let Some(reason) = per_op_ingress_tag(&err) {
+                        rejects.push(AuthReject {
+                            op_id: op.id.clone(),
+                            reason,
+                        });
+                        skipped += 1;
+                        continue;
+                    }
+                    return Err(err);
+                }
                 if exceeds_max_drift(op.ts.p, wall) || quarantine_has(tx, &op.id)? {
                     quarantine_push(tx, op, CLOCK_DRIFT, &mut rejects)?;
                     rejects.push(AuthReject {
