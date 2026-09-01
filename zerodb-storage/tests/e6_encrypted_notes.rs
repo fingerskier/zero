@@ -106,9 +106,6 @@ fn e6_share_notes() -> (
     a.distribute_group_key(&pair(&a_peer, &a_pk, &b_peer, &b_pk))
         .unwrap();
 
-    // Schema is local meta (not a SchemaEpoch op yet). Recipients must hold
-    // the same IR so ep=1 ops are not EPOCH_UNKNOWN; the schema is not secret.
-    b.apply_schema_json(NOTE_SCHEMA).unwrap();
     b.import_bundle(&a.export_all().unwrap()).unwrap();
     assert_eq!(b.datastore_id_hex(), a.datastore_id_hex());
 
@@ -141,7 +138,6 @@ fn e6_members_read_plaintext_artifacts_and_c_do_not() {
     assert!(set.body.get("value").is_none());
 
     let mut c = empty_store();
-    c.apply_schema_json(NOTE_SCHEMA).unwrap();
     c.import_bundle(&a.export_all().unwrap()).unwrap();
     assert_eq!(c.get_lww(&note, "body").unwrap(), None);
     assert!(
@@ -246,7 +242,7 @@ fn control_deps(store: &LocalStore<MemoryBackend>) -> Vec<String> {
         .unwrap()
         .ops
         .into_iter()
-        .filter(|op| matches!(op.kind, 0 | 6 | 7 | 8))
+        .filter(|op| matches!(op.kind, 0 | 5 | 6 | 7 | 8))
         .map(|op| op.id)
         .collect()
 }
@@ -817,8 +813,6 @@ fn e6_encrypted_value_before_key_then_after() {
         (c_peer.as_str(), c_pk.as_str()),
     ])
     .unwrap();
-    b.apply_schema_json(NOTE_SCHEMA).unwrap();
-    c.apply_schema_json(NOTE_SCHEMA).unwrap();
     let note = a.create_node("Note").unwrap();
     a.set_lww(&note, "body", SECRET).unwrap();
 
@@ -865,14 +859,12 @@ fn e6_second_device_of_principal_opens_random_does_not() {
     let mut a = auth_store();
     let mut d1 = empty_store();
     a.apply_schema_json(NOTE_SCHEMA).unwrap();
-    d1.apply_schema_json(NOTE_SCHEMA).unwrap();
     a.grant_membership(&d1.principal_hex(), &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC])
         .unwrap();
     let d2_seed = [0xD2u8; 32];
     let mut d2 =
         LocalStore::init_with_backend_from_seed(MemoryBackend::new(), &d2_seed, &ds_bytes(&a))
             .unwrap();
-    d2.apply_schema_json(NOTE_SCHEMA).unwrap();
     let issued =
         issue_device_cert(&d1.identity_seed(), device_pk_from_seed(&d2_seed), 1, None).unwrap();
     let cert = sign_wire(
@@ -913,7 +905,6 @@ fn e6_second_device_of_principal_opens_random_does_not() {
     let mut stranger =
         LocalStore::init_with_backend_from_seed(MemoryBackend::new(), &[0x99u8; 32], &ds_bytes(&a))
             .unwrap();
-    stranger.apply_schema_json(NOTE_SCHEMA).unwrap();
     stranger.import_bundle(&a.export_all().unwrap()).unwrap();
     assert_eq!(stranger.get_lww(&note, "body").unwrap(), None);
     assert!(stranger.decrypt_oracle().unwrap().is_empty());
@@ -973,7 +964,6 @@ fn e6_forged_kr0_junk_cert_sig_does_not_rebind() {
     let mut victim = empty_store();
     let writer = empty_store();
     a.apply_schema_json(NOTE_SCHEMA).unwrap();
-    victim.apply_schema_json(NOTE_SCHEMA).unwrap();
     a.grant_membership(
         &victim.principal_hex(),
         &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC],
@@ -1082,7 +1072,6 @@ fn e6_write_only_member_does_not_open() {
     let w_pk = w.author_pk_hex();
     a.distribute_group_key(&pair(&a_peer, &a_pk, &w_peer, &w_pk))
         .unwrap();
-    w.apply_schema_json(NOTE_SCHEMA).unwrap();
     let note = a.create_node("Note").unwrap();
     a.set_lww(&note, "body", SECRET).unwrap();
     w.import_bundle(&a.export_all().unwrap()).unwrap();

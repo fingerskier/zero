@@ -378,13 +378,11 @@ fn concurrent_crdts_converge_through_in_process_relay() {
     a.counter_inc(&node, "voteScore", 2).unwrap();
 
     let relay = Relay::memory();
-    let mut sess_a = relay.accept();
-    drive(&mut a, &mut sess_a, None);
+    drive(&mut a, &mut relay.accept(), None);
 
     let mut b = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
     let ds = a.datastore_id_hex();
-    let mut sess_b = relay.accept();
-    drive(&mut b, &mut sess_b, Some(&ds));
+    drive(&mut b, &mut relay.accept(), Some(&ds));
     assert_eq!(b.get_lww(&node, "title").unwrap().as_deref(), Some("seed"));
 
     // Partition: both write without seeing the other peer's new ops.
@@ -398,12 +396,11 @@ fn concurrent_crdts_converge_through_in_process_relay() {
     b.counter_dec(&node, "voteScore", 1).unwrap();
     b.counter_inc(&node, "voteScore", 3).unwrap();
 
-    let mut sess_a2 = relay.accept();
-    drive(&mut a, &mut sess_a2, None);
-    let mut sess_b2 = relay.accept();
-    drive(&mut b, &mut sess_b2, None);
-    let mut sess_a3 = relay.accept();
-    drive(&mut a, &mut sess_a3, None);
+    // Drop each session after drive so A never holds more than the
+    // advertised 3 connections per PeerId.
+    drive(&mut a, &mut relay.accept(), None);
+    drive(&mut b, &mut relay.accept(), None);
+    drive(&mut a, &mut relay.accept(), None);
 
     let title_a = a.get_lww(&node, "title").unwrap();
     let title_b = b.get_lww(&node, "title").unwrap();
@@ -447,8 +444,7 @@ fn concurrent_crdts_converge_through_in_process_relay() {
         Some(serde_json::json!(8))
     );
 
-    let mut sess_a4 = relay.accept();
-    let rematch = drive(&mut a, &mut sess_a4, None);
+    let rematch = drive(&mut a, &mut relay.accept(), None);
     assert_eq!(rematch.received, 0, "re-merge must be a no-op");
     assert_eq!(merkle_of_ds(&a, &ds), merkle_of_ds(&b, &ds));
 }
