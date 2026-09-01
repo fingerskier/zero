@@ -148,6 +148,9 @@ fn is_hex_body_key(k: &str) -> bool {
             | "root_pk"
             | "cert_sig"
             | "revoke_of"
+            | "schema"
+            | "ir"
+            | "prev"
     )
 }
 

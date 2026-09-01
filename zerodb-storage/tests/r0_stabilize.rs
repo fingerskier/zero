@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
-use zerodb_storage::{ExportBundle, LocalStore};
+use zerodb_core::cbor::Cbor;
+use zerodb_core::op::{OpEnvelope, OpTs};
+use zerodb_core::sign::sign_op;
+use zerodb_storage::{ExportBundle, LocalStore, WireOp, WireTs};
 
 const KIND_CREATE_NODE: u64 = 1;
 const KIND_TOMBSTONE: u64 = 4;
@@ -301,19 +304,69 @@ fn shuffled_import_matches_source_after_replay() {
     );
 }
 
+fn signed_gcounter(store: &LocalStore, node_hex: &str) -> WireOp {
+    let ds_hex = store.datastore_id_hex();
+    let ds: [u8; 32] = hex::decode(&ds_hex).unwrap().try_into().unwrap();
+    let seed = store.identity_seed();
+    let node = hex::decode(node_hex).unwrap();
+    let body = Cbor::Map(vec![
+        ("crdt".into(), Cbor::Text("gcounter".into())),
+        ("n".into(), Cbor::Uint(1)),
+        ("node".into(), Cbor::Bytes(node)),
+        ("op".into(), Cbor::Text("inc".into())),
+        ("path".into(), Cbor::Text("title".into())),
+    ]);
+    let (author_pk, _) = sign_op(&seed, &[0; 32]);
+    let author = *blake3::hash(&author_pk).as_bytes();
+    let envelope = OpEnvelope {
+        v: 1,
+        ds,
+        ep: 1,
+        author,
+        ts: OpTs {
+            physical_ms: 9_000_000,
+            logical: 0,
+        },
+        deps: vec![],
+        grp: None,
+        kind: 3,
+        body,
+    };
+    let id = envelope.op_id().unwrap();
+    let (_, sig) = sign_op(&seed, &id);
+    WireOp {
+        id: hex::encode(id),
+        v: 1,
+        ds: ds_hex,
+        ep: 1,
+        author: hex::encode(author),
+        author_pk: hex::encode(author_pk),
+        ts: WireTs { p: 9_000_000, l: 0 },
+        deps: vec![],
+        grp: None,
+        kind: 3,
+        body: serde_json::json!({
+            "node": node_hex,
+            "path": "title",
+            "crdt": "gcounter",
+            "op": "inc",
+            "n": 1,
+        }),
+        sig: hex::encode(sig),
+    }
+}
+
 #[test]
 fn import_rejects_crdt_that_breaks_schema_pin() {
-    let src_path = tmp_db("pin-src");
     let dst_path = tmp_db("pin-dst");
-    let mut src = LocalStore::init(&src_path).unwrap();
-    let node = src.create_node("Todo").unwrap();
-    src.gcounter_inc(&node, "title", 1).unwrap();
-
     let mut dst = LocalStore::init(&dst_path).unwrap();
     dst.apply_schema_json(r#"{"nodes":{"Todo":{"props":{"title":"lww"}}}}"#)
         .unwrap();
+    let node = dst.create_node("Todo").unwrap();
+    let mut bundle = dst.export_all().unwrap();
+    bundle.ops.push(signed_gcounter(&dst, &node));
     let err = dst
-        .import_bundle(&src.export_all().unwrap())
+        .import_bundle(&bundle)
         .expect_err("pinned title:lww must reject a remote gcounter on title");
     assert!(err.to_string().contains("schema pin"), "got: {err}");
 }

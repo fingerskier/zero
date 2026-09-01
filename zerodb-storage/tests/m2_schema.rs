@@ -84,9 +84,21 @@ fn apply_pin_persists_schema_id_and_stamps_ep() {
     store.set_lww(&node, "title", "milk").unwrap();
     let bundle = store.export_all().unwrap();
     assert!(
-        bundle.ops.iter().all(|op| op.ep == 1),
-        "local ops after apply must carry ep=1, got {:?}",
-        bundle.ops.iter().map(|o| o.ep).collect::<Vec<_>>()
+        bundle.ops.iter().any(|op| op.kind == 5 && op.ep == 0),
+        "apply_schema_json must emit a kind-5 SchemaEpoch with ep=0"
+    );
+    assert!(
+        bundle
+            .ops
+            .iter()
+            .filter(|op| op.kind != 5)
+            .all(|op| op.ep == 1),
+        "data ops after apply must carry ep=1, got {:?}",
+        bundle
+            .ops
+            .iter()
+            .map(|o| (o.kind, o.ep))
+            .collect::<Vec<_>>()
     );
     let ir = store.schema_ir_bytes().unwrap().expect("ir bytes");
     let parsed = parse_ir(&zerodb_core::cbor::decode(&ir).unwrap()).unwrap();

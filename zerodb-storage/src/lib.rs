@@ -18,7 +18,7 @@ pub mod sync;
 
 pub use authz::{
     APPLY_INVALID, AuthReject, CLOCK_DRIFT, CLOCK_DRIFT_OVERFLOW, ENCRYPTED_PLAINTEXT,
-    IngestResult, KEY_WRAP_INVALID,
+    EPOCH_UNKNOWN, IngestResult, KEY_WRAP_INVALID,
 };
 pub use backend::{BackendTxn, EdgeRow, OpRecord, OpScanRow, PropOpRow, StoreBackend};
 pub use memory_backend::MemoryBackend;
@@ -43,8 +43,9 @@ use thiserror::Error;
 use uuid::Uuid;
 use zerodb_core::auth::{
     DeviceCert, GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD,
-    KR_DEVICE_CERT, KR_DEVICE_REVOKE, KR_GROUP_KEY, SCOPE_ADMIN, SCOPE_READ, SCOPE_SYNC,
-    SCOPE_WRITE, auth_error_tag, datastore_id_from_genesis, genesis_envelope, verify_device_cert,
+    KIND_SCHEMA_EPOCH, KR_DEVICE_CERT, KR_DEVICE_REVOKE, KR_GROUP_KEY, SCOPE_ADMIN, SCOPE_READ,
+    SCOPE_SYNC, SCOPE_WRITE, auth_error_tag, datastore_id_from_genesis, genesis_envelope,
+    verify_device_cert,
 };
 use zerodb_core::cbor::Cbor;
 use zerodb_core::envelope::{ValueContext, open, seal};
@@ -496,6 +497,14 @@ impl<B: StoreBackend> LocalStore<B> {
                     }
                     return Err(err);
                 }
+                let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
+                if entry.wire.ep > local_ep {
+                    rejects.push(AuthReject {
+                        op_id: entry.wire.id.clone(),
+                        reason: EPOCH_UNKNOWN,
+                    });
+                    continue;
+                }
                 if let Err(err) = apply_wire(tx, &entry.wire, &validated, &BTreeMap::new()) {
                     if push_permanent_reject(&err, &entry.wire.id, &mut rejects) {
                         continue;
@@ -821,46 +830,70 @@ impl<B: StoreBackend> LocalStore<B> {
 
     /// Apply a schema from JSON: either the M1 pin
     /// `{ "nodes": { "Todo": { "props": { "title": "lww" }}} }` or a SCHEMA §2
-    /// IR object (`v`, `nodes`, `edges` with numeric tags). Persists canonical
-    /// CBOR IR + SchemaId and sets epoch 1.
+    /// IR object (`v`, `nodes`, `edges` with numeric tags). Emits a signed
+    /// KERNEL kind 5 `SchemaEpoch` (n = 1, `prev` = null, empty migration)
+    /// and materializes derived schema meta from that op.
     pub fn apply_schema_json(&mut self, schema_json: &str) -> Result<(), StoreError> {
         let v: serde_json::Value =
             serde_json::from_str(schema_json).map_err(|e| StoreError::Invalid(e.to_string()))?;
         let ir = json_to_schema_ir(&v)?;
-        self.persist_schema(&ir)
+        self.commit_schema_epoch(&ir)?;
+        Ok(())
     }
 
     pub fn schema_json(&self) -> Result<Option<String>, StoreError> {
         Ok(self
             .backend
             .meta_get("schema_json")?
+            .filter(|b| !b.is_empty())
             .map(|b| String::from_utf8_lossy(&b).into_owned()))
     }
 
     pub fn schema_ir_bytes(&self) -> Result<Option<Vec<u8>>, StoreError> {
-        self.backend.meta_get("schema_ir")
+        Ok(self
+            .backend
+            .meta_get("schema_ir")?
+            .filter(|b| !b.is_empty()))
     }
 
     pub fn schema_id_hex(&self) -> Result<Option<String>, StoreError> {
-        Ok(self.backend.meta_get("schema_id")?.map(hex::encode))
+        Ok(self
+            .backend
+            .meta_get("schema_id")?
+            .filter(|b| !b.is_empty())
+            .map(hex::encode))
     }
 
     pub fn schema_epoch(&self) -> Result<u64, StoreError> {
         Ok(meta_get_u64(&self.backend, "schema_ep")?.unwrap_or(0))
     }
 
-    fn persist_schema(&mut self, ir: &SchemaIr) -> Result<(), StoreError> {
+    fn commit_schema_epoch(&mut self, ir: &SchemaIr) -> Result<String, StoreError> {
         let bytes = encode_ir(ir).map_err(|e| StoreError::Cbor(e.to_string()))?;
         parse_ir(&zerodb_core::cbor::decode(&bytes).map_err(|e| StoreError::Cbor(e.to_string()))?)
             .map_err(|e| StoreError::Invalid(e.to_string()))?;
         let id = schema_id(&bytes);
-        let pin = schema_ir_to_pin_json(ir);
-        self.backend.meta_set("schema_ir", &bytes)?;
-        self.backend.meta_set("schema_id", &id)?;
-        meta_set_u64(&self.backend, "schema_ep", 1)?;
-        self.backend
-            .meta_set("schema_json", pin.to_string().as_bytes())?;
-        Ok(())
+        if let Some(existing) = self
+            .backend
+            .meta_get("schema_id")?
+            .filter(|b| !b.is_empty())
+        {
+            if existing.as_slice() == id.as_slice() {
+                return Ok(String::new());
+            }
+            return Err(StoreError::Invalid("schema epoch already applied".into()));
+        }
+        let body_json = serde_json::json!({
+            "epoch": 1,
+            "schema": hex::encode(id),
+            "ir": hex::encode(&bytes),
+            "prev": serde_json::Value::Null,
+            "migration": [],
+        });
+        let body = json_to_cbor_body(&body_json)?;
+        self.commit_local(KIND_SCHEMA_EPOCH, body, body_json, |tx, wire| {
+            persist_schema_from_epoch_body(tx, &wire.body)
+        })
     }
 
     /// O3 minimal query over visible graph materialization.
@@ -1294,7 +1327,7 @@ impl<B: StoreBackend> LocalStore<B> {
             if auth_on {
                 tx.meta_set(META_AUTH, &[1])?;
             }
-            let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
+            let mut local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
             let (mut held, held_wires) = quarantine_held(tx)?;
             let known_kinds = wire_kind_map(bundle.ops.iter().chain(held_wires.iter()))?;
@@ -1353,6 +1386,9 @@ impl<B: StoreBackend> LocalStore<B> {
                         return Err(err);
                     }
                 }
+                if op.kind == KIND_SCHEMA_EPOCH {
+                    local_ep = local_ep.max(epoch_from_body(&op.body).unwrap_or(0));
+                }
                 if auth_on {
                     applied_auth.push(op.clone());
                 }
@@ -1378,6 +1414,7 @@ impl<B: StoreBackend> LocalStore<B> {
         let mut max_l: u16 = 0;
         self.backend.with_txn(&mut |tx| {
             tx.wipe_materialized()?;
+            clear_schema_meta(tx)?;
             let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
             let mut node_ids: BTreeSet<String> = BTreeSet::new();
             let mut edge_ids: BTreeSet<String> = BTreeSet::new();
@@ -1389,6 +1426,13 @@ impl<B: StoreBackend> LocalStore<B> {
                 let body: serde_json::Value = serde_json::from_str(&row.body_json)
                     .map_err(|e| StoreError::Invalid(e.to_string()))?;
                 match row.kind {
+                    KIND_SCHEMA_EPOCH => {
+                        let current = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
+                        let next = epoch_from_body(&body).unwrap_or(0);
+                        if current == 0 || next > current {
+                            persist_schema_from_epoch_body(tx, &body)?;
+                        }
+                    }
                     KIND_CREATE_NODE | KIND_TOMBSTONE => {
                         if let Some(node) = body["node"].as_str() {
                             node_ids.insert(node.to_string());
@@ -1490,6 +1534,17 @@ impl<B: StoreBackend> LocalStore<B> {
             });
             return Ok(IngestResult::Quarantined {
                 reason: CLOCK_DRIFT,
+            });
+        }
+
+        let local_ep = self.schema_epoch().unwrap_or(0);
+        if wire.ep > local_ep {
+            self.last_rejects.push(AuthReject {
+                op_id: wire.id.clone(),
+                reason: EPOCH_UNKNOWN,
+            });
+            return Ok(IngestResult::Rejected {
+                reason: EPOCH_UNKNOWN,
             });
         }
 
@@ -1643,7 +1698,7 @@ impl<B: StoreBackend> LocalStore<B> {
         };
         let mut rejects = Vec::new();
         self.backend.with_txn(&mut |tx| {
-            let local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
+            let mut local_ep = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
             let mut pending: BTreeSet<[u8; 32]> = BTreeSet::new();
             let (mut held, held_wires) = quarantine_held(tx)?;
             let known_kinds = wire_kind_map(wires.iter().chain(held_wires.iter()))?;
@@ -1676,6 +1731,9 @@ impl<B: StoreBackend> LocalStore<B> {
                 }
                 (next_p, next_l) = next_remote_hlc(next_p, next_l, wire.ts.p, wire.ts.l, wall)?;
                 apply_wire(tx, wire, &validated, &known_kinds)?;
+                if wire.kind == KIND_SCHEMA_EPOCH {
+                    local_ep = local_ep.max(epoch_from_body(&wire.body).unwrap_or(0));
+                }
                 pending.insert(validated.id);
             }
             meta_set_u64(tx, "hlc_p", next_p)?;
@@ -2059,6 +2117,9 @@ fn apply_wire(
             }
         }
         KIND_GENESIS | KIND_CAP_GRANT => {}
+        KIND_SCHEMA_EPOCH => {
+            persist_schema_from_epoch_body(tx, &wire.body)?;
+        }
         KIND_CAP_REVOKE => {
             rematerialize_encrypted_props(tx)?;
         }
@@ -2167,6 +2228,7 @@ fn per_op_ingress_tag(err: &StoreError) -> Option<&'static str> {
     match err {
         StoreError::Invalid(msg) if msg == ENCRYPTED_PLAINTEXT => Some(ENCRYPTED_PLAINTEXT),
         StoreError::Invalid(msg) if msg == KEY_WRAP_INVALID => Some(KEY_WRAP_INVALID),
+        StoreError::Invalid(msg) if msg == EPOCH_UNKNOWN => Some(EPOCH_UNKNOWN),
         StoreError::Authz(reason) => Some(*reason),
         _ => None,
     }
@@ -2538,12 +2600,65 @@ fn validate_wire_body(kind: u64, body: &serde_json::Value) -> Result<(), StoreEr
                 }
             }
         }
+        KIND_SCHEMA_EPOCH => validate_schema_epoch_body(object)?,
         other => {
             return Err(StoreError::Invalid(format!(
                 "unsupported operation kind {other}"
             )));
         }
     }
+    Ok(())
+}
+
+fn validate_schema_epoch_body(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), StoreError> {
+    let epoch = object
+        .get("epoch")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| StoreError::Invalid("body.epoch".into()))?;
+    if epoch == 0 {
+        return Err(StoreError::Invalid("body.epoch must be > 0".into()));
+    }
+    require_hex_len(object, "schema", 32)?;
+    let ir_hex = object
+        .get("ir")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| StoreError::Invalid("body.ir".into()))?;
+    let ir_bytes = hex::decode(ir_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    if ir_bytes.is_empty() {
+        return Err(StoreError::Invalid("body.ir".into()));
+    }
+    let decoded =
+        zerodb_core::cbor::decode(&ir_bytes).map_err(|e| StoreError::Cbor(e.to_string()))?;
+    parse_ir(&decoded).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let claimed = decode32(
+        object
+            .get("schema")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| StoreError::Invalid("body.schema".into()))?,
+    )?;
+    if claimed != schema_id(&ir_bytes) {
+        return Err(StoreError::Invalid("schema id mismatch".into()));
+    }
+    match object.get("prev") {
+        None | Some(serde_json::Value::Null) => {
+            if epoch != 1 {
+                return Err(StoreError::Invalid("body.prev".into()));
+            }
+        }
+        Some(serde_json::Value::String(h)) => {
+            decode32(h)?;
+            if epoch == 1 {
+                return Err(StoreError::Invalid("body.prev".into()));
+            }
+        }
+        _ => return Err(StoreError::Invalid("body.prev".into())),
+    }
+    object
+        .get("migration")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| StoreError::Invalid("body.migration".into()))?;
     Ok(())
 }
 
@@ -3032,7 +3147,7 @@ fn check_wire_ingress(
         return Err(StoreError::Invalid("deps exceed 64".into()));
     }
     if wire.ep > local_ep {
-        return Err(StoreError::Invalid("EPOCH_UNKNOWN".into()));
+        return Err(StoreError::Invalid(EPOCH_UNKNOWN.into()));
     }
     for dep in &wire.deps {
         let id = decode32(dep)?;
@@ -3252,10 +3367,51 @@ fn load_schema_ir(tx: &dyn BackendTxn) -> Result<Option<SchemaIr>, StoreError> {
     let Some(raw) = tx.meta_get("schema_ir")? else {
         return Ok(None);
     };
+    if raw.is_empty() {
+        return Ok(None);
+    }
     let decoded = zerodb_core::cbor::decode(&raw).map_err(|e| StoreError::Cbor(e.to_string()))?;
     parse_ir(&decoded)
         .map(Some)
         .map_err(|e| StoreError::Invalid(e.to_string()))
+}
+
+fn epoch_from_body(body: &serde_json::Value) -> Option<u64> {
+    body.get("epoch").and_then(serde_json::Value::as_u64)
+}
+
+fn clear_schema_meta(tx: &dyn BackendTxn) -> Result<(), StoreError> {
+    tx.meta_set("schema_ir", &[])?;
+    tx.meta_set("schema_id", &[])?;
+    meta_set_u64(tx, "schema_ep", 0)?;
+    tx.meta_set("schema_json", &[])?;
+    Ok(())
+}
+
+fn persist_schema_from_epoch_body(
+    tx: &dyn BackendTxn,
+    body: &serde_json::Value,
+) -> Result<(), StoreError> {
+    let object = body
+        .as_object()
+        .ok_or_else(|| StoreError::Invalid("operation body must be an object".into()))?;
+    validate_schema_epoch_body(object)?;
+    let epoch = epoch_from_body(body).ok_or_else(|| StoreError::Invalid("body.epoch".into()))?;
+    let ir_hex = body
+        .get("ir")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| StoreError::Invalid("body.ir".into()))?;
+    let ir_bytes = hex::decode(ir_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let decoded =
+        zerodb_core::cbor::decode(&ir_bytes).map_err(|e| StoreError::Cbor(e.to_string()))?;
+    let ir = parse_ir(&decoded).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let id = schema_id(&ir_bytes);
+    let pin = schema_ir_to_pin_json(&ir);
+    tx.meta_set("schema_ir", &ir_bytes)?;
+    tx.meta_set("schema_id", &id)?;
+    meta_set_u64(tx, "schema_ep", epoch)?;
+    tx.meta_set("schema_json", pin.to_string().as_bytes())?;
+    Ok(())
 }
 
 fn schema_has_encrypted(ir: Option<&SchemaIr>) -> bool {
@@ -3776,6 +3932,9 @@ fn check_schema_pin_tx(
     let Some(raw) = tx.meta_get("schema_json")? else {
         return Ok(());
     };
+    if raw.is_empty() {
+        return Ok(());
+    }
     let raw = String::from_utf8_lossy(&raw);
     let v: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| StoreError::Invalid(e.to_string()))?;

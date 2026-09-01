@@ -50,7 +50,8 @@ test('applySchema persists schemaId and stamps epoch', () => {
     const n = db.createNode('Todo')
     db.setLww(n, 'title', 'milk')
     const bundle = JSON.parse(db.exportJson())
-    assert.ok(bundle.ops.every((op) => op.ep === 1))
+    assert.ok(bundle.ops.some((op) => op.kind === 5 && op.ep === 0))
+    assert.ok(bundle.ops.filter((op) => op.kind !== 5).every((op) => op.ep === 1))
   } finally {
     cleanup(path, db)
   }
