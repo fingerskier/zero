@@ -36,7 +36,63 @@ function verifySignature(pub32, message, sig64) {
   return edVerify(null, Buffer.from(message), key, Buffer.from(sig64));
 }
 
-function envelopeToTagged(op) {
+/** HEX body keys that encode as CBOR bytes (same list as Rust `json_to_cbor_body`). */
+export const HEX_BODY_KEYS = new Set([
+  'node',
+  'edge',
+  'src',
+  'dst',
+  'founder',
+  'salt',
+  'subject',
+  'ds_bind',
+  'grant',
+  'encrypted',
+  'key_id',
+  'recipient',
+  'eph_pk',
+  'nonce',
+  'wrapped',
+  'device',
+  'principal',
+  'root_pk',
+  'cert_sig',
+  'revoke_of',
+  'schema',
+  'ir',
+  'prev',
+]);
+
+/** JSON WireOp body → tagged CBOR matching `json_to_cbor_body`. */
+export function jsonToBodyTagged(val, key) {
+  if (val === null || val === undefined) return { t: 'null' };
+  if (typeof val === 'boolean') return { t: 'bool', v: val };
+  if (typeof val === 'number') {
+    if (!Number.isInteger(val) || val < 0) throw new Error(`non-uint ${val}`);
+    return { t: 'uint', v: val };
+  }
+  if (typeof val === 'string') {
+    if (key && HEX_BODY_KEYS.has(key)) {
+      if (!/^[0-9a-f]*$/i.test(val) || val.length % 2 !== 0) {
+        throw new Error(`hex body field ${key} must be even hex`);
+      }
+      return { t: 'bytes', hex: val.toLowerCase() };
+    }
+    return { t: 'text', v: val };
+  }
+  if (Array.isArray(val)) {
+    return { t: 'array', v: val.map((item) => jsonToBodyTagged(item)) };
+  }
+  if (typeof val === 'object') {
+    const v = {};
+    for (const [k, item] of Object.entries(val)) v[k] = jsonToBodyTagged(item, k);
+    return { t: 'map', v };
+  }
+  throw new Error(`unsupported body ${typeof val}`);
+}
+
+export function envelopeToTagged(op) {
+  const body = op.body && op.body.t ? op.body : jsonToBodyTagged(op.body);
   return {
     t: 'map',
     v: {
@@ -52,9 +108,9 @@ function envelopeToTagged(op) {
         },
       },
       deps: { t: 'array', v: op.deps.map((d) => ({ t: 'bytes', hex: d })) },
-      grp: op.grp === null ? { t: 'null' } : { t: 'bytes', hex: op.grp },
+      grp: op.grp === null || op.grp === undefined ? { t: 'null' } : { t: 'bytes', hex: op.grp },
       kind: { t: 'uint', v: op.kind },
-      body: op.body,
+      body,
     },
   };
 }
@@ -123,3 +179,16 @@ export function runOpDecodeNegativeVector(vector) {
     throw new Error(`expected ${vector.expect_error}, got ${error}`);
   }
 }
+
+export function computeOpId(canonicalBytes) {
+  return opId(canonicalBytes);
+}
+
+export function sigPreimage(id) {
+  const preimage = new Uint8Array(DOMAIN_OP_SIG.length + id.length);
+  preimage.set(DOMAIN_OP_SIG, 0);
+  preimage.set(id, DOMAIN_OP_SIG.length);
+  return preimage;
+}
+
+export { verifySignature };

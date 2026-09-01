@@ -5,7 +5,7 @@
 import { createPrivateKey, createPublicKey, sign as edSign, verify as edVerify } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 
-import { hexToBytes, bytesToHex, encode } from './cbor.mjs';
+import { hexToBytes, bytesToHex, encode, decode } from './cbor.mjs';
 import { blake3 } from './blake3.mjs';
 import { merkleRootOnce } from './merkle.mjs';
 
@@ -591,4 +591,82 @@ export function runRelayTranscriptVector(vector) {
       throw new Error(`unknown relay-transcript kind "${vector.kind}"`);
   }
   checkFrames(vector);
+}
+
+/** Tagged CBOR value → JSON-ish (bytes become lowercase hex). */
+export function taggedToJson(value) {
+  if (value == null || value.t == null) return value;
+  switch (value.t) {
+    case 'uint':
+    case 'text':
+    case 'bool':
+      return value.v;
+    case 'bytes':
+      return value.hex;
+    case 'null':
+      return null;
+    case 'array':
+      return value.v.map(taggedToJson);
+    case 'map': {
+      const out = {};
+      for (const [k, val] of Object.entries(value.v)) out[k] = taggedToJson(val);
+      return out;
+    }
+    default:
+      throw new Error(`unknown tagged type ${value.t}`);
+  }
+}
+
+/** Decode one RELAY envelope `{type, request_id, payload}`. */
+export function decodeEnvelope(bytes) {
+  const tagged = decode(bytes);
+  if (tagged.t !== 'map') throw new Error('envelope is not a map');
+  const v = tagged.v;
+  return {
+    type: taggedToJson(v.type),
+    request_id: taggedToJson(v.request_id),
+    payload: taggedToJson(v.payload),
+  };
+}
+
+function remainingDone(payload) {
+  const rem = payload && payload.remaining;
+  return rem === 0 || rem == null;
+}
+
+/**
+ * Whether `replies` complete `request` (request-id bound).
+ * Mirrors Rust `relay_client::replies_complete`.
+ */
+export function repliesComplete(request, replies) {
+  let req;
+  try {
+    req = decodeEnvelope(request);
+  } catch {
+    return replies.length > 0;
+  }
+  for (let i = 0; i < replies.length; i++) {
+    let frame;
+    try {
+      frame = decodeEnvelope(replies[i]);
+    } catch {
+      continue;
+    }
+    if (frame.type === MSG_ERROR && (frame.request_id === req.request_id || (frame.request_id === 0 && i === 0))) {
+      return true;
+    }
+    if (frame.request_id !== req.request_id && frame.type !== MSG_OPS) continue;
+    if (req.type === MSG_HELLO && frame.type === MSG_CHALLENGE) return true;
+    if (req.type === MSG_AUTH && frame.type === MSG_WELCOME) return true;
+    if (req.type === MSG_OPS && frame.type === MSG_OP_ACK) return true;
+    if (req.type === MSG_MERKLE_NODE_REQUEST && frame.type === MSG_MERKLE_NODE_RESPONSE) return true;
+    if (req.type === MSG_MERKLE_LEAF_REQUEST && frame.type === MSG_MERKLE_LEAF_RESPONSE) return true;
+    if (req.type === MSG_DELTA_REQUEST && frame.type === MSG_DELTA_BATCH && frame.request_id === req.request_id) {
+      if (remainingDone(frame.payload)) return true;
+    }
+    if (req.type === MSG_SYNC_REQUEST && frame.type === MSG_SYNC_RESPONSE && frame.request_id === req.request_id) {
+      return true;
+    }
+  }
+  return false;
 }
