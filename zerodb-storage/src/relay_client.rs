@@ -845,6 +845,7 @@ mod split_tests {
         assert!(!window_exhausted(0, 0, 64, 10, 100, 200));
     }
 
+    #[test]
     fn replies_complete_error_matching_or_id0_first() {
         let req = encode_env(MSG_OPS, 7, Cbor::Map(vec![]));
         let err_match = encode_env(MSG_ERROR, 7, Cbor::Map(vec![]));
