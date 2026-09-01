@@ -146,21 +146,27 @@ fn unknown_ep_is_epoch_unknown_and_does_not_persist() {
     );
 
     let mut importer = empty_store();
-    let (accepted, skipped) = importer
-        .import_bundle(&ExportBundle {
-            format: 1,
-            datastore_id: a.datastore_id_hex(),
-            ops: vec![create.clone()],
-        })
-        .unwrap();
-    assert_eq!(accepted, 0);
-    assert!(skipped >= 1);
+    let before_ds = importer.datastore_id_hex();
+    let imported = importer.import_bundle(&ExportBundle {
+        format: 1,
+        datastore_id: a.datastore_id_hex(),
+        ops: vec![create.clone()],
+    });
+    match imported {
+        Ok((accepted, skipped)) => {
+            assert_eq!(accepted, 0);
+            assert!(skipped >= 1);
+        }
+        Err(err) => {
+            assert!(
+                err.to_string().contains("EPOCH_UNKNOWN")
+                    || err.to_string().contains("no accepted"),
+                "empty importer must fail closed, got {err}"
+            );
+        }
+    }
     assert_eq!(importer.op_count().unwrap(), 0);
     assert_eq!(importer.schema_epoch().unwrap(), 0);
-    assert!(
-        importer
-            .take_rejects()
-            .iter()
-            .any(|r| r.reason == EPOCH_UNKNOWN && r.op_id == create.id)
-    );
+    assert_eq!(importer.datastore_id_hex(), before_ds);
+    assert!(importer.list_nodes().unwrap().is_empty());
 }

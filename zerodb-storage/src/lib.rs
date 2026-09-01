@@ -1407,6 +1407,11 @@ impl<B: StoreBackend> LocalStore<B> {
                 pending.insert(validated.id);
                 accepted += 1;
             }
+            if adopting && accepted == 0 {
+                return Err(StoreError::Invalid(
+                    "cannot adopt datastore from a bundle with no accepted operations".into(),
+                ));
+            }
             meta_set_u64(tx, "hlc_p", next_hlc_p)?;
             meta_set_u64(tx, "hlc_l", next_hlc_l as u64)?;
             Ok(())
