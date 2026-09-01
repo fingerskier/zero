@@ -170,3 +170,204 @@ fn unknown_ep_is_epoch_unknown_and_does_not_persist() {
     assert_eq!(importer.datastore_id_hex(), before_ds);
     assert!(importer.list_nodes().unwrap().is_empty());
 }
+
+/// P1-1: a catch-up / import batch may list epoch-bound data before the
+/// kind-5 that introduces that epoch (OpId order, not causal). The epoch
+/// must apply first so the data is not permanently skipped as EPOCH_UNKNOWN.
+#[test]
+fn same_batch_data_before_epoch_persists() {
+    let mut a = empty_store();
+    a.apply_schema_json(r#"{"nodes":{"Todo":{"props":{"title":"lww"}}}}"#)
+        .unwrap();
+    let node = a.create_node("Todo").unwrap();
+    a.set_lww(&node, "title", "milk").unwrap();
+    let exported = a.export_all().unwrap();
+    let epoch = exported
+        .ops
+        .iter()
+        .find(|op| op.kind == 5)
+        .cloned()
+        .expect("kind 5");
+    let create = exported
+        .ops
+        .iter()
+        .find(|op| op.kind == 1)
+        .cloned()
+        .expect("CreateNode");
+    let set = exported
+        .ops
+        .iter()
+        .find(|op| op.kind == 3)
+        .cloned()
+        .expect("SetProperty");
+    assert_eq!(set.ep, 1);
+    assert_eq!(create.ep, 1);
+    assert_eq!(epoch.ep, 0);
+
+    let mut b = empty_store();
+    let (accepted, skipped) = b
+        .import_bundle(&ExportBundle {
+            format: 1,
+            datastore_id: a.datastore_id_hex(),
+            ops: vec![set.clone(), create.clone(), epoch.clone()],
+        })
+        .unwrap();
+    assert!(
+        accepted >= 3,
+        "same-batch epoch + data must persist, accepted={accepted} skipped={skipped}"
+    );
+    assert_eq!(b.schema_epoch().unwrap(), 1);
+    assert!(
+        b.export_all().unwrap().ops.iter().any(|op| op.id == set.id),
+        "SetProperty must persist after the in-batch epoch applies"
+    );
+    assert_eq!(b.get_lww(&node, "title").unwrap().as_deref(), Some("milk"));
+
+    b.replay_all().unwrap();
+    assert_eq!(b.get_lww(&node, "title").unwrap().as_deref(), Some("milk"));
+
+    let mut c =
+        LocalStore::init_with_backend_from_seed(MemoryBackend::new(), &[0xC0u8; 32], &ds_bytes(&a))
+            .unwrap();
+    c.commit_wires_atomic(&[set, create, epoch]).unwrap();
+    assert_eq!(c.schema_epoch().unwrap(), 1);
+    assert_eq!(c.get_lww(&node, "title").unwrap().as_deref(), Some("milk"));
+}
+
+/// P1-2: SCHEMA.md §3 own-epoch semantics. After epoch 1 (encrypted / CRDT
+/// pin) is applied, a delayed ep=0 schemaless write must validate against
+/// epoch 0 (no pin, not encrypted), not the current IR.
+#[test]
+fn late_ep0_plaintext_applies_under_own_epoch() {
+    let mut early = empty_store();
+    let note = early.create_node("Note").unwrap();
+    early.set_lww(&note, "body", "schemaless").unwrap();
+    let early_ops = early.export_all().unwrap();
+    let create = early_ops
+        .ops
+        .iter()
+        .find(|op| op.kind == 1)
+        .cloned()
+        .expect("CreateNode");
+    let set = early_ops
+        .ops
+        .iter()
+        .find(|op| op.kind == 3)
+        .cloned()
+        .expect("SetProperty");
+    assert_eq!(create.ep, 0);
+    assert_eq!(set.ep, 0);
+    assert!(
+        set.body.get("value").and_then(|v| v.as_str()) == Some("schemaless"),
+        "epoch-0 LWW must be plaintext"
+    );
+
+    let mut author = LocalStore::init_with_backend_from_seed(
+        MemoryBackend::new(),
+        &[0xA1u8; 32],
+        &ds_bytes(&early),
+    )
+    .unwrap();
+    author.apply_schema_json(NOTE_SCHEMA).unwrap();
+    let epoch = author
+        .export_all()
+        .unwrap()
+        .ops
+        .into_iter()
+        .find(|op| op.kind == 5)
+        .expect("kind 5");
+
+    let mut peer = LocalStore::init_with_backend_from_seed(
+        MemoryBackend::new(),
+        &[0xB2u8; 32],
+        &ds_bytes(&early),
+    )
+    .unwrap();
+    peer.import_bundle(&ExportBundle {
+        format: 1,
+        datastore_id: early.datastore_id_hex(),
+        ops: vec![epoch],
+    })
+    .unwrap();
+    assert_eq!(peer.schema_epoch().unwrap(), 1);
+
+    assert_eq!(peer.ingest_op(&create).unwrap(), IngestResult::Applied);
+    match peer.ingest_op(&set).unwrap() {
+        IngestResult::Applied => {}
+        other => panic!("ep=0 plaintext must apply under own epoch, got {other:?}"),
+    }
+    assert!(
+        peer.export_all()
+            .unwrap()
+            .ops
+            .iter()
+            .any(|op| op.id == set.id),
+        "late ep=0 SetProperty must persist"
+    );
+    assert_eq!(
+        peer.get_lww(&note, "body").unwrap().as_deref(),
+        Some("schemaless")
+    );
+
+    let mut pin_early = empty_store();
+    let todo = pin_early.create_node("Todo").unwrap();
+    pin_early.set_lww(&todo, "title", "plain").unwrap();
+    let pin_set = pin_early
+        .export_all()
+        .unwrap()
+        .ops
+        .into_iter()
+        .find(|op| op.kind == 3)
+        .expect("ep=0 lww");
+    let pin_create = pin_early
+        .export_all()
+        .unwrap()
+        .ops
+        .into_iter()
+        .find(|op| op.kind == 1)
+        .expect("CreateNode");
+
+    let mut pinned = LocalStore::init_with_backend_from_seed(
+        MemoryBackend::new(),
+        &[0xC3u8; 32],
+        &ds_bytes(&pin_early),
+    )
+    .unwrap();
+    pinned
+        .apply_schema_json(r#"{"nodes":{"Todo":{"props":{"title":"flag"}}}}"#)
+        .unwrap();
+    let pin_epoch = pinned
+        .export_all()
+        .unwrap()
+        .ops
+        .into_iter()
+        .find(|op| op.kind == 5)
+        .expect("kind 5");
+
+    let mut late = LocalStore::init_with_backend_from_seed(
+        MemoryBackend::new(),
+        &[0xD4u8; 32],
+        &ds_bytes(&pin_early),
+    )
+    .unwrap();
+    late.import_bundle(&ExportBundle {
+        format: 1,
+        datastore_id: pin_early.datastore_id_hex(),
+        ops: vec![pin_epoch],
+    })
+    .unwrap();
+    late.import_bundle(&ExportBundle {
+        format: 1,
+        datastore_id: pin_early.datastore_id_hex(),
+        ops: vec![pin_create, pin_set.clone()],
+    })
+    .unwrap();
+    assert!(
+        late.export_all()
+            .unwrap()
+            .ops
+            .iter()
+            .any(|op| op.id == pin_set.id),
+        "ep=0 lww must not be rejected by an epoch-1 flag pin"
+    );
+}

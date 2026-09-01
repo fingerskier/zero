@@ -73,6 +73,8 @@ pub(crate) const KIND_TOMBSTONE: u64 = 4;
 /// KERNEL §5 `max_drift_ms` / H1 max forward skew (60 seconds).
 pub const MAX_CLOCK_DRIFT_MS: u64 = 60_000;
 const META_QUARANTINE: &str = "quarantine";
+/// Per-epoch IR acceleration (signed kind-5 remains the wire truth).
+const META_SCHEMA_BY_EP: &str = "schema_by_ep";
 const META_KEYRING: &str = "group_keyring";
 const META_KEY_CURRENT: &str = "group_key_current";
 const META_PRINCIPAL: &str = "principal_id";
@@ -461,12 +463,22 @@ impl<B: StoreBackend> LocalStore<B> {
             let mut entries = load_quarantine(tx)?;
             entries.sort_by(|a, b| {
                 (
+                    if a.wire.kind == KIND_SCHEMA_EPOCH {
+                        0u8
+                    } else {
+                        1
+                    },
                     a.wire.ts.p,
                     a.wire.ts.l,
                     a.wire.author.as_str(),
                     a.wire.id.as_str(),
                 )
                     .cmp(&(
+                        if b.wire.kind == KIND_SCHEMA_EPOCH {
+                            0u8
+                        } else {
+                            1
+                        },
                         b.wire.ts.p,
                         b.wire.ts.l,
                         b.wire.author.as_str(),
@@ -1061,8 +1073,9 @@ impl<B: StoreBackend> LocalStore<B> {
             Some(true) => return Err(StoreError::Invalid("node is deleted".into())),
             Some(false) => {}
         }
-        check_schema_pin_tx(&self.backend, node_hex, path, crdt)?;
-        let encrypted = prop_is_encrypted(&self.backend, node_hex, path)?;
+        let ep = self.schema_epoch().unwrap_or(0);
+        check_schema_pin_tx(&self.backend, node_hex, path, crdt, ep)?;
+        let encrypted = prop_is_encrypted(&self.backend, node_hex, path, ep)?;
         if encrypted && crdt != "lww" {
             return Err(StoreError::Invalid(
                 "encrypted properties must be lww".into(),
@@ -1334,7 +1347,9 @@ impl<B: StoreBackend> LocalStore<B> {
             if auth_on {
                 applied_auth.extend(held_wires);
             }
-            for (op, validated) in bundle.ops.iter().zip(&validated) {
+            for i in epoch_first_indices(&bundle.ops) {
+                let op = &bundle.ops[i];
+                let validated = &validated[i];
                 let Some(validated) = validated else {
                     skipped += 1;
                     continue;
@@ -1722,7 +1737,8 @@ impl<B: StoreBackend> LocalStore<B> {
             if auth_on {
                 applied_auth.extend(held_wires);
             }
-            for wire in wires {
+            for i in epoch_first_indices(wires) {
+                let wire = &wires[i];
                 let validated = validate_wire_for_ds(wire, &ds)?;
                 if tx.op_exists(&validated.id)? {
                     return Err(StoreError::Duplicate);
@@ -2071,8 +2087,8 @@ fn apply_wire(
         let crdt = wire.body["crdt"]
             .as_str()
             .ok_or_else(|| StoreError::Invalid("body.crdt".into()))?;
-        check_schema_pin_tx(tx, node, path, crdt)?;
-        check_encrypted_ingest(tx, node, path, &wire.body)?;
+        check_schema_pin_tx(tx, node, path, crdt, wire.ep)?;
+        check_encrypted_ingest(tx, node, path, &wire.body, wire.ep)?;
     }
     if wire.kind == KIND_KEY_RECORD {
         check_key_record_wraps(&wire.body)?;
@@ -3152,6 +3168,20 @@ fn wire_waiting_on_key_record(
     Ok(false)
 }
 
+/// Apply kind-5 SchemaEpochs before epoch-bound data in a multi-op batch.
+/// Relative order inside each group is preserved (stable).
+fn epoch_first_indices(ops: &[WireOp]) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..ops.len()).collect();
+    idx.sort_by_key(|&i| {
+        if ops[i].kind == KIND_SCHEMA_EPOCH {
+            0u8
+        } else {
+            1
+        }
+    });
+    idx
+}
+
 fn check_wire_ingress(
     tx: &dyn BackendTxn,
     wire: &WireOp,
@@ -3402,7 +3432,47 @@ fn clear_schema_meta(tx: &dyn BackendTxn) -> Result<(), StoreError> {
     tx.meta_set("schema_id", &[])?;
     meta_set_u64(tx, "schema_ep", 0)?;
     tx.meta_set("schema_json", &[])?;
+    tx.meta_set(META_SCHEMA_BY_EP, b"{}")?;
     Ok(())
+}
+
+fn load_schema_by_ep(tx: &dyn BackendTxn) -> Result<BTreeMap<String, String>, StoreError> {
+    match tx.meta_get(META_SCHEMA_BY_EP)? {
+        None => Ok(BTreeMap::new()),
+        Some(raw) if raw.is_empty() => Ok(BTreeMap::new()),
+        Some(raw) => serde_json::from_slice(&raw)
+            .map_err(|e| StoreError::Invalid(format!("schema_by_ep: {e}"))),
+    }
+}
+
+fn store_epoch_ir(tx: &dyn BackendTxn, epoch: u64, ir_bytes: &[u8]) -> Result<(), StoreError> {
+    let mut map = load_schema_by_ep(tx)?;
+    map.insert(epoch.to_string(), hex::encode(ir_bytes));
+    let bytes = serde_json::to_vec(&map).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    tx.meta_set(META_SCHEMA_BY_EP, &bytes)
+}
+
+fn parse_schema_ir_bytes(raw: &[u8]) -> Result<SchemaIr, StoreError> {
+    let decoded = zerodb_core::cbor::decode(raw).map_err(|e| StoreError::Cbor(e.to_string()))?;
+    parse_ir(&decoded).map_err(|e| StoreError::Invalid(e.to_string()))
+}
+
+/// SCHEMA.md §3: CRDT / encrypt consult the op's own epoch IR. Epoch 0 is
+/// schemaless (no pin, not encrypted).
+fn load_schema_ir_for_ep(tx: &dyn BackendTxn, ep: u64) -> Result<Option<SchemaIr>, StoreError> {
+    if ep == 0 {
+        return Ok(None);
+    }
+    let map = load_schema_by_ep(tx)?;
+    if let Some(ir_hex) = map.get(&ep.to_string()) {
+        let ir_bytes = hex::decode(ir_hex).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        return parse_schema_ir_bytes(&ir_bytes).map(Some);
+    }
+    let current = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
+    if ep == current {
+        return load_schema_ir(tx);
+    }
+    Ok(None)
 }
 
 fn persist_schema_from_epoch_body(
@@ -3424,10 +3494,14 @@ fn persist_schema_from_epoch_body(
     let ir = parse_ir(&decoded).map_err(|e| StoreError::Invalid(e.to_string()))?;
     let id = schema_id(&ir_bytes);
     let pin = schema_ir_to_pin_json(&ir);
-    tx.meta_set("schema_ir", &ir_bytes)?;
-    tx.meta_set("schema_id", &id)?;
-    meta_set_u64(tx, "schema_ep", epoch)?;
-    tx.meta_set("schema_json", pin.to_string().as_bytes())?;
+    store_epoch_ir(tx, epoch, &ir_bytes)?;
+    let current = meta_get_u64(tx, "schema_ep")?.unwrap_or(0);
+    if current == 0 || epoch >= current {
+        tx.meta_set("schema_ir", &ir_bytes)?;
+        tx.meta_set("schema_id", &id)?;
+        meta_set_u64(tx, "schema_ep", epoch)?;
+        tx.meta_set("schema_json", pin.to_string().as_bytes())?;
+    }
     Ok(())
 }
 
@@ -3445,8 +3519,13 @@ fn schema_path_encrypted_any(ir: &SchemaIr, path: &str) -> bool {
         .any(|ent| ent.props.get(path).is_some_and(|p| p.encrypted))
 }
 
-fn prop_is_encrypted(tx: &dyn BackendTxn, node_hex: &str, path: &str) -> Result<bool, StoreError> {
-    let Some(ir) = load_schema_ir(tx)? else {
+fn prop_is_encrypted(
+    tx: &dyn BackendTxn,
+    node_hex: &str,
+    path: &str,
+    ep: u64,
+) -> Result<bool, StoreError> {
+    let Some(ir) = load_schema_ir_for_ep(tx, ep)? else {
         return Ok(false);
     };
     let label = tx
@@ -3473,8 +3552,9 @@ fn check_encrypted_ingest(
     node_hex: &str,
     path: &str,
     body: &serde_json::Value,
+    ep: u64,
 ) -> Result<(), StoreError> {
-    if !prop_is_encrypted(tx, node_hex, path)? {
+    if !prop_is_encrypted(tx, node_hex, path, ep)? {
         return Ok(());
     }
     let has_value = body
@@ -3945,16 +4025,11 @@ fn check_schema_pin_tx(
     node_hex: &str,
     path: &str,
     crdt: &str,
+    ep: u64,
 ) -> Result<(), StoreError> {
-    let Some(raw) = tx.meta_get("schema_json")? else {
+    let Some(ir) = load_schema_ir_for_ep(tx, ep)? else {
         return Ok(());
     };
-    if raw.is_empty() {
-        return Ok(());
-    }
-    let raw = String::from_utf8_lossy(&raw);
-    let v: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| StoreError::Invalid(e.to_string()))?;
     let label = tx
         .node_list()?
         .into_iter()
@@ -3963,9 +4038,11 @@ fn check_schema_pin_tx(
     let Some(label) = label else {
         return Ok(());
     };
-    let Some(expected) = v
-        .pointer(&format!("/nodes/{label}/props/{path}"))
-        .and_then(|x| x.as_str())
+    let Some(expected) = ir
+        .nodes
+        .get(&label)
+        .and_then(|ent| ent.props.get(path))
+        .and_then(|def| crdt_name(def.crdt))
     else {
         return Ok(());
     };

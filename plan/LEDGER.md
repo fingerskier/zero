@@ -54,7 +54,7 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
 | M3c | Interop TS wire peer + release (include signed `SchemaEpoch`) | open | SPEC M3c exit + Decision Log act at tag time. **Not** claimed until that act. |
-| M3c-epoch | Signed KERNEL kind 5 `SchemaEpoch` | in-progress | Kind 5 persist/ingest/import landed this PR (`m3c_schema_epoch`; n=1, empty migration). Schema including `encrypted: true` is an op. Unknown `ep` is `EPOCH_UNKNOWN`. Fork/quarantine + non-empty migration not this slice. Do not freeze wrap-body. **Not** M3c complete. |
+| M3c-epoch | Signed KERNEL kind 5 `SchemaEpoch` | in-progress | Kind 5 persist/ingest/import landed this PR (`m3c_schema_epoch`; n=1, empty migration). Schema including `encrypted: true` is an op. Unknown `ep` is `EPOCH_UNKNOWN`. Codex P1s: epoch-first in multi-op batches; own-epoch IR for pin/encrypt (ep=0 schemaless). Fork/quarantine + non-empty migration not this slice. Do not freeze wrap-body. **Not** M3c complete. |
 | M3c-ts-peer | Independent TypeScript wire peer | open | Evolved from the conformance runner, **not** NAPI-backed (SPEC M3c). |
 | M3c-harness | Two-language golden/negative harness (H9) | open | Relay+peer vectors in two languages. |
 | M3c-pack | Version/upgrade matrix, support profile | open | Packaging for the tag. |
