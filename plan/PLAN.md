@@ -75,7 +75,7 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 This is the only live action list.
 
 1. **M3c-a `SchemaEpoch`** — signed KERNEL kind 5 persist/ingest/import landed this PR (n=1, empty migration; `encrypted: true` rides the op; unknown `ep` is `EPOCH_UNKNOWN`). Codex P1s: same-batch kind-5 applies before epoch-bound data; late ops validate against their own epoch IR (ep=0 schemaless). Fork/quarantine and non-empty migration DSL not started. Do not freeze wrap-body. **Not** M3c complete.
-2. **M3c-b TS wire peer** — independent TypeScript wire peer evolved from the conformance runner, **not** NAPI-backed (SPEC M3c).
+2. **M3c-b TS wire peer** — this PR: independent TypeScript wire peer evolved from the conformance runner (`conformance/ts/peer/`), **not** NAPI-backed (SPEC M3c). Speaks live RELAY 0.2 HELLO/AUTH/WELCOME, signed KERNEL ops including kind 5, merkle-walk catch-up, `EPOCH_UNKNOWN` fail-closed, advertised WELCOME limits. **Not** M3c complete.
 3. **M3c-c two-language harness** — golden/negative vectors for relay+peer in two languages (H9).
 4. **M3c-d packaging** — version/upgrade matrix, support profile.
 5. **`v0.1.0` tag** — only after M3c-a..d and a Decision Log act at tag time. Still not format freeze unless that act says so.

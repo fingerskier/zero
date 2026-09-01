@@ -77,3 +77,16 @@ jobs:
         with:
           node-version: 20
       - run: node conformance/ts/runner.mjs --lane xfail
+
+  ts-peer:
+    name: TS wire peer (NAPI-free + smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo build -p zerodb-relay --locked
+      - run: node --test conformance/ts/peer/*.test.mjs

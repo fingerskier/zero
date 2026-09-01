@@ -129,6 +129,54 @@ export function buildTree(ops) {
   return { levels, leaves, ops: ops.slice() };
 }
 
+/**
+ * Build a tree whose leaf positions are fixed by a remote active-bucket
+ * manifest (Rust `MerkleTree::build_aligned`). A bucket absent locally is
+ * the canonical empty leaf so missing buckets do not shift later positions.
+ */
+export function buildTreeAligned(ops, bucketIndices) {
+  if (!bucketIndices || bucketIndices.length === 0) {
+    return buildTree([]);
+  }
+
+  const buckets = new Map();
+  for (const op of ops) {
+    const idx = Math.floor(op.physical_ms / BUCKET_WIDTH_MS);
+    if (!buckets.has(idx)) buckets.set(idx, []);
+    buckets.get(idx).push(op);
+  }
+
+  const empty = emptyLeaf();
+  const leaves = [];
+  for (const idx of bucketIndices) {
+    const members = (buckets.get(idx) || []).slice().sort(cmpKey);
+    const op_ids = members.map((m) => m.op_id);
+    leaves.push({
+      hash: op_ids.length === 0 ? empty : leafHash(idx, op_ids),
+      bucket_index: idx,
+      op_ids,
+    });
+  }
+
+  const p = nextPowerOfTwo(leaves.length);
+  while (leaves.length < p) {
+    leaves.push({ hash: empty, bucket_index: null, op_ids: [] });
+  }
+
+  let level = leaves.map((l) => l.hash);
+  const levels = [level.slice()];
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      next.push(nodeHash(level[i], level[i + 1]));
+    }
+    levels.push(next);
+    level = next;
+  }
+
+  return { levels, leaves, ops: ops.slice() };
+}
+
 export function merkleRoot(ops) {
   return buildTree(ops).levels[buildTree(ops).levels.length - 1][0];
 }
