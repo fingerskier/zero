@@ -28,7 +28,6 @@ import {
   jsonToTagged,
 } from '../models/relay.mjs'
 import { merkleRootOnce, buildTreeAligned, emptyLeaf } from '../models/merkle.mjs'
-import { bundleDatastoreId } from './store.mjs'
 
 const MERKLE_FORMAT_VERSION = 1
 const BUCKET_WIDTH_MS = 60_000
@@ -367,13 +366,8 @@ export async function sync(store, joinDs, handle) {
     return summary
   }
 
-  const bundleDs = bundleDatastoreId(incoming)
-  const adopting = store.ops.length === 0 && bundleDs !== store.dsHex
-  if (adopting) store.adoptDatastore(bundleDs)
-  const { applied, skipped } = store.importBundle(incoming)
-  if (adopting && applied === 0) {
-    throw new Error('adopt failed: bundle accepted no operations')
-  }
+  const expectedDs = joinDs || store.datastoreIdHex()
+  const { applied, skipped } = store.importBundle(incoming, { expectedDs })
   summary.applied = applied
   summary.skipped = catchupSkipped + skipped
   return summary

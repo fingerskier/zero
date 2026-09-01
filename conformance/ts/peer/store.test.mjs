@@ -3,7 +3,17 @@ import assert from 'node:assert/strict'
 
 import { encode, bytesToHex } from '../models/cbor.mjs'
 import { envelopeToTagged, computeOpId } from '../models/op.mjs'
-import { PeerStore, EPOCH_UNKNOWN, KIND_SET_PROPERTY, encodeSchemaIr } from './store.mjs'
+import { signOp } from './crypto.mjs'
+import {
+  PeerStore,
+  EPOCH_UNKNOWN,
+  AUTH_WRONG_DATASTORE,
+  CLOCK_DRIFT,
+  APPLY_INVALID,
+  KIND_SCHEMA_EPOCH,
+  KIND_SET_PROPERTY,
+  encodeSchemaIr,
+} from './store.mjs'
 import { splitOpsBatches, encodeRelayOp, welcomeLimits } from './client.mjs'
 
 const TODO_PIN = { nodes: { Todo: { props: { title: 'lww' } } } }
@@ -92,6 +102,138 @@ test('splitOpsBatches honors advertised max_batch_ops and max_payload_bytes', ()
     () => splitOpsBatches(store.dsHex, encoded, 8, 1_000_000, 20),
     /max_payload_bytes/,
   )
+})
+
+function signRemote(store, { kind, body, ep, ds, ts }) {
+  const stamp = ts || { p: store.clock(), l: 0 }
+  const env = {
+    v: 1,
+    ds: ds || store.dsHex,
+    ep: ep != null ? ep : store.schemaEpoch,
+    author: store.authorHex,
+    ts: stamp,
+    deps: [],
+    grp: null,
+    kind,
+    body,
+  }
+  const id = computeOpId(encode(envelopeToTagged(env)))
+  return {
+    id: bytesToHex(id),
+    v: 1,
+    ds: env.ds,
+    ep: env.ep,
+    author: store.authorHex,
+    author_pk: store.pkHex,
+    ts: stamp,
+    deps: [],
+    kind,
+    body,
+    sig: bytesToHex(signOp(store.seed, id)),
+  }
+}
+
+test('join A rejects a well-signed op whose ds is B (AUTH_WRONG_DATASTORE)', () => {
+  const a = new PeerStore()
+  a.applySchemaEpoch(TODO_PIN)
+  const { node } = a.createNode('Todo')
+  a.setLww(node, 'title', 'milk')
+
+  const foreign = new PeerStore()
+  foreign.applySchemaEpoch(TODO_PIN)
+  const { node: otherNode } = foreign.createNode('Todo')
+  const foreignOp = foreign.setLww(otherNode, 'title', 'poison')
+  assert.notEqual(foreign.dsHex, a.dsHex)
+  assert.equal(a.verifyWire(foreignOp), null)
+
+  const empty = new PeerStore()
+  const emptyDs = empty.dsHex
+  assert.equal(empty.ingest(foreignOp, { expectedDs: a.dsHex }), AUTH_WRONG_DATASTORE)
+  assert.equal(empty.dsHex, emptyDs)
+  assert.notEqual(empty.dsHex, foreign.dsHex)
+  assert.equal(empty.ops.length, 0)
+  assert.equal(empty.getLww(otherNode, 'title'), null)
+
+  assert.throws(
+    () => empty.importBundle([foreignOp], { expectedDs: a.dsHex }),
+    /cannot adopt datastore from a bundle with no accepted operations/,
+  )
+  assert.equal(empty.dsHex, emptyDs)
+  assert.equal(empty.ops.length, 0)
+
+  empty.adoptDatastore(a.dsHex)
+  assert.equal(empty.ingest(foreignOp), AUTH_WRONG_DATASTORE)
+  assert.equal(empty.dsHex, a.dsHex)
+  assert.equal(empty.ops.length, 0)
+})
+
+test('import far-future LWW is CLOCK_DRIFT; in-window remote stamp is observed so local write wins', () => {
+  const wall = 1_000_000
+  const author = new PeerStore({ clock: () => wall })
+  author.applySchemaEpoch(TODO_PIN)
+  const { node } = author.createNode('Todo')
+  const far = signRemote(author, {
+    kind: KIND_SET_PROPERTY,
+    body: { node, path: 'title', crdt: 'lww', value: 'future' },
+    ep: 1,
+    ts: { p: wall + 120_000, l: 0 },
+  })
+  assert.equal(author.verifyWire(far), null)
+
+  const peer = new PeerStore({ clock: () => wall })
+  peer.importBundle(author.ops.filter((w) => w.kind === 5 || w.kind === 1))
+  assert.equal(peer.ingest(far), CLOCK_DRIFT)
+  assert.equal(peer.getLww(node, 'title'), null)
+  peer.setLww(node, 'title', 'local')
+  assert.equal(peer.getLww(node, 'title'), 'local')
+
+  const near = signRemote(author, {
+    kind: KIND_SET_PROPERTY,
+    body: { node, path: 'title', crdt: 'lww', value: 'near' },
+    ep: 1,
+    ts: { p: wall + 10_000, l: 7 },
+  })
+  const observed = new PeerStore({ clock: () => wall })
+  observed.importBundle(author.ops.filter((w) => w.kind === 5 || w.kind === 1))
+  assert.equal(observed.ingest(near), 'applied')
+  assert.equal(observed.getLww(node, 'title'), 'near')
+  const local = observed.setLww(node, 'title', 'after')
+  assert.ok(local.ts.p > near.ts.p || (local.ts.p === near.ts.p && local.ts.l > near.ts.l))
+  assert.equal(observed.getLww(node, 'title'), 'after')
+})
+
+test('invalid SchemaEpoch body is rejected and does not bump schemaEpoch', () => {
+  const author = new PeerStore()
+  const ir = encodeSchemaIr(TODO_PIN)
+  const goodShape = {
+    epoch: 1,
+    schema: ir.idHex,
+    ir: ir.hex,
+    prev: null,
+    migration: [],
+  }
+
+  const cases = [
+    { ...goodShape, ir: 'ff' },
+    { ...goodShape, schema: '11'.repeat(32) },
+    { ...goodShape, epoch: 0 },
+  ]
+  for (const body of cases) {
+    const peer = new PeerStore()
+    const wire = signRemote(author, { kind: KIND_SCHEMA_EPOCH, body, ep: 0, ds: peer.dsHex })
+    assert.equal(peer.verifyWire(wire), null)
+    assert.equal(peer.ingest(wire), APPLY_INVALID)
+    assert.equal(peer.schemaEpoch, 0)
+    assert.equal(peer.ops.length, 0)
+    const data = signRemote(author, {
+      kind: KIND_SET_PROPERTY,
+      body: { node: 'aa'.repeat(16), path: 'title', crdt: 'lww', value: 'x' },
+      ep: 1,
+      ds: peer.dsHex,
+    })
+    assert.equal(peer.ingest(data), EPOCH_UNKNOWN)
+    assert.equal(peer.schemaEpoch, 0)
+  }
 })
 
 test('welcomeLimits reads advertised values', () => {
