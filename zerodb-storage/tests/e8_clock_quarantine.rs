@@ -6,7 +6,7 @@
 //! and C converge on the same materialized LWW (I-1). I-4/I-5 stay true.
 //! Honest and colluding relays both deliver the op; peers enforce H1.
 
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use zerodb_core::cbor::{self, Cbor};
@@ -14,7 +14,7 @@ use zerodb_core::op::{OpEnvelope, OpTs, json_to_cbor_body};
 use zerodb_core::relay::{
     MSG_AUTH, MSG_HELLO, MSG_OP_ACK, MSG_OPS, peer_id_from_pk, sign_auth_for_hello,
 };
-use zerodb_core::sign::sign_op;
+use zerodb_core::sign::{DOMAIN_OP_SIG, sign_op};
 use zerodb_relay::{Relay, RelaySession};
 use zerodb_storage::relay_client;
 use zerodb_storage::{
@@ -49,6 +49,82 @@ fn last_kind(store: &LocalStore<MemoryBackend>, kind: u64) -> WireOp {
         .rev()
         .find(|op| op.kind == kind)
         .expect("kind present")
+}
+
+fn ds_bytes(store: &LocalStore<impl StoreBackend>) -> [u8; 32] {
+    hex::decode(store.datastore_id_hex())
+        .unwrap()
+        .try_into()
+        .unwrap()
+}
+
+fn control_deps(store: &LocalStore<impl StoreBackend>) -> Vec<String> {
+    store
+        .export_all()
+        .unwrap()
+        .ops
+        .into_iter()
+        .filter(|op| matches!(op.kind, 0 | 5 | 6 | 7 | 8))
+        .map(|op| op.id)
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sign_lww(
+    seed: &[u8; 32],
+    ds: &[u8; 32],
+    ep: u64,
+    deps: &[String],
+    physical_ms: u64,
+    node: &str,
+    path: &str,
+    value: &str,
+) -> WireOp {
+    let signing = SigningKey::from_bytes(seed);
+    let author_pk = signing.verifying_key().to_bytes();
+    let author = *blake3::hash(&author_pk).as_bytes();
+    let dep_ids = deps
+        .iter()
+        .map(|dep| hex::decode(dep).unwrap().try_into().unwrap())
+        .collect::<Vec<[u8; 32]>>();
+    let body_json = serde_json::json!({
+        "node": node, "path": path, "crdt": "lww", "value": value
+    });
+    let body = json_to_cbor_body(&body_json).unwrap();
+    let envelope = OpEnvelope {
+        v: 1,
+        ds: *ds,
+        ep,
+        author,
+        ts: OpTs {
+            physical_ms,
+            logical: 0,
+        },
+        deps: dep_ids,
+        grp: None,
+        kind: 3,
+        body,
+    };
+    let id = envelope.op_id().unwrap();
+    let pre = [DOMAIN_OP_SIG, id.as_slice()].concat();
+    let sig = signing.sign(&pre).to_bytes();
+    WireOp {
+        id: hex::encode(id),
+        v: 1,
+        ds: hex::encode(ds),
+        ep,
+        author: hex::encode(author),
+        author_pk: hex::encode(author_pk),
+        ts: WireTs {
+            p: physical_ms,
+            l: 0,
+        },
+        deps: deps.to_vec(),
+        grp: None,
+        kind: 3,
+        body: body_json,
+        sig: hex::encode(sig),
+    }
 }
 
 fn last_set_by(store: &LocalStore<MemoryBackend>, author_hex: &str) -> WireOp {
@@ -631,10 +707,29 @@ fn e8_sqlite_quarantine_survives_reopen() {
 
 #[test]
 fn e8_unreleasable_schema_pin_does_not_wedge() {
-    let (mut a, _b, _c, node, poison) = e8_topology();
-    assert_quarantined(a.ingest_op(&poison).unwrap());
+    let mut a = auth_store();
+    let mut c = empty_store();
     a.apply_schema_json(r#"{"nodes":{"Todo":{"props":{"title":"flag"}}}}"#)
         .unwrap();
+    a.grant_write_access(&c.principal_hex()).unwrap();
+    c.import_bundle(&a.export_all().unwrap()).unwrap();
+    let node = a.create_node("Todo").unwrap();
+    a.flag_enable(&node, "title").unwrap();
+    c.import_bundle(&a.export_all().unwrap()).unwrap();
+
+    // Own-epoch pin: ep=1 flag IR rejects a crafted ep=1 lww. An ep=0
+    // schemaless write would apply (SCHEMA.md §3 / P1-2).
+    let poison = sign_lww(
+        &c.identity_seed(),
+        &ds_bytes(&a),
+        1,
+        &control_deps(&c),
+        clock_plus_30d(),
+        &node,
+        "title",
+        "poison",
+    );
+    assert_quarantined(a.ingest_op(&poison).unwrap());
     a.set_test_clock(clock_plus_30d);
     let released = a.release_quarantine().unwrap();
     assert!(released.is_empty(), "unreleasable entry must not apply");
@@ -643,11 +738,11 @@ fn e8_unreleasable_schema_pin_does_not_wedge() {
         a.take_rejects()
             .iter()
             .any(|r| r.op_id == poison.id && r.reason == APPLY_INVALID),
-        "schema-pin miss must be a named APPLY_INVALID reject"
+        "own-epoch schema-pin miss must be a named APPLY_INVALID reject"
     );
     assert_eq!(
-        a.get_lww(&node, "title").unwrap().as_deref(),
-        Some("from-a")
+        a.get_prop(&node, "title").unwrap(),
+        Some(serde_json::json!(true))
     );
     let note = a.create_node("Note").unwrap();
     a.set_lww(&note, "body", "ok").unwrap();
@@ -660,17 +755,24 @@ fn e8_unreleasable_survives_sqlite_reopen_without_wedge() {
     let (node, poison) = {
         let mut a = LocalStore::init_auth(&path).unwrap();
         let mut c = empty_store();
+        a.apply_schema_json(r#"{"nodes":{"Todo":{"props":{"title":"flag"}}}}"#)
+            .unwrap();
         a.grant_write_access(&c.principal_hex()).unwrap();
         c.import_bundle(&a.export_all().unwrap()).unwrap();
         let node = a.create_node("Todo").unwrap();
-        a.set_lww(&node, "title", "from-a").unwrap();
+        a.flag_enable(&node, "title").unwrap();
         c.import_bundle(&a.export_all().unwrap()).unwrap();
-        c.set_test_clock(clock_plus_30d);
-        c.set_lww(&node, "title", "poison").unwrap();
-        let poison = last_set_by(&c, &c.author_hex());
+        let poison = sign_lww(
+            &c.identity_seed(),
+            &ds_bytes(&a),
+            1,
+            &control_deps(&c),
+            clock_plus_30d(),
+            &node,
+            "title",
+            "poison",
+        );
         assert_quarantined(a.ingest_op(&poison).unwrap());
-        a.apply_schema_json(r#"{"nodes":{"Todo":{"props":{"title":"flag"}}}}"#)
-            .unwrap();
         (node, poison)
     };
 
@@ -684,11 +786,11 @@ fn e8_unreleasable_survives_sqlite_reopen_without_wedge() {
         a.take_rejects()
             .iter()
             .any(|r| r.op_id == poison.id && r.reason == APPLY_INVALID),
-        "schema-pin miss must stay APPLY_INVALID after sqlite reopen"
+        "own-epoch schema-pin miss must stay APPLY_INVALID after sqlite reopen"
     );
     assert_eq!(
-        a.get_lww(&node, "title").unwrap().as_deref(),
-        Some("from-a")
+        a.get_prop(&node, "title").unwrap(),
+        Some(serde_json::json!(true))
     );
     let note = a.create_node("Note").unwrap();
     a.set_lww(&note, "body", "ok").unwrap();
