@@ -463,22 +463,14 @@ impl<B: StoreBackend> LocalStore<B> {
             let mut entries = load_quarantine(tx)?;
             entries.sort_by(|a, b| {
                 (
-                    if a.wire.kind == KIND_SCHEMA_EPOCH {
-                        0u8
-                    } else {
-                        1
-                    },
+                    batch_apply_rank(a.wire.kind),
                     a.wire.ts.p,
                     a.wire.ts.l,
                     a.wire.author.as_str(),
                     a.wire.id.as_str(),
                 )
                     .cmp(&(
-                        if b.wire.kind == KIND_SCHEMA_EPOCH {
-                            0u8
-                        } else {
-                            1
-                        },
+                        batch_apply_rank(b.wire.kind),
                         b.wire.ts.p,
                         b.wire.ts.l,
                         b.wire.author.as_str(),
@@ -3168,17 +3160,20 @@ fn wire_waiting_on_key_record(
     Ok(false)
 }
 
-/// Apply kind-5 SchemaEpochs before epoch-bound data in a multi-op batch.
-/// Relative order inside each group is preserved (stable).
+/// Multi-op apply order: genesis (AUTH root), then kind-5 SchemaEpochs,
+/// then the rest. Relative order inside each rank is preserved (stable).
+/// KeyRecords stay with the rest so key-before-data hold is unchanged.
+fn batch_apply_rank(kind: u64) -> u8 {
+    match kind {
+        KIND_GENESIS => 0,
+        KIND_SCHEMA_EPOCH => 1,
+        _ => 2,
+    }
+}
+
 fn epoch_first_indices(ops: &[WireOp]) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..ops.len()).collect();
-    idx.sort_by_key(|&i| {
-        if ops[i].kind == KIND_SCHEMA_EPOCH {
-            0u8
-        } else {
-            1
-        }
-    });
+    idx.sort_by_key(|&i| batch_apply_rank(ops[i].kind));
     idx
 }
 
