@@ -870,6 +870,16 @@ Development proceeds in **milestones**, each ending in a runnable outcome and be
 | `v0.1.0-sdk` | M2 | Node/NAPI vertical, byte-identical fixtures |
 | `v0.1.0` | M3c | First multi-peer secure product slice **with offline catch-up** |
 
+### Cross-platform product acceptance (2026-09-05)
+
+The product goal is **authorized data sharing between independent applications and agents across browser, CLI and desktop**, with durable offline edits and recovery. M1/M2/M3 release labels remain as defined above; M3c alone does not establish cross-platform product readiness.
+
+The first cross-platform pilot adds **XP-1**, after M3c and the necessary M4a platform slice. It requires two distinct applications plus a non-interactive agent, exercising browser, native CLI and one desktop shell against the same datastore through the durable relay, with separate authorized identities. They must agree on datastore/schema identity, supported CRDT semantics, accepted operations and materialized state after offline concurrent edits, client/relay restart and reconnection. Tests must cover unauthorized/wrong-datastore writes, revocation, encrypted-property confidentiality, duplicate command retries, unknown epochs/versions, and real browser persistence failures. Scope and evidence: [cross-platform review](../plan/CROSS-PLATFORM-REVIEW.md); work rows: [LEDGER](../plan/LEDGER.md).
+
+Prioritize an authenticated RELAY/WSS adapter path, enrollment/grant/revoke UX, browser durable persistence, structured CLI/Node agent API and one packaged desktop shell. Agent tooling uses the same datastore authorization as applications; a local query filter is not a security boundary. A thin MCP adapter may reuse that API. No founder-seed sharing or unauthenticated public agent bridge.
+
+Split **M4a-share** (browser RELAY + tested IndexedDB durability and XP-1 platform support) from **M4a-extended** (OPFS, React hooks, WebRTC/direct-peer parity). Extended features still belong to full M4a but do not block the relay-backed pilot. Preserve M4b migration/upgrade and M5 GA gates. This does not freeze a format, waive M3b/H10, or declare any new track complete. Security-relevant pinned remainders require an explicit supported-profile disposition before release, not silent exemption.
+
 ### Pre-M0 implementation policy
 
 Until composite **M0** exits:

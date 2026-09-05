@@ -2,8 +2,10 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** M0 contracts, M1 local core, M2 Node SDK, and experimental **M3a durable convergence are complete**. M3a includes the L2 relay/client, frozen-snapshot Merkle mismatch walk, and full 1,000-write three-peer E3 relay-only catch-up. Current gate: **M3b security**. **Browser peer (experimental):** `zerodb-wasm` in-memory store + WS sync driver. Conformance **115** vectors CI-blocking. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
+**Status:** M0 contracts, M1 local core, M2 Node SDK, and experimental **M3a durable convergence are complete**. M3a includes the L2 relay/client, frozen-snapshot Merkle mismatch walk, and full 1,000-write three-peer E3 relay-only catch-up. Current gate: **M3c interoperability/release**; M3b security remainder stays open/pinned. **Browser peer (experimental):** `zerodb-wasm` in-memory store + WS sync driver. Conformance **115** vectors CI-blocking. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
 
+
+**Product target:** authorized data sharing between independent apps and agents across browser, CLI and desktop. The experimental browser demo is not yet on the authenticated relay path. The added **XP-1** pilot gate requires cross-app offline/restart/security evidence, not just protocol conformance; see [review and roadmap](plan/CROSS-PLATFORM-REVIEW.md).
 
 ## Documents
 

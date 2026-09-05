@@ -1,12 +1,14 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
-**Date:** 2026-08-28
+**Date:** 2026-09-05
 **Status:** current work **M3c**. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M3b exit, **not** `v0.1.0`.
 **Authority:** delivery/tracking only. [SPEC §10](../doc/SPEC.md) is the normative roadmap; [ISSUES.md](../doc/ISSUES.md) the issue ledger; [LEDGER.md](LEDGER.md) the live work tracker. On conflict, SPEC wins.
 
 ---
 
 ## 1. Release meaning
+
+**Product goal:** authorized sharing between independent apps and agents across browser, CLI and desktop, including offline edits and restart recovery. The added **XP-1** pilot acceptance in [SPEC §10](../doc/SPEC.md) is distinct from M3c and GA. Review and evidence: [CROSS-PLATFORM-REVIEW.md](CROSS-PLATFORM-REVIEW.md).
 
 | Term | Definition |
 |------|------------|
@@ -72,13 +74,17 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 ## 5. Path forward (ordered)
 
-This is the only live action list.
+This is the ordered delivery summary; LEDGER owns individual work status. No cross-platform track below is complete.
 
-1. **M3c-a `SchemaEpoch`** — signed KERNEL kind 5 persist/ingest/import landed this PR (n=1, empty migration; `encrypted: true` rides the op; unknown `ep` is `EPOCH_UNKNOWN`). Codex P1s: same-batch kind-5 applies before epoch-bound data; late ops validate against their own epoch IR (ep=0 schemaless). Fork/quarantine and non-empty migration DSL not started. Do not freeze wrap-body. **Not** M3c complete.
-2. **M3c-b TS wire peer** — this PR: independent TypeScript wire peer evolved from the conformance runner (`conformance/ts/peer/`), **not** NAPI-backed (SPEC M3c). Speaks live RELAY 0.2 HELLO/AUTH/WELCOME, signed KERNEL ops including kind 5, merkle-walk catch-up, `EPOCH_UNKNOWN` fail-closed, advertised WELCOME limits. **Not** M3c complete.
+1. **M3c-a `SchemaEpoch`** — signed KERNEL kind 5 persist/ingest/import landed on main via #17 (n=1, empty migration; `encrypted: true` rides the op; unknown `ep` is `EPOCH_UNKNOWN`). Codex P1s: same-batch kind-5 applies before epoch-bound data; late ops validate against their own epoch IR (ep=0 schemaless). Fork/quarantine and non-empty migration DSL not started. Do not freeze wrap-body. **Not** M3c complete.
+2. **M3c-b TS wire peer** — landed on main via #18: independent TypeScript wire peer evolved from the conformance runner (`conformance/ts/peer/`), **not** NAPI-backed (SPEC M3c). Speaks live RELAY 0.2 HELLO/AUTH/WELCOME, signed KERNEL ops including kind 5, merkle-walk catch-up, `EPOCH_UNKNOWN` fail-closed, advertised WELCOME limits. **Not** M3c complete.
 3. **M3c-c two-language harness** — golden/negative vectors for relay+peer in two languages (H9).
 4. **M3c-d packaging** — version/upgrade matrix, support profile.
-5. **`v0.1.0` tag** — only after M3c-a..d and a Decision Log act at tag time. Still not format freeze unless that act says so.
+5. **`v0.1.0` tag** — only after M3c-a..d and a Decision Log act at tag time. Publish security-remainder disposition and supported profile; pinned does not mean waived. Still not format freeze unless that act says so. Not yet a cross-platform product claim.
+6. **XS-1/XS-2 sharing contract + enrollment** — common datastore/schema identity, supported CRDT/API subset, separate app/device/agent credentials, join/grant/revoke and recovery. Specify and write failing acceptance tests alongside M3c; release waits on prerequisites.
+7. **M4a-share + XS-3/XS-4** — browser authenticated RELAY/WSS with tested IndexedDB durability; structured CLI/Node agent API and thin MCP adapter; one desktop shell. No silent fallback to legacy unauthenticated peer v2. Ship installable artifacts and explicit OS/browser support matrix.
+8. **XP-1 cross-app/cross-agent pilot** — two different apps plus agent across browser/CLI/desktop; authorized edits, partition/concurrent changes, client/relay crash/restart, duplicate tool retries, revoke, encrypted data and browser persistence failure cases. Compare accepted ops and canonical materialized state. Passing protocol vectors alone is insufficient.
+9. **M4a-extended / M4b / M5** — optional platform conveniences and direct P2P, evolution, then operability/lifecycle/assurance. Keep full milestone gates intact; do not hold the relay-backed pilot for React, OPFS or WebRTC if IndexedDB passes durability tests. Schedule remains unset pending DQ-12.
 
 **Pinned (do not start):**
 - **perf Stage 2** — trigger: Stage 0 still scan-dominated

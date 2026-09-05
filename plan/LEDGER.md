@@ -54,8 +54,8 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
 | M3c | Interop TS wire peer + release (include signed `SchemaEpoch`) | open | SPEC M3c exit + Decision Log act at tag time. **Not** claimed until that act. |
-| M3c-epoch | Signed KERNEL kind 5 `SchemaEpoch` | in-progress | Kind 5 persist/ingest/import landed this PR (`m3c_schema_epoch`; n=1, empty migration). Schema including `encrypted: true` is an op. Unknown `ep` is `EPOCH_UNKNOWN`. Codex P1s: epoch-first in multi-op batches; own-epoch IR for pin/encrypt (ep=0 schemaless). Fork/quarantine + non-empty migration not this slice. Do not freeze wrap-body. **Not** M3c complete. |
-| M3c-ts-peer | Independent TypeScript wire peer | in-progress | This PR: `conformance/ts/peer/` evolved from the runner, **not** NAPI-backed (SPEC M3c). HELLO/`zerodb-relay-auth-v2`/WELCOME; signed CreateNode, SetProperty LWW, SchemaEpoch n=1; merkle-walk catch-up; `EPOCH_UNKNOWN` fail-closed; advertised WELCOME limits. Smoke: `conformance/ts/peer/smoke.test.mjs`. **Not** M3c complete. |
+| M3c-epoch | Signed KERNEL kind 5 `SchemaEpoch` | in-progress | Kind 5 persist/ingest/import landed on main via #17 (`m3c_schema_epoch`; n=1, empty migration). Schema including `encrypted: true` is an op. Unknown `ep` is `EPOCH_UNKNOWN`. Codex P1s: epoch-first in multi-op batches; own-epoch IR for pin/encrypt (ep=0 schemaless). Fork/quarantine + non-empty migration not this slice. Do not freeze wrap-body. **Not** M3c complete. |
+| M3c-ts-peer | Independent TypeScript wire peer | in-progress | Landed on main via #18: `conformance/ts/peer/` evolved from the runner, **not** NAPI-backed (SPEC M3c). HELLO/`zerodb-relay-auth-v2`/WELCOME; signed CreateNode, SetProperty LWW, SchemaEpoch n=1; merkle-walk catch-up; `EPOCH_UNKNOWN` fail-closed; advertised WELCOME limits. Smoke: `conformance/ts/peer/smoke.test.mjs`. **Not** M3c complete. |
 | M3c-harness | Two-language golden/negative harness (H9) | open | Relay+peer vectors in two languages. |
 | M3c-pack | Version/upgrade matrix, support profile | open | Packaging for the tag. |
 
@@ -69,6 +69,20 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 | M3b-h10-remain | H10 leftovers | done(`e6_encrypted_notes` H10 cases) | Offline-revoke at open, key-before/after-data hold, principal+device wrap, wrap-shape draft. **H10 not closed.** |
 | perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
 | perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
+
+### Cross-platform sharing pilot (2026-09-05)
+
+Product acceptance is normative in SPEC §10; rationale and scenarios in [CROSS-PLATFORM-REVIEW.md](CROSS-PLATFORM-REVIEW.md). All rows below are **open**, not implementation claims. DRI defaults to fingerskier; no dates promised before DQ-12.
+
+| ID | Work | Status | Depends | Exit evidence required |
+|----|------|--------|---------|------------------------|
+| XS-1 | Shared datastore/schema contract and common adapter API | open | M3c profile for release | Two distinct apps agree on IDs, version/CRDT subset, errors, query/mutation/change-event semantics; unsupported operations fail explicitly. |
+| XS-2 | App/device/agent enrollment and authority lifecycle | open | M3b security disposition | Distinct credentials, join/grant/revoke, wrong-datastore rejection, reconnect after revoke, encrypted key lifecycle; no founder seed copying. |
+| M4a-share | Browser RELAY/WSS + durable IndexedDB | open | M3c, XS-1, XS-2 | Real-browser offline/reload, commit/quota failure, multi-tab ownership and restart tests; local durable ACK only after journal commit; no insecure downgrade. |
+| XS-3 | Non-interactive CLI/Node + thin agent/MCP surface | open | XS-1, XS-2, M3c for release | Structured bounded CRUD/query/sync/watch; stable errors, cancellation, durable request dedup and resumable cursor; agent denied out-of-scope datastore access. |
+| XS-4 | One desktop shell + installable runtime artifacts | open | XS-1, XS-2, M3c | Choose one shell; installed-app restart/key handling; published Windows/macOS/Linux and browser tested/unsupported matrix. No all-platform claim from Linux builds. |
+| XP-1 | Cross-app/cross-agent sharing pilot | open | M4a-share, XS-3, XS-4 | Two apps + agent across browser/CLI/desktop; shared schema; partition/concurrency/relay+client crash/restart/retry/revoke/encryption negatives; accepted-op and query equivalence. |
+| M4a-extended | OPFS, React, WebRTC/direct-peer parity | open | M3c; H6 for direct P2P | Existing full M4a expectations retained; not prerequisite for relay-backed XP-1. |
 
 ### Later gates
 
