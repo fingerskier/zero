@@ -89,7 +89,9 @@ npm test
 
 ## 6. Known limits (draft-1)
 
-Format decode caps (registry `limits`, VERSIONS §3, KERNEL/O6):
+Two tables. Do not treat the first as a runtime resource bound of this tree.
+
+**Policy** (registry `limits`, VERSIONS §3, KERNEL/O6; provisional, ratified for draft-1). VERSIONS calls these pre-auth decode errors. This slice does **not** enforce `max_operation_bytes` / format `max_batch_*` on store `validate_wire_for_ds` or relay `on_ops`. Relay OPS uses the WELCOME table below (1 MiB / 64 ops / 16 MiB). What *is* enforced from this set: CBOR decode depth 16 (`zerodb-core`); `deps` ≤ 64 on store ingress.
 
 | Cap | Value |
 |-----|-------|
@@ -99,7 +101,7 @@ Format decode caps (registry `limits`, VERSIONS §3, KERNEL/O6):
 | `max_cbor_depth` | 16 |
 | `max_deps_per_op` | 64 |
 
-Advertised experimental WELCOME defaults (registry `relay_wire.welcome_limits`; distinct from format `limits`):
+**Enforced on the RELAY 0.2 session** (registry `relay_wire.welcome_limits`; advertised experimental defaults; distinct from format `limits`):
 
 | Cap | Value |
 |-----|-------|
@@ -124,6 +126,8 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 - **M3b exit** — remainder pinned; E5–E8 live is the security bar carried into M3c, not a gate close.
 - **M3c complete / `v0.1.0` released** — tag requires a Decision Log act after M3c-a..d.
 - **M4 rolling-upgrade / adjacent-version rollback matrix** — [UPGRADE.md](UPGRADE.md) points forward; do not treat this profile as E10.
+- **Format `limits` as a resource bound** — O6 policy numbers are listed above; they are not the relay/store ingress caps (WELCOME is).
+- **Client reject of `WELCOME.protocol_version ≠ 1`** — policy window is size 1; only the relay’s HELLO check is implemented.
 - **crates.io / npm registry publish**, hosted relay, mobile bindings, entity-level ACLs (C6), MVRegister/RGA/LWWMap, production backup/SLO (M5a).
 
 ## 8. Publish readiness (no publish)
