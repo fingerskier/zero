@@ -1,6 +1,6 @@
 # Changelog
 
-All notable tree changes intended for a future product label. This file does **not** create git tag `v0.1.0` and does **not** claim M3c complete.
+All notable tree changes for the product label. Git tag `v0.1.0` follows this Decision Log act (steward tags after merge). Workspace crates stay unpublished. Formats stay draft-1 / unfrozen.
 
 Version story:
 
@@ -9,25 +9,25 @@ Version story:
 | Workspace / npm `0.1.0-alpha` | Crate and package semver (`Cargo.toml` `[workspace.package]`, `@zerodb/node`, `@zerodb/ts-to-ir`) | current; `publish = false` / `"private": true` |
 | Git `v0.1.0-local` | M1 experimental exit | tagged |
 | Git `v0.1.0-sdk` | M2 experimental exit (not SPEC-complete M2) | tagged |
-| Git `v0.1.0` | SPEC M3c exit + Decision Log act at tag time | **not tagged** |
+| Git `v0.1.0` | SPEC M3c exit + Decision Log act | tag follows this Decision Log act |
 
-Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publish` until that Decision Log act. Formats stay draft-1 / unfrozen unless that act (or a separate freeze act) says otherwise.
+Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publish`. Formats stay draft-1 / unfrozen; freeze is a separate Decision Log act.
 
 ---
 
-## Unreleased
+## v0.1.0
 
-Packaging and M3c-a..c on `main`. Preparable for a later `v0.1.0` tag; not that tag.
+Decision Log act for product git tag `v0.1.0` (steward tags after this merge). Crates remain `0.1.0-alpha` unpublished.
 
-### Client WELCOME `protocol_version` reject
+### Client WELCOME `protocol_version` reject — landed main #21 (`ca508d0`)
 
 - Rust `relay_client` and the independent TS peer fail-closed on `WELCOME.protocol_version` other than `1` or missing (`0x102 VERSION_MISMATCH`). They do not proceed to OPS/sync. Not `FORMAT_UNSUPPORTED`. HELLO-side relay reject unchanged.
 
-### M3c-d — packaging / support profile (this PR)
+### M3c-d — packaging / support profile — landed main #20 (`0542490`)
 
 - [SUPPORT.md](doc/SUPPORT.md) — draft-1 support profile (platforms, crates, binaries, TS peer/runner, L2 relay, limits, explicit non-support). Registry format `limits` are O6 **policy**, not store/relay ingress caps (WELCOME is).
-- [UPGRADE.md](doc/UPGRADE.md) — v0.1 window-size-1 matrix from `conformance/registry.json` + [VERSIONS.md](doc/VERSIONS.md); `FORMAT_UNSUPPORTED` / `MERKLE_VERSION_MISMATCH`; M4 adjacent-version matrix is a forward pointer only. HELLO `protocol_version != 1` is relay-rejected; clients do not inspect `WELCOME.protocol_version`.
-- This changelog + workspace comment: crate `0.1.0-alpha` stays unpublished until a tag act.
+- [UPGRADE.md](doc/UPGRADE.md) — v0.1 window-size-1 matrix from `conformance/registry.json` + [VERSIONS.md](doc/VERSIONS.md); `FORMAT_UNSUPPORTED` / `MERKLE_VERSION_MISMATCH`; M4 adjacent-version matrix is a forward pointer only. HELLO `protocol_version != 1` is relay-rejected; clients reject non-v1 / missing `WELCOME.protocol_version` (`0x102`).
+- This changelog + workspace comment: crate `0.1.0-alpha` stays unpublished.
 
 ### M3c-c — two-language harness (H9) — landed main #19 (`bd752fa`)
 
