@@ -124,6 +124,7 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 - **H9 closed** — two-language harness landed (PR #19); issue stays open until an approved-resolution removal.
 - **H10 closed** — leftovers implemented; envelope/key lifecycle not closed.
 - **M3b exit** — remainder pinned; E5–E8 live is the security bar carried into M3c, not a gate close.
+- **Live Rust↔TS mixed-peer partition executable** — two-language bar is #19 harness + #18 TS peer live to `zerodb-relay`; partition/rejoin remains M3a E3 (Rust) plus TS merkle-walk.
 - **M4 rolling-upgrade / adjacent-version rollback matrix** — [UPGRADE.md](UPGRADE.md) points forward; do not treat this profile as E10.
 - **Format `limits` as a resource bound** — O6 policy numbers are listed above; they are not the relay/store ingress caps (WELCOME is).
 - **crates.io / npm registry publish**, hosted relay, mobile bindings, entity-level ACLs (C6), MVRegister/RGA/LWWMap, production backup/SLO (M5a).
