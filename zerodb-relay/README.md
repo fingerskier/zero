@@ -14,3 +14,5 @@ A LocalStore / NAPI client speaks the same envelopes (`zerodb_storage::relay_cli
 Signature / OpId / datastore admission is on (`m3b_admission`). AUTH membership + E5, E7 forged/replay, E8 clock quarantine, and E6 ciphertext persist are on. Full 1,000-write E3 is exercised in `zerodb-storage/tests/relay_client.rs`. **Not claimed:** M3b exit, H10 closed, format freeze.
 
 Tests: `cargo test -p zerodb-relay`; `cargo test -p zerodb-storage --test relay_client`; NAPI `test/m3a-relay.test.mjs`.
+
+Support profile (platforms, TLS-not-in-process, unpublished crates): [SUPPORT.md](../doc/SUPPORT.md). Version window: [UPGRADE.md](../doc/UPGRADE.md).

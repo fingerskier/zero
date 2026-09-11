@@ -1,6 +1,6 @@
 # `@zerodb/node` — experimental M2 NAPI SDK
 
-Node.js binding over the M1 `LocalStore` (SQLite). Experimental M2 exit (`v0.1.0-sdk`, 2026-08-14). **Not** a format freeze and **not** SPEC-complete M2.
+Node.js binding over the M1 `LocalStore` (SQLite). Experimental M2 exit (`v0.1.0-sdk`, 2026-08-14). Package version `0.1.0-alpha`, `"private": true` — not published to npm. **Not** a format freeze and **not** SPEC-complete M2. Support profile: [SUPPORT.md](../doc/SUPPORT.md).
 
 ## Build
 

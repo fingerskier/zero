@@ -1,0 +1,141 @@
+# ZeroDB support profile (draft-1 / unfrozen)
+
+**Status:** packaging notes for the M3c product slice. Formats remain **draft-1 / unfrozen**. This is **not** a format freeze, **not** M3c complete, **not** M3b exit, and **not** the `v0.1.0` tag.
+
+**Authority:** descriptive of what the tree actually builds and CI actually runs. Normative version policy is [VERSIONS.md](VERSIONS.md); current constants live in [`conformance/registry.json`](../conformance/registry.json). Upgrade/reject names: [UPGRADE.md](UPGRADE.md). Product tags vs crate/npm versions: [CHANGELOG.md](../CHANGELOG.md).
+
+---
+
+## 1. What this slice is
+
+The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M3c) is **preparable** once M3c-a..d land and a Decision Log act tags `v0.1.0`. Until that act:
+
+- Git tags that exist: `v0.1.0-local` (M1 experimental), `v0.1.0-sdk` (M2 experimental).
+- Workspace crates and npm packages stay `0.1.0-alpha` with `publish = false` / `"private": true`.
+- All wire, bundle, SQLite, wrap-body, and RELAY shapes stay draft-1.
+
+## 2. Platforms (what CI covers)
+
+| Surface | CI | Notes |
+|---------|----|--------|
+| Rust workspace (`cargo test --workspace --locked`, fmt, clippy `-D warnings`) | `ubuntu-latest`, `dtolnay/rust-toolchain@stable` | Workspace `edition = 2024`. No `rust-version` pin. |
+| `@zerodb/node` NAPI addon | `ubuntu-latest` + `windows-latest`, Node 22 | Built from source for the host target. `package.json` `napi.targets` lists Windows only — that is **not** a published multi-platform npm matrix. |
+| Conformance required lane + `generate-protocol.mjs --check` | `ubuntu-latest`, Node 20 | Independent TS runner; never NAPI. |
+| TS wire peer smoke (`conformance/ts/peer/*.test.mjs`) | `ubuntu-latest`, Node 22 + built `zerodb-relay` | NAPI-free. |
+| `tools/ts-to-ir` | `ubuntu-latest`, Node 20 | Authoring JSON → IR helper. |
+| Browser / WASM (`zerodb-wasm`, Pages) | separate `pages` workflow | Experimental M4a slice; **not** this support profile. |
+
+**Not in CI / not supported as product platforms:** macOS, iOS/Android, musl-only hosts, a hosted public relay, production TLS termination in-process.
+
+Node engines stated by `@zerodb/node`: `>=18`. Conformance and the TS peer are exercised at Node 20/22.
+
+## 3. Crates, binaries, JS packages
+
+| Artifact | Role | Publish |
+|----------|------|---------|
+| `zerodb-core` | KERNEL / AUTH / Merkle / relay codecs | `publish = false` |
+| `zerodb-storage` | SQLite `LocalStore` (default); `MemoryBackend` when `sqlite` is off | `publish = false` |
+| `zerodb-cli` (`zerodb`) | M1 local CLI | `publish = false` |
+| `zerodb-relay` (`zerodb-relay`) | Experimental **L2** RELAY 0.2.2-draft process | `publish = false` |
+| `zerodb-napi` / `@zerodb/node` | Experimental M2 Node binding | crate unpublished; npm `"private": true` |
+| `zerodb-wasm` | Experimental browser in-memory store | `publish = false` |
+| `@zerodb/ts-to-ir` | Minimal authoring → IR JSON | `"private": true` |
+| `conformance/ts/runner.mjs` | Independent two-language harness (H9) | not a package |
+| `conformance/ts/peer/` | Independent RELAY 0.2 wire peer (M3c-b) | not a package; **not** the SDK |
+
+Workspace version is `0.1.0-alpha` in the root `Cargo.toml`. Do not bump it to `0.1.0` and do not `cargo publish` / `npm publish` until a Decision Log act says so. That act is also the only thing that may create git tag `v0.1.0`.
+
+## 4. Relay level
+
+`zerodb-relay` is an experimental **Level 2** durable reference relay (registry `relay_wire.relay_level = 2`, RELAY-SPEC 0.2.2-draft):
+
+- Binary WebSocket, one CBOR envelope per frame.
+- HELLO / `zerodb-relay-auth-v2` transcript AUTH / WELCOME.
+- Durable SQLite validated oplog; publishes `validated_root` only (not peer `accepted_root` equality).
+- Frozen-snapshot `merkle-walk-v1` catch-up; cursor compatibility; per-op `OP_ACK`.
+- Advertised WELCOME limits (registry `relay_wire.welcome_limits`) plus 3 connections per PeerId.
+- Loopback plaintext is the default bind (`127.0.0.1:7700`). Non-loopback requires `--allow-insecure`. **This binary does not terminate TLS and does not mint certificates.**
+
+LocalStore / NAPI `connectRelay` and the TS peer speak the same envelopes.
+
+## 5. How to build and run
+
+Relay + independent TS peer (loopback):
+
+```bash
+cargo build -p zerodb-relay --locked
+./target/debug/zerodb-relay --path ./relay.sqlite --bind 127.0.0.1:7700
+
+node conformance/ts/peer/cli.mjs --url ws://127.0.0.1:7700 --schema --create Todo --set title=milk
+node conformance/ts/peer/cli.mjs --url ws://127.0.0.1:7700 --join <datastore-hex>
+```
+
+Non-loopback plaintext (disposable LAN only):
+
+```bash
+./target/debug/zerodb-relay --path ./relay.sqlite --bind 0.0.0.0:7700 --allow-insecure
+```
+
+Rust LocalStore client: `zerodb_storage::relay_client` / NAPI `Database.connectRelay`. CLI M1 path (`zerodb serve` / `pull`) is the experimental plaintext TCP/WS v2 LAN path — see [M1-LOCAL.md](M1-LOCAL.md) — not the RELAY 0.2 product relay.
+
+NAPI SDK (source build, not a registry install):
+
+```bash
+cd zerodb-napi
+npm ci
+npx napi build --platform --release
+npm test
+```
+
+## 6. Known limits (draft-1)
+
+Two tables. Do not treat the first as a runtime resource bound of this tree.
+
+**Policy** (registry `limits`, VERSIONS §3, KERNEL/O6; provisional, ratified for draft-1). VERSIONS calls these pre-auth decode errors. This slice does **not** enforce `max_operation_bytes` / format `max_batch_*` on store `validate_wire_for_ds` or relay `on_ops`. Relay OPS uses the WELCOME table below (1 MiB / 64 ops / 16 MiB). What *is* enforced from this set: CBOR decode depth 16 (`zerodb-core`); `deps` ≤ 64 on store ingress.
+
+| Cap | Value |
+|-----|-------|
+| `max_operation_bytes` | 65536 |
+| `max_batch_bytes` | 262144 |
+| `max_batch_ops` | 512 |
+| `max_cbor_depth` | 16 |
+| `max_deps_per_op` | 64 |
+
+**Enforced on the RELAY 0.2 session** (registry `relay_wire.welcome_limits`; advertised experimental defaults; distinct from format `limits`):
+
+| Cap | Value |
+|-----|-------|
+| `max_payload_bytes` | 1048576 |
+| `max_batch_ops` | 64 |
+| `max_batch_bytes` | 16777216 |
+| `max_subscriptions` | 64 |
+| `ops_per_second` | 100 |
+| `bytes_per_second` | 10485760 |
+| `max_connections_per_peer` | 3 |
+
+HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this slice: **n=1 / empty migration**. Wrap-body remains unfrozen. GC is off until C7/M5b.
+
+## 7. Not supported (do not claim)
+
+- **H6 direct P2P / WebRTC** — parked to M4.
+- **Full TLS production story** — no in-process TLS, no CA, no minted certs; `--allow-insecure` is a LAN escape hatch only.
+- **Format freeze** — no versioned frozen profile; wrap-body unfrozen.
+- **C5 on-wire complete** — AUTH contract exists; do not claim C5 closed as a product/PKI story.
+- **H9 closed** — two-language harness landed (PR #19); issue stays open until an approved-resolution removal.
+- **H10 closed** — leftovers implemented; envelope/key lifecycle not closed.
+- **M3b exit** — remainder pinned; E5–E8 live is the security bar carried into M3c, not a gate close.
+- **M3c complete / `v0.1.0` released** — tag requires a Decision Log act after M3c-a..d.
+- **M4 rolling-upgrade / adjacent-version rollback matrix** — [UPGRADE.md](UPGRADE.md) points forward; do not treat this profile as E10.
+- **Format `limits` as a resource bound** — O6 policy numbers are listed above; they are not the relay/store ingress caps (WELCOME is).
+- **Client reject of `WELCOME.protocol_version ≠ 1`** — policy window is size 1; only the relay’s HELLO check is implemented.
+- **crates.io / npm registry publish**, hosted relay, mobile bindings, entity-level ACLs (C6), MVRegister/RGA/LWWMap, production backup/SLO (M5a).
+
+## 8. Publish readiness (no publish)
+
+- Crates: workspace `publish = false`. Never `cargo publish`.
+- npm: `@zerodb/node` and `@zerodb/ts-to-ir` are `"private": true`. Never `npm publish`. NAPI consumers build the addon from this repo.
+- A future `v0.1.0` **git tag** does not by itself publish registries or freeze formats.
+
+---
+
+*Draft-1 / unfrozen. A Decision Log freeze or `v0.1.0` tag is a later act.*
