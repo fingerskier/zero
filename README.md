@@ -2,7 +2,7 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** M0 contracts, M1 local core, M2 Node SDK, and experimental **M3a durable convergence are complete**. M3a includes the L2 relay/client, frozen-snapshot Merkle mismatch walk, and full 1,000-write three-peer E3 relay-only catch-up. Current gate: **M3b security**. **Browser peer (experimental):** `zerodb-wasm` in-memory store + WS sync driver. Conformance **115** vectors CI-blocking. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
+**Status:** M0 contracts, M1 local core, M2 Node SDK, and experimental **M3a durable convergence are complete**. M3a includes the L2 relay/client, frozen-snapshot Merkle mismatch walk, and full 1,000-write three-peer E3 relay-only catch-up. M3b remainder is **pinned** (E5–E8 live; **not** M3b exit). Current work: **M3c** packaging / support profile (M3c-a..c on main). **Not** `v0.1.0`. **Browser peer (experimental):** `zerodb-wasm` in-memory store + WS sync driver. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
 
 
 ## Documents
@@ -16,6 +16,9 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [WAL Specification](doc/WAL.md) | M0e.1 (draft-1): WAL crash model, group seal (C8) |
 | [Delivery Specification](doc/DELIVERY.md) | M0e.2 (draft-1): delivery, anti-replay, resume (H4/H11) |
 | [Version Policy](doc/VERSIONS.md) | M0e.3 (draft-1): version namespaces + decode limits |
+| [Support profile](doc/SUPPORT.md) | Draft-1 platforms, crates, relay, TS peer; what is not supported |
+| [Upgrade matrix](doc/UPGRADE.md) | v0.1 window-size-1 reject/accept (not M4 rolling upgrades) |
+| [Changelog](CHANGELOG.md) | Unreleased M3c notes; crate `0.1.0-alpha` vs future git tag |
 | [Frontier Specification](doc/FRONTIER.md) | M0f (draft-1): frontiers, snapshots; GC disabled (C7) |
 | [Merkle Specification](doc/MERKLE.md) | M0c (draft-1): canonical sync tree + mismatch walk (C3) |
 | [Relay Protocol Specification](doc/RELAY-SPEC.md) | Implemented experimental L2 wire protocol; security remains M3b |
@@ -82,4 +85,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-Current work is **M3c** (signed `SchemaEpoch`, independent TS wire peer). Pinned: Stage 2/3, H6 P2P (M4), H10 open (leftovers implemented, not closed), M3b remainder. All formats remain draft-1 and unfrozen. Do not claim M3b exit.
+Current work is **M3c-d packaging** (support profile + v0.1 upgrade matrix). M3c-a..c are on main. Pinned: Stage 2/3, H6 P2P (M4), H10 open (leftovers implemented, not closed), M3b remainder. All formats remain draft-1 and unfrozen. Do not claim M3b exit, M3c complete, or tag `v0.1.0`.

@@ -1,7 +1,7 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
 **Date:** 2026-08-28
-**Status:** current work **M3c**. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M3b exit, **not** `v0.1.0`.
+**Status:** current work **M3c-d packaging**. M3c-a..c on main. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M3b exit, **not** M3c complete, **not** `v0.1.0`.
 **Authority:** delivery/tracking only. [SPEC §10](../doc/SPEC.md) is the normative roadmap; [ISSUES.md](../doc/ISSUES.md) the issue ledger; [LEDGER.md](LEDGER.md) the live work tracker. On conflict, SPEC wins.
 
 ---
@@ -76,8 +76,8 @@ This is the only live action list.
 
 1. **M3c-a `SchemaEpoch`** — landed on main (PR #17): signed KERNEL kind 5 persist/ingest/import (n=1, empty migration; `encrypted: true` rides the op; unknown `ep` is `EPOCH_UNKNOWN`). Codex P1s: same-batch kind-5 applies before epoch-bound data; late ops validate against their own epoch IR (ep=0 schemaless). Fork/quarantine and non-empty migration DSL not started. Do not freeze wrap-body. **Not** M3c complete.
 2. **M3c-b TS wire peer** — landed on main (PR #18): independent TypeScript wire peer evolved from the conformance runner (`conformance/ts/peer/`), **not** NAPI-backed (SPEC M3c). Speaks live RELAY 0.2 HELLO/AUTH/WELCOME, signed KERNEL ops including kind 5, merkle-walk catch-up, `EPOCH_UNKNOWN` fail-closed, advertised WELCOME limits. **Not** M3c complete.
-3. **M3c-c two-language harness** — this PR: golden/negative relay+peer vectors in Rust + independent TS (H9). Registry is the protocol definition; `conformance/schemas/` is generated from it. Evidence: `RELAY-OPS-001`, `RELAY-WALK-001`, `RELAY-LIMIT-001`, `PEER-EPOCH-001`, `PEER-REJECT-001..004` in `conformance/vectors/required/` (green in `conformance/ts/runner.mjs` and `zerodb-core` `conformance_relay` / `conformance_peer`). HELLO/AUTH/WELCOME already on main as `RELAY-HELLO-001..003`. **Not** M3c complete; H9 not removed; formats remain draft-1 / unfrozen.
-4. **M3c-d packaging** — version/upgrade matrix, support profile.
+3. **M3c-c two-language harness** — landed on main (PR #19): golden/negative relay+peer vectors in Rust + independent TS (H9). Registry is the protocol definition; `conformance/schemas/` is generated from it. Evidence: `RELAY-OPS-001`, `RELAY-WALK-001`, `RELAY-LIMIT-001`, `PEER-EPOCH-001`, `PEER-REJECT-001..004` in `conformance/vectors/required/` (green in `conformance/ts/runner.mjs` and `zerodb-core` `conformance_relay` / `conformance_peer`). HELLO/AUTH/WELCOME already on main as `RELAY-HELLO-001..003`. **Not** M3c complete; H9 not removed; formats remain draft-1 / unfrozen.
+4. **M3c-d packaging** — this PR: support profile ([SUPPORT.md](../doc/SUPPORT.md)), v0.1 window-size-1 upgrade matrix ([UPGRADE.md](../doc/UPGRADE.md)), changelog / crate version story (`0.1.0-alpha`, unpublished). **Not** a `v0.1.0` tag; **not** M3c complete; formats remain draft-1 / unfrozen. M4 adjacent-version / rolling-upgrade tests not started.
 5. **`v0.1.0` tag** — only after M3c-a..d and a Decision Log act at tag time. Still not format freeze unless that act says so.
 
 **Pinned (do not start):**

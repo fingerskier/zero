@@ -2,7 +2,7 @@
 
 **Version:** 0.1.0-draft
 **Status:** normative (**draft-1 profile**). Closes ISSUES H7 / H9 registry half for M0. Rolling upgrade tests are M4.
-**Authority:** version namespaces and compatibility windows. Constants live in [`conformance/registry.json`](../conformance/registry.json); [KERNEL.md](KERNEL.md) §1 owns operation-format binding.
+**Authority:** version namespaces and compatibility windows. Constants live in [`conformance/registry.json`](../conformance/registry.json); [KERNEL.md](KERNEL.md) §1 owns operation-format binding. The v0.1 packaging matrix (window size 1, named rejects, M4 forward pointer) is [UPGRADE.md](UPGRADE.md) — descriptive of this policy, not a second authority.
 
 ---
 

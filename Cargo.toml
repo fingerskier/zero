@@ -10,8 +10,11 @@ members = [
 ]
 
 [workspace.package]
-# Experimental crates: alpha semver, never published.
-# MVP product label is M1 (`v0.1.0-local`); full multi-peer product is M3 (`v0.1.0`).
+# Experimental crates: 0.1.0-alpha, never published.
+# Git product labels: v0.1.0-local (M1), v0.1.0-sdk (M2).
+# A future git tag v0.1.0 is a Decision Log act after M3c-a..d; it does not
+# publish crates.io / npm or freeze formats by itself. Do not bump this field
+# to 0.1.0 until that act. See CHANGELOG.md and doc/SUPPORT.md.
 version = "0.1.0-alpha"
 publish = false
 edition = "2024"
