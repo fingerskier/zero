@@ -194,4 +194,121 @@ test('IDB and OPFS persist then reopen restore signed ops + identity', async () 
     assert.equal(second.db.opCount(), 0)
     drop(second.db)
   }
+
+  {
+    const indexedDB = fakeIndexedDB()
+    const first = await openDurable(ZeroDb, {
+      name: 'zerodb-todo',
+      adapter: 'indexeddb',
+      indexedDB,
+    })
+    const node = mutate(first.db)
+    await first.journal.persist(first.db)
+    const expected = snapshot(first.db, node)
+    drop(first.db)
+
+    const second = await openDurable(ZeroDb, {
+      name: 'zerodb-todo',
+      adapter: 'auto',
+      indexedDB,
+      opfsRoot: memoryOpfsRoot(),
+    })
+    assert.equal(second.adapter, ADAPTER_INDEXEDDB)
+    assert.equal(second.restored, true)
+    assertRestored(expected, second.db, node)
+    drop(second.db)
+  }
+
+  {
+    const empty = await openJournal('fresh-auto', {
+      indexedDB: fakeIndexedDB(),
+      opfsRoot: memoryOpfsRoot(),
+    })
+    assert.equal(empty.kind, ADAPTER_OPFS)
+  }
+
+  {
+    const live = new ZeroDb()
+    const node = mutate(live)
+    const seed = live.seedHex()
+    const ds = live.datastoreId()
+    const ops = JSON.parse(live.exportJson()).ops
+    const expected = snapshot(live, node)
+    drop(live)
+
+    const indexedDB = fakeIndexedDB()
+    await new Promise((resolve, reject) => {
+      const r = indexedDB.open('zerodb-browser-peer', 2)
+      r.onupgradeneeded = () => {
+        r.result.createObjectStore('state')
+        r.result.createObjectStore('journal')
+      }
+      r.onerror = () => reject(r.error)
+      r.onsuccess = () => {
+        const db = r.result
+        const tx = db.transaction(['state', 'journal'], 'readwrite')
+        tx.objectStore('state').put({ seed, ds }, 'peer')
+        for (const op of ops) tx.objectStore('journal').put(op, op.id)
+        tx.oncomplete = () => {
+          db.close()
+          resolve()
+        }
+        tx.onerror = () => reject(tx.error)
+      }
+    })
+
+    await new Promise((resolve, reject) => {
+      const r = indexedDB.open('zerodb-browser-peer', 1)
+      r.onsuccess = () => reject(new Error('expected VersionError opening v2 as v1'))
+      r.onerror = () => {
+        assert.equal(r.error?.name, 'VersionError')
+        resolve()
+      }
+    })
+
+    const opened = await openDurable(ZeroDb, {
+      name: 'zerodb-browser-peer',
+      adapter: 'indexeddb',
+      indexedDB,
+    })
+    assert.equal(opened.restored, true)
+    assertRestored(expected, opened.db, node)
+    drop(opened.db)
+  }
+
+  {
+    const opfsRoot = memoryOpfsRoot()
+    const first = await openDurable(ZeroDb, {
+      name: 'opfs-race',
+      adapter: 'opfs',
+      opfsRoot,
+    })
+    first.db.createNode('Todo')
+    const p1 = first.journal.persist(first.db)
+    first.db.createNode('Todo')
+    const p2 = first.journal.persist(first.db)
+    await Promise.all([p1, p2])
+    assert.equal(first.db.opCount(), 2)
+    drop(first.db)
+
+    const second = await openDurable(ZeroDb, {
+      name: 'opfs-race',
+      adapter: 'opfs',
+      opfsRoot,
+    })
+    assert.equal(second.restored, true)
+    assert.equal(second.db.opCount(), 2)
+    drop(second.db)
+  }
+
+  {
+    const opfsRoot = memoryOpfsRoot()
+    const dir = await opfsRoot.getDirectoryHandle('corrupt-id', { create: true })
+    const handle = await dir.getFileHandle('identity', { create: true })
+    const w = await handle.createWritable({ keepExistingData: false })
+    await w.write('{not-json')
+    await w.close()
+    const journal = await OpfsJournal.open('corrupt-id', { opfsRoot })
+    await assert.rejects(() => journal.restore(ZeroDb), SyntaxError)
+  }
 })

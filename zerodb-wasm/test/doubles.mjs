@@ -57,7 +57,7 @@ class IdStore {
 }
 
 class IdTx {
-  constructor(db) {
+  constructor(db, _name) {
     this.db = db
     this.oncomplete = null
     this.onerror = null
@@ -91,8 +91,8 @@ class IdDb {
     return s
   }
 
-  transaction(_name, _mode = 'readonly') {
-    return new IdTx(this)
+  transaction(name, _mode = 'readonly') {
+    return new IdTx(this, name)
   }
 
   close() {}
@@ -102,8 +102,9 @@ class IdDb {
 export function fakeIndexedDB() {
   const dbs = new Map()
   return {
-    open(name, version = 1) {
+    open(name, version) {
       const r = new IdRequest()
+      const requested = arguments.length > 1 ? version : undefined
       queueMicrotask(() => {
         let db = dbs.get(name)
         const isNew = !db
@@ -111,10 +112,22 @@ export function fakeIndexedDB() {
           db = new IdDb(name)
           dbs.set(name, db)
         }
+        if (!isNew && requested != null && requested < db.version) {
+          const err = typeof DOMException === 'function'
+            ? new DOMException(
+              'The requested version is less than the existing version.',
+              'VersionError',
+            )
+            : Object.assign(new Error('VersionError'), { name: 'VersionError' })
+          r.error = err
+          if (r.onerror) r.onerror({ target: r })
+          return
+        }
         r.result = db
-        if (isNew || db.version < version) {
+        const target = requested ?? (isNew ? 1 : db.version)
+        if (isNew || (requested != null && db.version < requested)) {
           if (r.onupgradeneeded) r.onupgradeneeded({ target: r })
-          db.version = version
+          db.version = target
         }
         if (r.onsuccess) r.onsuccess({ target: r })
       })

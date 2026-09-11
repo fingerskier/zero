@@ -5,13 +5,15 @@
 // the identity seed + signed KERNEL wire ops so a browser peer can reopen
 // after reload. Replay rematerializes. Signed ops remain the source of truth.
 //
-// Auto-select prefers OPFS when a directory handle is available, else
-// IndexedDB. React hooks / WebRTC are not this slice.
+// Auto-select prefers OPFS when a directory handle is available *and* the
+// named IndexedDB is empty. An occupied IDB name stays on IndexedDB so
+// Chrome users who already have `zerodb-todo` / `zerodb-browser-peer` do
+// not mint a fresh identity. React hooks / WebRTC are not this slice.
 
 export const ADAPTER_INDEXEDDB = 'indexeddb'
 export const ADAPTER_OPFS = 'opfs'
 
-/** Prefer OPFS when a root/getDirectory is available, else IndexedDB. */
+/** Capability hint. `auto` prefers OPFS when present; `openJournal` may keep occupied IDB. */
 export function detectAdapter(opts = {}) {
   if (opts.adapter && opts.adapter !== 'auto') return opts.adapter
   if (opts.opfsRoot || opts.getDirectory || globalThis.navigator?.storage?.getDirectory) {
@@ -21,15 +23,36 @@ export function detectAdapter(opts = {}) {
   throw new Error('no durable browser storage adapter available')
 }
 
+function idbFactory(opts = {}) {
+  return opts.indexedDB ?? globalThis.indexedDB
+}
+
+function opfsAvailable(opts = {}) {
+  return !!(opts.opfsRoot || opts.getDirectory || globalThis.navigator?.storage?.getDirectory)
+}
+
 /**
  * Open a named journal on the requested (or auto-detected) adapter.
  * Inject `indexedDB` / `opfsRoot` for tests (fake-idb / OPFS doubles).
+ * `auto`: keep IndexedDB when that name already has identity/ops.
  */
 export async function openJournal(name, opts = {}) {
-  const kind = detectAdapter(opts)
-  if (kind === ADAPTER_OPFS) return OpfsJournal.open(name, opts)
-  if (kind === ADAPTER_INDEXEDDB) return IndexedDbJournal.open(name, opts)
-  throw new Error(`unknown adapter ${kind}`)
+  const requested = opts.adapter && opts.adapter !== 'auto' ? opts.adapter : 'auto'
+  if (requested === ADAPTER_INDEXEDDB) return IndexedDbJournal.open(name, opts)
+  if (requested === ADAPTER_OPFS) return OpfsJournal.open(name, opts)
+  if (requested !== 'auto') throw new Error(`unknown adapter ${requested}`)
+
+  const factory = idbFactory(opts)
+  if (factory) {
+    const peek = await peekIndexedDb(factory, name)
+    if (peek.occupied) {
+      return new IndexedDbJournal(name, new IdbDriver(peek.db, factory, name))
+    }
+    peek.db.close()
+  }
+  if (opfsAvailable(opts)) return OpfsJournal.open(name, opts)
+  if (factory) return IndexedDbJournal.open(name, opts)
+  throw new Error('no durable browser storage adapter available')
 }
 
 /**
@@ -49,15 +72,50 @@ function req(r) {
   })
 }
 
+function isNotFound(err) {
+  return !!err && (err.name === 'NotFoundError' || err.code === 8 || err.code === 'NOT_FOUND_ERR')
+}
+
+/**
+ * Open an existing DB at its current version (no downgrade). A missing
+ * name is created at version 1 with `state` + `journal` stores.
+ */
+function openIndexedDb(factory, name) {
+  return new Promise((resolve, reject) => {
+    const r = factory.open(name)
+    r.onupgradeneeded = () => {
+      const db = r.result
+      if (!db.objectStoreNames.contains('state')) db.createObjectStore('state')
+      if (!db.objectStoreNames.contains('journal')) db.createObjectStore('journal')
+    }
+    r.onsuccess = () => resolve(r.result)
+    r.onerror = () => reject(r.error)
+  })
+}
+
+async function peekIndexedDb(factory, name) {
+  const db = await openIndexedDb(factory, name)
+  const driver = new IdbDriver(db, factory, name)
+  const ident = await driver.getIdentity()
+  if (ident && (ident.seed || ident.ds || ident.bundle)) {
+    return { db, occupied: true }
+  }
+  const ops = await driver.listOps()
+  return { db, occupied: ops.length > 0 }
+}
+
 /**
  * Shared restore/persist: identity `{ seed, ds }` plus a journal of wire ops.
  * Compact/rewrite when the journal drifts from the live op set.
+ * persist/replace/restore/reset share a per-instance queue so overlapping
+ * `onChange` → persist cannot last-writer-wins an OPFS rewrite.
  */
 export class DurableJournal {
   #driver
   #persisted = new Set()
   #kind
   #name
+  #tail = Promise.resolve()
 
   constructor(kind, name, driver) {
     this.#kind = kind
@@ -73,11 +131,21 @@ export class DurableJournal {
     return this.#name
   }
 
+  #serialized(fn) {
+    const next = this.#tail.then(fn, fn)
+    this.#tail = next.then(() => {}, () => {})
+    return next
+  }
+
   /**
    * Restore a store from the journal, or mint a fresh one.
    * Returns `{ db, restored, opCount, adapter }`.
    */
-  async restore(ZeroDb) {
+  restore(ZeroDb) {
+    return this.#serialized(() => this.#restoreInner(ZeroDb))
+  }
+
+  async #restoreInner(ZeroDb) {
     const saved = await this.#driver.getIdentity()
     if (!saved) {
       const db = new ZeroDb()
@@ -109,7 +177,11 @@ export class DurableJournal {
    * Append any not-yet-journaled ops; rewrite identity when the datastore
    * id changed (first sync may adopt the peer's datastore).
    */
-  async persist(db) {
+  persist(db) {
+    return this.#serialized(() => this.#persistInner(db))
+  }
+
+  async #persistInner(db) {
     const ids = db.opIds().filter(id => !this.#persisted.has(id))
     if (ids.length > 0) {
       const ops = JSON.parse(db.exportOpsByIds(ids))
@@ -123,9 +195,11 @@ export class DurableJournal {
   }
 
   /** Delete identity + journal for this name. */
-  async reset() {
-    this.#persisted.clear()
-    await this.#driver.reset()
+  reset() {
+    return this.#serialized(async () => {
+      this.#persisted.clear()
+      await this.#driver.reset()
+    })
   }
 }
 
@@ -185,17 +259,9 @@ class IdbDriver {
 /** IndexedDB adapter: `state` holds `{ seed, ds }`; `journal` is one wire op per id. */
 export class IndexedDbJournal extends DurableJournal {
   static async open(name, opts = {}) {
-    const factory = opts.indexedDB ?? globalThis.indexedDB
+    const factory = idbFactory(opts)
     if (!factory) throw new Error('IndexedDB is not available')
-    const db = await new Promise((resolve, reject) => {
-      const r = factory.open(name, 1)
-      r.onupgradeneeded = () => {
-        if (!r.result.objectStoreNames.contains('state')) r.result.createObjectStore('state')
-        if (!r.result.objectStoreNames.contains('journal')) r.result.createObjectStore('journal')
-      }
-      r.onsuccess = () => resolve(r.result)
-      r.onerror = () => reject(r.error)
-    })
+    const db = await openIndexedDb(factory, name)
     return new IndexedDbJournal(name, new IdbDriver(db, factory, name))
   }
 
@@ -222,14 +288,15 @@ class OpfsDriver {
   }
 
   async getIdentity() {
+    let handle
     try {
-      const handle = await this.dir.getFileHandle('identity')
-      const text = await this.#readText(handle)
-      if (!text) return null
-      return JSON.parse(text)
-    } catch {
-      return null
+      handle = await this.dir.getFileHandle('identity')
+    } catch (err) {
+      if (isNotFound(err)) return null
+      throw err
     }
+    const text = await this.#readText(handle)
+    return JSON.parse(text)
   }
 
   async setIdentity(peer) {
@@ -237,14 +304,16 @@ class OpfsDriver {
   }
 
   async listOps() {
+    let handle
     try {
-      const handle = await this.dir.getFileHandle('journal.jsonl')
-      const text = await this.#readText(handle)
-      if (!text.trim()) return []
-      return text.split('\n').filter(Boolean).map(line => JSON.parse(line))
-    } catch {
-      return []
+      handle = await this.dir.getFileHandle('journal.jsonl')
+    } catch (err) {
+      if (isNotFound(err)) return []
+      throw err
     }
+    const text = await this.#readText(handle)
+    if (!text.trim()) return []
+    return text.split('\n').filter(Boolean).map(line => JSON.parse(line))
   }
 
   async putOps(ops) {

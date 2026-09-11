@@ -32,7 +32,7 @@ import { openDurable } from './js/storage.mjs'
 await init()
 const { db, journal, restored, adapter } = await openDurable(ZeroDb, {
   name: 'zerodb',
-  adapter: 'auto', // OPFS when available, else IndexedDB
+  adapter: 'auto', // OPFS when available, unless this name already has IDB data
 })
 
 const node = db.createNode('Todo')
