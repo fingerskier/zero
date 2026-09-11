@@ -34,6 +34,8 @@ pub const ERR_PAYLOAD_TOO_LARGE: u16 = 0x303;
 pub const ERR_RATE_EXCEEDED: u16 = 0x304;
 /// RELAY §10.2 `TOO_MANY_SUBS`.
 pub const ERR_TOO_MANY_SUBS: u16 = 0x305;
+/// RELAY §10.2 `TARGET_NOT_CONNECTED` (SIGNAL).
+pub const ERR_TARGET_NOT_CONNECTED: u16 = 0x307;
 
 /// RELAY §10.2 `CLOCK_DRIFT` (transport MAY-refuse; peer-side is load-bearing).
 pub const ERR_CLOCK_DRIFT: u16 = 0x302;

@@ -17,9 +17,13 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
-### M4a-hooks — optional `@zerodb/react` (this PR)
+### M4a-webrtc — H6 first-cut (this PR)
 
-`ZeroDbProvider` + `useQuery` / `useNode` / `useMutation` / `useSyncStatus` wrapping live `zerodb-wasm` + `openDurable`. Persist-on-write via `journal.persist`. Tests: `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` is local ready/offline (no WebSocket / WebRTC). **Not** M4a complete. H6/WebRTC stay pinned. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
+SIGNAL (0x42) + ordered `zerodb-relay` DataChannel carrying the shared RELAY 0.2 peer protocol (HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS). Reuses `handshake.rs` `AuthTranscript` — no second AUTH preimage. JS lives at `conformance/ts/webrtc/` (not a wasm crate; O4 untouched). Tests: `conformance/ts/webrtc/webrtc.test.mjs` (in-process ordered channel, not `wrtc`) and `zerodb-relay/tests/signal.rs` (`0x307`). **H6 not closed.** Role negotiation, datastore admission tokens, reconnect, TURN, and a conformance profile remain. **Not** M4a complete. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
+
+### M4a-hooks — optional `@zerodb/react` (landed main #24 @ `3f81d62`)
+
+`ZeroDbProvider` + `useQuery` / `useNode` / `useMutation` / `useSyncStatus` wrapping live `zerodb-wasm` + `openDurable`. Persist-on-write via `journal.persist`. Tests: `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` is local ready/offline (no WebSocket / WebRTC). **Not** M4a complete. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
 
 ### M4a-a — WASM + IndexedDB/OPFS persist/reopen (landed main #23 @ `56a3bad`)
 
