@@ -1,0 +1,44 @@
+{
+  "id": "PEER-REJECT-003",
+  "type": "peer-ingest",
+  "kind": "named-reject",
+  "invariants": [
+    "I-5"
+  ],
+  "description": "Signed member op with ts.p > wall + 60s is CLOCK_DRIFT and does not apply (KERNEL §5 / AUTH §6).",
+  "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+  "salt": "44444444444444444444444444444444",
+  "clock": 1700000000000,
+  "datastore": "14defcf421590b98da34301f3421488e7fdc8a867f69035368ae574f73233fef",
+  "expected_ds": "14defcf421590b98da34301f3421488e7fdc8a867f69035368ae574f73233fef",
+  "setup": [],
+  "ingest": [
+    {
+      "id": "89a18c6cddd609bb8bf90bbd72f63372490838de2bbe8be1569be02687d75821",
+      "v": 1,
+      "ds": "14defcf421590b98da34301f3421488e7fdc8a867f69035368ae574f73233fef",
+      "ep": 0,
+      "author": "4a78877c4a0926fc5d5cb282bb45c11c8489b202fe1890fa0c6593e6192b9f75",
+      "author_pk": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "ts": {
+        "p": 1700000120000,
+        "l": 0
+      },
+      "deps": [],
+      "kind": 1,
+      "body": {
+        "label": "Todo",
+        "node": "ffffffffffffffffffffffffffffffff"
+      },
+      "sig": "a1186e26449f76dd011e4db8faf2280ade9b4d9602146dff8d1f964d0e663a7a6ede7e1a4e0acebb4197e5b6c1f471211b8bf8d6f4cd2f9026c949ac7eef4803"
+    }
+  ],
+  "expect": {
+    "rejects": [
+      {
+        "op_id": "89a18c6cddd609bb8bf90bbd72f63372490838de2bbe8be1569be02687d75821",
+        "reason": "CLOCK_DRIFT"
+      }
+    ]
+  }
+}

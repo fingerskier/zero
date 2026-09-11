@@ -35,10 +35,28 @@ pub const ERR_RATE_EXCEEDED: u16 = 0x304;
 /// RELAY §10.2 `TOO_MANY_SUBS`.
 pub const ERR_TOO_MANY_SUBS: u16 = 0x305;
 
+/// RELAY §10.2 `CLOCK_DRIFT` (transport MAY-refuse; peer-side is load-bearing).
+pub const ERR_CLOCK_DRIFT: u16 = 0x302;
+
 /// `OP_ACK` reject reasons (RELAY §4.4).
 pub const REJECT_DECODE: &str = "DECODE";
 pub const REJECT_SIG: &str = "SIG";
 pub const REJECT_AUTHZ: &str = "AUTHZ";
+
+/// Payload fields that encode as CBOR bytes (registry `relay_wire.byte_fields`).
+pub const BYTE_FIELDS: &[&str] = &[
+    "peer_id",
+    "public_key",
+    "nonce",
+    "signature",
+    "validated_root",
+    "accepted_root",
+    "op_id",
+    "author",
+    "hash",
+    "left",
+    "right",
+];
 
 /// Envelope direction (RELAY §4).
 pub const DIR_PEER_TO_RELAY: &str = "P→R";
@@ -172,7 +190,7 @@ pub fn expected_response_types(request_ty: u8) -> &'static [u8] {
         MSG_DELTA_REQUEST => &[MSG_DELTA_BATCH],
         MSG_MERKLE_NODE_REQUEST => &[MSG_MERKLE_NODE_RESPONSE],
         MSG_MERKLE_LEAF_REQUEST => &[MSG_MERKLE_LEAF_RESPONSE],
-        MSG_OPS => &[MSG_OP_ACK],
+        MSG_OPS => &[MSG_OP_ACK, MSG_ERROR],
         _ => &[],
     }
 }

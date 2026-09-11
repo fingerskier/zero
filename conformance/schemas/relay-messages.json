@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zerodb-relay-messages",
+  "title": "RELAY 0.2.2-draft message payloads (generated from registry.relay_wire)",
+  "messages": {
+    "HELLO": {
+      "type": 1,
+      "description": "RELAY HELLO (0x1)",
+      "required": [
+        "peer_id",
+        "public_key",
+        "protocol_version",
+        "capabilities"
+      ],
+      "properties": {
+        "peer_id": true,
+        "public_key": true,
+        "protocol_version": true,
+        "capabilities": true
+      },
+      "dir": "P→R",
+      "responses": [
+        "CHALLENGE",
+        "ERROR"
+      ]
+    },
+    "CHALLENGE": {
+      "type": 2,
+      "description": "RELAY CHALLENGE (0x2)",
+      "required": [
+        "nonce"
+      ],
+      "properties": {
+        "nonce": true
+      },
+      "dir": "R→P",
+      "responses": []
+    },
+    "AUTH": {
+      "type": 3,
+      "description": "RELAY AUTH (0x3)",
+      "required": [
+        "signature"
+      ],
+      "properties": {
+        "signature": true
+      },
+      "dir": "P→R",
+      "responses": [
+        "WELCOME",
+        "ERROR"
+      ]
+    },
+    "WELCOME": {
+      "type": 4,
+      "description": "RELAY WELCOME (0x4)",
+      "required": [
+        "protocol_version",
+        "relay_level",
+        "capabilities",
+        "limits"
+      ],
+      "properties": {
+        "protocol_version": true,
+        "relay_level": true,
+        "capabilities": true,
+        "limits": true
+      },
+      "dir": "R→P",
+      "responses": []
+    },
+    "SUBSCRIBE": {
+      "type": 16,
+      "description": "RELAY SUBSCRIBE (0x10)",
+      "required": [
+        "datastore"
+      ],
+      "properties": {
+        "datastore": true
+      },
+      "dir": null,
+      "responses": []
+    },
+    "SUBSCRIBED": {
+      "type": 17,
+      "description": "RELAY SUBSCRIBED (0x11)",
+      "required": [
+        "datastore"
+      ],
+      "properties": {
+        "datastore": true
+      },
+      "dir": null,
+      "responses": []
+    },
+    "SYNC_REQUEST": {
+      "type": 32,
+      "description": "RELAY SYNC_REQUEST (0x20)",
+      "required": [
+        "datastore"
+      ],
+      "properties": {
+        "datastore": true
+      },
+      "dir": null,
+      "responses": [
+        "SYNC_RESPONSE"
+      ]
+    },
+    "SYNC_RESPONSE": {
+      "type": 33,
+      "description": "RELAY SYNC_RESPONSE (0x21)",
+      "required": [
+        "datastore"
+      ],
+      "properties": {
+        "datastore": true
+      },
+      "dir": null,
+      "responses": []
+    },
+    "DELTA_REQUEST": {
+      "type": 34,
+      "description": "RELAY DELTA_REQUEST (0x22)",
+      "required": [
+        "datastore",
+        "op_ids"
+      ],
+      "properties": {
+        "datastore": true,
+        "op_ids": true
+      },
+      "dir": null,
+      "responses": [
+        "DELTA_BATCH"
+      ]
+    },
+    "DELTA_BATCH": {
+      "type": 35,
+      "description": "RELAY DELTA_BATCH (0x23)",
+      "required": [
+        "datastore",
+        "operations",
+        "remaining"
+      ],
+      "properties": {
+        "datastore": true,
+        "operations": true,
+        "remaining": true
+      },
+      "dir": null,
+      "responses": []
+    },
+    "SYNC_ACK": {
+      "type": 36,
+      "description": "RELAY SYNC_ACK (0x24)",
+      "required": [
+        "datastore"
+      ],
+      "properties": {
+        "datastore": true
+      },
+      "dir": null,
+      "responses": []
+    },
+    "MERKLE_NODE_REQUEST": {
+      "type": 37,
+      "description": "RELAY MERKLE_NODE_REQUEST (0x25)",
+      "required": [
+        "datastore",
+        "level",
+        "index"
+      ],
+      "properties": {
+        "datastore": true,
+        "level": true,
+        "index": true
+      },
+      "dir": null,
+      "responses": [
+        "MERKLE_NODE_RESPONSE"
+      ]
+    },
+    "MERKLE_NODE_RESPONSE": {
+      "type": 38,
+      "description": "RELAY MERKLE_NODE_RESPONSE (0x26)",
+      "required": [
+        "datastore",
+        "level",
+        "index",
+        "hash",
+        "left",
+        "right"
+      ],
+      "properties": {
+        "datastore": true,
+        "level": true,
+        "index": true,
+        "hash": true,
+        "left": true,
+        "right": true
+      },
+      "dir": null,
+      "responses": []
+    },
+    "MERKLE_LEAF_REQUEST": {
+      "type": 39,
+      "description": "RELAY MERKLE_LEAF_REQUEST (0x27)",
+      "required": [
+        "datastore",
+        "leaf_index"
+      ],
+      "properties": {
+        "datastore": true,
+        "leaf_index": true
+      },
+      "dir": null,
+      "responses": [
+        "MERKLE_LEAF_RESPONSE"
+      ]
+    },
+    "MERKLE_LEAF_RESPONSE": {
+      "type": 40,
+      "description": "RELAY MERKLE_LEAF_RESPONSE (0x28)",
+      "required": [
+        "datastore",
+        "leaf_index",
+        "bucket_index",
+        "op_ids"
+      ],
+      "properties": {
+        "datastore": true,
+        "leaf_index": true,
+        "bucket_index": true,
+        "op_ids": true
+      },
+      "dir": null,
+      "responses": []
+    },
+    "OPS": {
+      "type": 48,
+      "description": "RELAY OPS (0x30)",
+      "required": [
+        "datastore",
+        "operations"
+      ],
+      "properties": {
+        "datastore": true,
+        "operations": true
+      },
+      "dir": null,
+      "responses": [
+        "OP_ACK"
+      ]
+    },
+    "OP_ACK": {
+      "type": 49,
+      "description": "RELAY OP_ACK (0x31)",
+      "required": [
+        "outcomes"
+      ],
+      "properties": {
+        "outcomes": true
+      },
+      "dir": "R→P",
+      "responses": []
+    },
+    "ERROR": {
+      "type": 255,
+      "description": "RELAY ERROR (0xff)",
+      "required": [
+        "code",
+        "message",
+        "fatal"
+      ],
+      "properties": {
+        "code": true,
+        "message": true,
+        "fatal": true
+      },
+      "dir": null,
+      "responses": []
+    }
+  },
+  "byte_fields": [
+    "peer_id",
+    "public_key",
+    "nonce",
+    "signature",
+    "validated_root",
+    "accepted_root",
+    "op_id",
+    "author",
+    "hash",
+    "left",
+    "right"
+  ]
+}

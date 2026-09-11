@@ -1057,8 +1057,8 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 
 #### M3c — Interop & release (`v0.1.0`)
 
-- [ ] Independent TypeScript **wire peer** (evolved from the conformance model runner, still not NAPI-backed)
-- [ ] Reference relay + conformance harness with golden/negative vectors in two languages (ISSUES H9)
+- [x] Independent TypeScript **wire peer** (evolved from the conformance model runner, still not NAPI-backed) — landed main PR #18
+- [x] Reference relay + conformance harness with golden/negative vectors in two languages (ISSUES H9) — this PR; H9 not removed
 - [ ] Version/upgrade matrix, packaging, support profile
 
 **Exit gate:** two-language interoperability; partition/rejoin; duplicate/loss/reorder; release `v0.1.0`.

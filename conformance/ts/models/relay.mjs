@@ -7,12 +7,18 @@ import { Buffer } from 'node:buffer';
 
 import { hexToBytes, bytesToHex, encode, decode } from './cbor.mjs';
 import { blake3 } from './blake3.mjs';
-import { merkleRootOnce } from './merkle.mjs';
+import { merkleRootOnce, buildTreeAligned, emptyLeaf } from './merkle.mjs';
+import { assertRelayConstants, relayWire } from './registry.mjs';
 
 export const DOMAIN_RELAY_AUTH = new TextEncoder().encode('zerodb-relay-auth-v2');
 export const DOMAIN_RELAY_AUTH_V1 = new TextEncoder().encode('zerodb-relay-auth-v1');
 export const RELAY_CAPS = ['dual-root', 'merkle-walk-v1', 'reject-ack', 'resume-cursor'];
 export const ERR_AUTH_FAILED = 0x201;
+export const ERR_SIG_INVALID = 0x301;
+export const ERR_CLOCK_DRIFT = 0x302;
+export const ERR_PAYLOAD_TOO_LARGE = 0x303;
+export const ERR_RATE_EXCEEDED = 0x304;
+export const ERR_TOO_MANY_SUBS = 0x305;
 export const DEFAULT_LIMITS = {
   max_payload_bytes: 1048576,
   max_batch_ops: 64,
@@ -26,6 +32,8 @@ export const MSG_HELLO = 0x01;
 export const MSG_CHALLENGE = 0x02;
 export const MSG_AUTH = 0x03;
 export const MSG_WELCOME = 0x04;
+export const MSG_SUBSCRIBE = 0x10;
+export const MSG_SUBSCRIBED = 0x11;
 export const MSG_SYNC_REQUEST = 0x20;
 export const MSG_SYNC_RESPONSE = 0x21;
 export const MSG_DELTA_REQUEST = 0x22;
@@ -43,19 +51,7 @@ export const DIR_PEER_TO_RELAY = 'P→R';
 export const DIR_RELAY_TO_PEER = 'R→P';
 
 /** Payload fields that are CBOR bytes on the wire (JSON stores lowercase hex). */
-export const BYTE_FIELDS = new Set([
-  'peer_id',
-  'public_key',
-  'nonce',
-  'signature',
-  'validated_root',
-  'accepted_root',
-  'op_id',
-  'author',
-  'hash',
-  'left',
-  'right',
-]);
+export const BYTE_FIELDS = new Set(relayWire.byte_fields);
 
 const SPKI_PREFIX = hexToBytes('302a300506032b6570032100');
 const PKCS8_PREFIX = hexToBytes('302e020100300506032b657004220420');
@@ -171,6 +167,8 @@ export function knownMessageType(ty) {
     ty === MSG_CHALLENGE ||
     ty === MSG_AUTH ||
     ty === MSG_WELCOME ||
+    ty === MSG_SUBSCRIBE ||
+    ty === MSG_SUBSCRIBED ||
     ty === MSG_ERROR ||
     ty === MSG_SYNC_REQUEST ||
     ty === MSG_SYNC_RESPONSE ||
@@ -202,6 +200,9 @@ export function requiredPayloadKeys(ty) {
       return ['signature'];
     case MSG_WELCOME:
       return ['protocol_version', 'relay_level', 'capabilities', 'limits'];
+    case MSG_SUBSCRIBE:
+    case MSG_SUBSCRIBED:
+      return ['datastore'];
     case MSG_ERROR:
       return ['code', 'message', 'fatal'];
     case MSG_SYNC_REQUEST:
@@ -261,7 +262,7 @@ export function expectedResponseTypes(requestTy) {
     case MSG_MERKLE_LEAF_REQUEST:
       return [MSG_MERKLE_LEAF_RESPONSE];
     case MSG_OPS:
-      return [MSG_OP_ACK];
+      return [MSG_OP_ACK, MSG_ERROR];
     default:
       return [];
   }
@@ -402,6 +403,150 @@ function checkResumeFrames(v, frames) {
   }
 }
 
+function checkOpsPushFrames(v, frames) {
+  let sawOps = false;
+  const outcomes = [];
+  for (const f of frames) {
+    if (f.type === MSG_OPS && f.dir === DIR_PEER_TO_RELAY) sawOps = true;
+    if (f.type === MSG_OP_ACK) {
+      for (const o of f.payload.outcomes) outcomes.push(o);
+    }
+  }
+  if (!sawOps) throw new Error('ops-push frames must include peer OPS');
+  if (outcomes.length === 0) throw new Error('ops-push frames must include OP_ACK outcomes');
+  const want = v.expect.outcomes;
+  if (want) {
+    if (JSON.stringify(outcomes) !== JSON.stringify(want)) {
+      throw new Error(`OP_ACK outcomes ${JSON.stringify(outcomes)}, expected ${JSON.stringify(want)}`);
+    }
+  } else if (outcomes.some((o) => o.outcome !== 'ACCEPT')) {
+    throw new Error('ops-push golden expects ACCEPT outcomes');
+  }
+}
+
+function hexEq(a, b) {
+  return String(a).toLowerCase() === String(b).toLowerCase();
+}
+
+function bucketIndicesOf(ops) {
+  const set = new Set(ops.map((o) => Math.floor(o.physical_ms / 60000)));
+  return [...set].sort((a, b) => a - b);
+}
+
+/** Deterministic merkle-walk-v1 (same prune as the TS peer / Rust walk). */
+export function merkleWalkMissing(localOps, remoteOps, bucketIndices) {
+  const buckets = bucketIndices && bucketIndices.length ? bucketIndices : bucketIndicesOf(remoteOps);
+  const local = buildTreeAligned(localOps, buckets);
+  const remote = buildTreeAligned(remoteOps, buckets);
+  const missing = [];
+  const steps = [];
+
+  function walk(level, index) {
+    if (level === 0) {
+      const remoteIds = (remote.leaves[index] ? remote.leaves[index].op_ids : []).map(bytesToHex);
+      const localIds = new Set((local.leaves[index] ? local.leaves[index].op_ids : []).map(bytesToHex));
+      const leafMissing = remoteIds.filter((id) => !localIds.has(id));
+      steps.push({ type: 'leaf', level, index, missing: leafMissing });
+      for (const id of leafMissing) missing.push(id);
+      return;
+    }
+    const remoteKids = {
+      left: remote.levels[level - 1][index * 2],
+      right: remote.levels[level - 1][index * 2 + 1],
+    };
+    const localLeft = local.levels[level - 1] ? local.levels[level - 1][index * 2] : emptyLeaf();
+    const localRight = local.levels[level - 1] ? local.levels[level - 1][index * 2 + 1] : emptyLeaf();
+    steps.push({
+      type: 'node',
+      level,
+      index,
+      left: bytesToHex(remoteKids.left),
+      right: bytesToHex(remoteKids.right),
+      hash: bytesToHex(remote.levels[level][index]),
+    });
+    if (!hexEq(bytesToHex(remoteKids.left), bytesToHex(localLeft))) walk(level - 1, index * 2);
+    if (!hexEq(bytesToHex(remoteKids.right), bytesToHex(localRight))) walk(level - 1, index * 2 + 1);
+  }
+
+  const remoteRoot = bytesToHex(remote.levels[remote.levels.length - 1][0]);
+  const localRoot = bytesToHex(local.levels[local.levels.length - 1][0]);
+  if (remoteRoot !== localRoot) walk(remote.levels.length - 1, 0);
+  return { missing: [...new Set(missing)], steps, buckets, remoteRoot, localRoot };
+}
+
+function checkMerkleWalkFrames(v, frames) {
+  const walk = merkleWalkMissing(merkleOps(v.local), merkleOps(v.remote), v.bucket_indices);
+  const wantMissing = [...(v.expect.missing || [])].map((x) => x.toLowerCase()).sort();
+  const gotMissing = walk.missing.map((x) => x.toLowerCase()).sort();
+  if (JSON.stringify(gotMissing) !== JSON.stringify(wantMissing)) {
+    throw new Error(`merkle-walk missing ${JSON.stringify(gotMissing)}, expected ${JSON.stringify(wantMissing)}`);
+  }
+
+  const nodeReqs = frames.filter((f) => f.type === MSG_MERKLE_NODE_REQUEST);
+  const leafReqs = frames.filter((f) => f.type === MSG_MERKLE_LEAF_REQUEST);
+  const deltaReqs = frames.filter((f) => f.type === MSG_DELTA_REQUEST);
+  const nodeSteps = walk.steps.filter((s) => s.type === 'node');
+  const leafSteps = walk.steps.filter((s) => s.type === 'leaf');
+  if (nodeReqs.length !== nodeSteps.length) {
+    throw new Error(`merkle-walk NODE requests ${nodeReqs.length}, walk ${nodeSteps.length}`);
+  }
+  if (leafReqs.length !== leafSteps.length) {
+    throw new Error(`merkle-walk LEAF requests ${leafReqs.length}, walk ${leafSteps.length}`);
+  }
+  for (let i = 0; i < nodeSteps.length; i++) {
+    if (nodeReqs[i].payload.level !== nodeSteps[i].level || nodeReqs[i].payload.index !== nodeSteps[i].index) {
+      throw new Error(`merkle-walk NODE[${i}] ${JSON.stringify(nodeReqs[i].payload)} != ${JSON.stringify(nodeSteps[i])}`);
+    }
+  }
+  for (let i = 0; i < leafSteps.length; i++) {
+    if (leafReqs[i].payload.leaf_index !== leafSteps[i].index) {
+      throw new Error(`merkle-walk LEAF[${i}] leaf_index ${leafReqs[i].payload.leaf_index} != ${leafSteps[i].index}`);
+    }
+  }
+  if (wantMissing.length > 0) {
+    if (deltaReqs.length === 0) throw new Error('merkle-walk with missing ops must include DELTA_REQUEST');
+    const asked = [...(deltaReqs[0].payload.op_ids || [])].map((x) => x.toLowerCase()).sort();
+    if (JSON.stringify(asked) !== JSON.stringify(wantMissing)) {
+      throw new Error(`DELTA_REQUEST ${JSON.stringify(asked)} != missing ${JSON.stringify(wantMissing)}`);
+    }
+  }
+  let sawSync = false;
+  for (const f of frames) {
+    if (f.type === MSG_SYNC_RESPONSE && f.dir === DIR_RELAY_TO_PEER) {
+      sawSync = true;
+      if (f.payload.validated_root && f.payload.validated_root !== walk.remoteRoot) {
+        throw new Error(`SYNC_RESPONSE.validated_root ${f.payload.validated_root} != ${walk.remoteRoot}`);
+      }
+    }
+  }
+  if (!sawSync) throw new Error('merkle-walk frames must include relay SYNC_RESPONSE');
+}
+
+function checkLimitsFrames(v, frames) {
+  const limits = v.limits || DEFAULT_LIMITS;
+  let over = false;
+  for (const f of frames) {
+    if (f.type === MSG_OPS) {
+      const ops = f.payload.operations || [];
+      if (ops.length > limits.max_batch_ops) over = true;
+      const encoded = encodeEnvelope(f.type, f.request_id, f.payload);
+      if (encoded.length > limits.max_batch_bytes) over = true;
+      for (const op of ops) {
+        const n = typeof op === 'string' ? op.length / 2 : encode(jsonToTagged(op)).length;
+        if (n > limits.max_payload_bytes) over = true;
+      }
+    }
+    if (f.type === MSG_ERROR) {
+      if (f.payload.code !== ERR_PAYLOAD_TOO_LARGE) {
+        throw new Error(`limits ERROR.code ${f.payload.code}, expected ${ERR_PAYLOAD_TOO_LARGE}`);
+      }
+      if (f.payload.fatal !== false) throw new Error('PAYLOAD_TOO_LARGE must be non-fatal');
+    }
+  }
+  if (!over) throw new Error('limits vector OPS must exceed advertised WELCOME limits');
+  if (!frames.some((f) => f.type === MSG_ERROR)) throw new Error('limits frames must include ERROR 0x303');
+}
+
 function checkRejectFrames(v, frames) {
   let sawOps = false;
   const rejected = [];
@@ -495,6 +640,15 @@ export function checkFrames(v) {
     case 'reject-ack':
       checkRejectFrames(v, frames);
       break;
+    case 'ops-push':
+      checkOpsPushFrames(v, frames);
+      break;
+    case 'merkle-walk':
+      checkMerkleWalkFrames(v, frames);
+      break;
+    case 'limits':
+      checkLimitsFrames(v, frames);
+      break;
     default:
       break;
   }
@@ -587,11 +741,50 @@ export function runRelayTranscriptVector(vector) {
     case 'reject-ack':
       runRejectAck(vector);
       break;
+    case 'ops-push':
+    case 'merkle-walk':
+    case 'limits':
+      break;
     default:
       throw new Error(`unknown relay-transcript kind "${vector.kind}"`);
   }
   checkFrames(vector);
 }
+
+assertRelayConstants({
+  capabilities: RELAY_CAPS,
+  welcomeLimits: DEFAULT_LIMITS,
+  messages: {
+    HELLO: MSG_HELLO,
+    CHALLENGE: MSG_CHALLENGE,
+    AUTH: MSG_AUTH,
+    WELCOME: MSG_WELCOME,
+    SUBSCRIBE: MSG_SUBSCRIBE,
+    SUBSCRIBED: MSG_SUBSCRIBED,
+    SYNC_REQUEST: MSG_SYNC_REQUEST,
+    SYNC_RESPONSE: MSG_SYNC_RESPONSE,
+    DELTA_REQUEST: MSG_DELTA_REQUEST,
+    DELTA_BATCH: MSG_DELTA_BATCH,
+    SYNC_ACK: MSG_SYNC_ACK,
+    MERKLE_NODE_REQUEST: MSG_MERKLE_NODE_REQUEST,
+    MERKLE_NODE_RESPONSE: MSG_MERKLE_NODE_RESPONSE,
+    MERKLE_LEAF_REQUEST: MSG_MERKLE_LEAF_REQUEST,
+    MERKLE_LEAF_RESPONSE: MSG_MERKLE_LEAF_RESPONSE,
+    OPS: MSG_OPS,
+    OP_ACK: MSG_OP_ACK,
+    ERROR: MSG_ERROR,
+  },
+  errors: {
+    AUTH_FAILED: ERR_AUTH_FAILED,
+    UNSIGNED_OP: ERR_SIG_INVALID,
+    CLOCK_DRIFT: ERR_CLOCK_DRIFT,
+    PAYLOAD_TOO_LARGE: ERR_PAYLOAD_TOO_LARGE,
+    RATE_EXCEEDED: ERR_RATE_EXCEEDED,
+    TOO_MANY_SUBS: ERR_TOO_MANY_SUBS,
+  },
+  byteFields: [...BYTE_FIELDS],
+  domainHandshake: new TextDecoder().decode(DOMAIN_RELAY_AUTH),
+});
 
 /** Tagged CBOR value → JSON-ish (bytes become lowercase hex). */
 export function taggedToJson(value) {

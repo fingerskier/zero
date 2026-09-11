@@ -49,7 +49,7 @@ Must not regress:
 - **`CLOCK_DRIFT` quarantine + release** (E8 / H1 closed).
 - **Frozen-snapshot Merkle walk**; matching-subtree prune (M3a / E3).
 - **Advertised session limits:** `max_payload_bytes` per-op, `max_batch_*` per OPS, pre-decode frame ceiling, plus per-session `max_subscriptions` / `ops_per_second` / `bytes_per_second` and 3 connections per PeerId. Transcript AUTH is draft (`zerodb-relay-auth-v2`).
-- **Schema is a signed KERNEL kind 5 `SchemaEpoch`.** `apply_schema_json` is a helper that emits the op. Peers without the epoch fail closed (`EPOCH_UNKNOWN`). n=1 / empty migration on this PR; wrap-body unfrozen.
+- **Schema is a signed KERNEL kind 5 `SchemaEpoch`.** `apply_schema_json` is a helper that emits the op. Peers without the epoch fail closed (`EPOCH_UNKNOWN`). n=1 / empty migration landed on main; wrap-body unfrozen.
 - **Formats draft-1 / unfrozen.** GC off until C7 (M5b). `zerodb-core` / `zerodb-storage` experimental until freeze.
 - **Approved-resolution checklist** (SPEC §10) is the only way a C/H issue closes.
 - Keep `e5`/`e6`/`e7`/`e8` + `import_replay_equiv` + `limits` + m3a suites green.
@@ -74,9 +74,9 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 This is the only live action list.
 
-1. **M3c-a `SchemaEpoch`** — signed KERNEL kind 5 persist/ingest/import landed this PR (n=1, empty migration; `encrypted: true` rides the op; unknown `ep` is `EPOCH_UNKNOWN`). Codex P1s: same-batch kind-5 applies before epoch-bound data; late ops validate against their own epoch IR (ep=0 schemaless). Fork/quarantine and non-empty migration DSL not started. Do not freeze wrap-body. **Not** M3c complete.
-2. **M3c-b TS wire peer** — this PR: independent TypeScript wire peer evolved from the conformance runner (`conformance/ts/peer/`), **not** NAPI-backed (SPEC M3c). Speaks live RELAY 0.2 HELLO/AUTH/WELCOME, signed KERNEL ops including kind 5, merkle-walk catch-up, `EPOCH_UNKNOWN` fail-closed, advertised WELCOME limits. **Not** M3c complete.
-3. **M3c-c two-language harness** — golden/negative vectors for relay+peer in two languages (H9).
+1. **M3c-a `SchemaEpoch`** — landed on main (PR #17): signed KERNEL kind 5 persist/ingest/import (n=1, empty migration; `encrypted: true` rides the op; unknown `ep` is `EPOCH_UNKNOWN`). Codex P1s: same-batch kind-5 applies before epoch-bound data; late ops validate against their own epoch IR (ep=0 schemaless). Fork/quarantine and non-empty migration DSL not started. Do not freeze wrap-body. **Not** M3c complete.
+2. **M3c-b TS wire peer** — landed on main (PR #18): independent TypeScript wire peer evolved from the conformance runner (`conformance/ts/peer/`), **not** NAPI-backed (SPEC M3c). Speaks live RELAY 0.2 HELLO/AUTH/WELCOME, signed KERNEL ops including kind 5, merkle-walk catch-up, `EPOCH_UNKNOWN` fail-closed, advertised WELCOME limits. **Not** M3c complete.
+3. **M3c-c two-language harness** — this PR: golden/negative relay+peer vectors in Rust + independent TS (H9). Registry is the protocol definition; `conformance/schemas/` is generated from it. Evidence: `RELAY-OPS-001`, `RELAY-WALK-001`, `RELAY-LIMIT-001`, `PEER-EPOCH-001`, `PEER-REJECT-001..004` in `conformance/vectors/required/` (green in `conformance/ts/runner.mjs` and `zerodb-core` `conformance_relay` / `conformance_peer`). HELLO/AUTH/WELCOME already on main as `RELAY-HELLO-001..003`. **Not** M3c complete; H9 not removed; formats remain draft-1 / unfrozen.
 4. **M3c-d packaging** — version/upgrade matrix, support profile.
 5. **`v0.1.0` tag** — only after M3c-a..d and a Decision Log act at tag time. Still not format freeze unless that act says so.
 

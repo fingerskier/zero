@@ -73,6 +73,81 @@
     "status": "draft (RELAY-SPEC 0.2.2-draft)"
   },
 
+  "relay_wire": {
+    "comment": "H9 machine-readable RELAY 0.2.2-draft definition. Both runners load this; schemas/ is generated from it. Draft-1 / unfrozen — not a format freeze.",
+    "authority": "doc/RELAY-SPEC.md",
+    "status": "draft (RELAY-SPEC 0.2.2-draft; unfrozen)",
+    "protocol_version": 1,
+    "relay_level": 2,
+    "domain_handshake": "zerodb-relay-auth-v2",
+    "domain_handshake_v1": "zerodb-relay-auth-v1",
+    "byte_fields": [
+      "peer_id",
+      "public_key",
+      "nonce",
+      "signature",
+      "validated_root",
+      "accepted_root",
+      "op_id",
+      "author",
+      "hash",
+      "left",
+      "right"
+    ],
+    "welcome_limits": {
+      "comment": "Advertised experimental WELCOME defaults (RELAY-SPEC §8.1). Distinct from format `limits` (KERNEL/O6).",
+      "max_payload_bytes": 1048576,
+      "max_batch_ops": 64,
+      "max_batch_bytes": 16777216,
+      "max_subscriptions": 64,
+      "ops_per_second": 100,
+      "bytes_per_second": 10485760,
+      "max_connections_per_peer": 3
+    },
+    "messages": {
+      "HELLO": { "type": 1, "dir": "P→R", "required": ["peer_id", "public_key", "protocol_version", "capabilities"], "responses": ["CHALLENGE", "ERROR"] },
+      "CHALLENGE": { "type": 2, "dir": "R→P", "required": ["nonce"] },
+      "AUTH": { "type": 3, "dir": "P→R", "required": ["signature"], "responses": ["WELCOME", "ERROR"] },
+      "WELCOME": { "type": 4, "dir": "R→P", "required": ["protocol_version", "relay_level", "capabilities", "limits"] },
+      "SUBSCRIBE": { "type": 16, "dir": null, "required": ["datastore"] },
+      "SUBSCRIBED": { "type": 17, "dir": null, "required": ["datastore"] },
+      "SYNC_REQUEST": { "type": 32, "dir": null, "required": ["datastore"], "responses": ["SYNC_RESPONSE"] },
+      "SYNC_RESPONSE": { "type": 33, "dir": null, "required": ["datastore"] },
+      "DELTA_REQUEST": { "type": 34, "dir": null, "required": ["datastore", "op_ids"], "responses": ["DELTA_BATCH"] },
+      "DELTA_BATCH": { "type": 35, "dir": null, "required": ["datastore", "operations", "remaining"] },
+      "SYNC_ACK": { "type": 36, "dir": null, "required": ["datastore"] },
+      "MERKLE_NODE_REQUEST": { "type": 37, "dir": null, "required": ["datastore", "level", "index"], "responses": ["MERKLE_NODE_RESPONSE"] },
+      "MERKLE_NODE_RESPONSE": { "type": 38, "dir": null, "required": ["datastore", "level", "index", "hash", "left", "right"] },
+      "MERKLE_LEAF_REQUEST": { "type": 39, "dir": null, "required": ["datastore", "leaf_index"], "responses": ["MERKLE_LEAF_RESPONSE"] },
+      "MERKLE_LEAF_RESPONSE": { "type": 40, "dir": null, "required": ["datastore", "leaf_index", "bucket_index", "op_ids"] },
+      "OPS": { "type": 48, "dir": null, "required": ["datastore", "operations"], "responses": ["OP_ACK"] },
+      "OP_ACK": { "type": 49, "dir": "R→P", "required": ["outcomes"] },
+      "ERROR": { "type": 255, "dir": null, "required": ["code", "message", "fatal"] }
+    },
+    "errors": {
+      "AUTH_FAILED": { "code": 513, "fatal": true },
+      "UNSIGNED_OP": { "code": 769, "fatal": false },
+      "CLOCK_DRIFT": { "code": 770, "fatal": false },
+      "PAYLOAD_TOO_LARGE": { "code": 771, "fatal": false },
+      "RATE_EXCEEDED": { "code": 772, "fatal": false },
+      "TOO_MANY_SUBS": { "code": 773, "fatal": false }
+    },
+    "op_ack_reject_reasons": ["DECODE", "SIG", "AUTHZ"]
+  },
+
+  "peer_rejects": {
+    "comment": "Named peer-side ingest outcomes (AUTH.md §4 / KERNEL §5 / SCHEMA.md §3). Distinct from relay OP_ACK reasons and ERROR codes.",
+    "authority": "doc/AUTH.md, doc/KERNEL.md, doc/SCHEMA.md",
+    "reasons": [
+      "AUTH_SIG_INVALID",
+      "AUTH_WRONG_DATASTORE",
+      "CLOCK_DRIFT",
+      "EPOCH_UNKNOWN",
+      "APPLY_INVALID"
+    ],
+    "max_drift_ms": 60000
+  },
+
   "merkle": {
     "authority": "doc/MERKLE.md",
     "merkle_format_version": 1,

@@ -39,6 +39,7 @@ import {
   isLateAgainstOps,
 } from './models/frontier.mjs';
 import { runRelayTranscriptVector } from './models/relay.mjs';
+import { runPeerIngestVector } from './models/peeringest.mjs';
 import { hexToBytes, bytesToHex } from './models/cbor.mjs';
 
 const laneArg = process.argv.indexOf('--lane');
@@ -76,6 +77,7 @@ const handlers = {
   'snapshot-id': runSnapshotIdVector,
   'late-op': runLateOpVector,
   'relay-transcript': runRelayTranscriptVector,
+  'peer-ingest': runPeerIngestVector,
   'composite-smoke': (vector) => {
     const op = {
       op_id: hexToBytes(vector.op.op_id),

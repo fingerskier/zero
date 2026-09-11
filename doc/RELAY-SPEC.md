@@ -996,7 +996,7 @@ Pruned (each removable without loss for any current milestone):
 - `SYNC_REQUEST` / `SYNC_RESPONSE` required root is direction-dependent: peer messages carry `accepted_root`; relay messages carry `validated_root`. Peers MUST NOT invent a relay validated root.
 - `SYNC_REQUEST.cursor` is DELIVERY `{frontier, epoch}`.
 - `OP_ACK.outcomes` with non-retryable `REJECT`.
-- `relay-transcript` vectors carry ordered `{type, request_id, payload, cbor_hex}` frames. Binary fields (`peer_id`, `public_key`, `nonce`, `signature`, `validated_root`, `accepted_root`, `op_id`, `author`) encode as CBOR bytes. RELAY-HELLO-001/002/003, RELAY-ROOT-001, RELAY-RESUME-001, RELAY-REJECT-001.
+- `relay-transcript` vectors carry ordered `{type, request_id, payload, cbor_hex}` frames. Binary fields (`peer_id`, `public_key`, `nonce`, `signature`, `validated_root`, `accepted_root`, `op_id`, `author`, `hash`, `left`, `right`) encode as CBOR bytes. RELAY-HELLO-001/002/003, RELAY-ROOT-001, RELAY-RESUME-001, RELAY-REJECT-001, RELAY-OPS-001, RELAY-WALK-001, RELAY-LIMIT-001. Peer ingest named rejects live as `peer-ingest` (`PEER-EPOCH-001`, `PEER-REJECT-001..004`). Protocol constants are generated from `conformance/registry.json`. Draft-1 / unfrozen.
 
 ### 0.2.1-draft
 

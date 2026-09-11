@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zerodb-relay-transcript-vector",
+  "title": "relay-transcript vector (ordered envelopes + kind)",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "kind",
+    "frames"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "const": "relay-transcript"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "handshake",
+        "dual-root",
+        "resume",
+        "reject-ack",
+        "ops-push",
+        "merkle-walk",
+        "limits"
+      ]
+    },
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "zerodb-relay-envelope"
+      }
+    }
+  }
+}
