@@ -17,9 +17,13 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
-### M4a-webrtc — H6 first-cut (this PR)
+### M4a-h6-fanout — live WS SIGNAL fanout + role negotiation (this PR)
 
-SIGNAL (0x42) + ordered `zerodb-relay` DataChannel carrying the shared RELAY 0.2 peer protocol (HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS). Reuses `handshake.rs` `AuthTranscript` — no second AUTH preimage. JS lives at `conformance/ts/webrtc/` (not a wasm crate; O4 untouched). Tests: `conformance/ts/webrtc/webrtc.test.mjs` (in-process ordered channel, not `wrtc`) and `zerodb-relay/tests/signal.rs` (`0x307`). **H6 not closed.** Role negotiation, datastore admission tokens, reconnect, TURN, and a conformance profile remain. **Not** M4a complete. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
+Live `zerodb-relay` WebSocket SIGNAL (0x42) fanout: a forwarded `{sender, payload}` is written to the target socket (mailbox drain in `serve_connection`). Target missing → `0x307`. Handshake roles are PeerId order (`is_handshake_server` / `isHandshakeServer`); AUTH is still `zerodb-relay-auth-v2` (no second preimage). Tests: `zerodb-relay/tests/signal_ws.rs`, `conformance/ts/webrtc/signal-ws.test.mjs`, role cases in `webrtc.test.mjs`. **H6 not closed.** Reconnect, TURN/NAT, datastore admission tokens, and a conformance profile remain. **Not** M4a complete. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
+
+### M4a-webrtc — H6 first-cut (landed main #25 @ `671adba`)
+
+SIGNAL (0x42) + ordered `zerodb-relay` DataChannel carrying the shared RELAY 0.2 peer protocol (HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS). Reuses `handshake.rs` `AuthTranscript` — no second AUTH preimage. JS lives at `conformance/ts/webrtc/` (not a wasm crate; O4 untouched). Tests: `conformance/ts/webrtc/webrtc.test.mjs` (in-process ordered channel, not `wrtc`) and `zerodb-relay/tests/signal.rs` (`0x307`). **H6 not closed.** **Not** M4a complete. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
 
 ### M4a-hooks — optional `@zerodb/react` (landed main #24 @ `3f81d62`)
 

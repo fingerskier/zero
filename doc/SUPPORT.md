@@ -22,7 +22,7 @@ The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M
 | `@zerodb/node` NAPI addon | `ubuntu-latest` + `windows-latest`, Node 22 | Built from source for the host target. `package.json` `napi.targets` lists Windows only — that is **not** a published multi-platform npm matrix. |
 | Conformance required lane + `generate-protocol.mjs --check` | `ubuntu-latest`, Node 20 | Independent TS runner; never NAPI. |
 | TS wire peer smoke (`conformance/ts/peer/*.test.mjs`) | `ubuntu-latest`, Node 22 + built `zerodb-relay` | NAPI-free. |
-| WebRTC first-cut (`conformance/ts/webrtc/*.test.mjs`) | `ubuntu-latest`, Node 22 | Fake ordered DataChannel; not wrtc. H6 not closed. |
+| WebRTC / H6 (`conformance/ts/webrtc/*.test.mjs` + `zerodb-relay` `signal` / `signal_ws`) | `ubuntu-latest`, Node 22 + built `zerodb-relay` | Live WS SIGNAL fanout + PeerId roles + fake ordered DataChannel; not wrtc. H6 not closed. |
 | `tools/ts-to-ir` | `ubuntu-latest`, Node 20 | Authoring JSON → IR helper. |
 | Browser / WASM (`zerodb-wasm`, Pages) | `wasm` job + `pages` workflow | M4a-a IDB/OPFS adapters + persist/reopen; **not** M4a complete; **not** this support profile's product platforms. |
 | `@zerodb/react` optional hooks | `react-hooks` job | M4a slice over wasm + `openDurable`; **not** M4a complete; **not** a product platform. |

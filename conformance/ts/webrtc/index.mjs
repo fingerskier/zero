@@ -3,5 +3,5 @@
 
 export { CHANNEL_LABEL, ChannelTransport, FakeDataChannel, FakeRTCPeerConnection, connectFakeRtc, pairDataChannels } from './channel.mjs'
 export { ERR_TARGET_NOT_CONNECTED, SignalRelay, encodeError, encodeSignal, signalingBytes, signalingObject } from './signal.mjs'
-export { AUTH_WRONG_DATASTORE, ERR_AUTH_FAILED, ERR_VERSION_MISMATCH, connectDirect, serveDirect, signAuthV1NonceOnly } from './peer.mjs'
+export { AUTH_WRONG_DATASTORE, ERR_AUTH_FAILED, ERR_VERSION_MISMATCH, connectDirect, runNegotiated, serveDirect, signAuthV1NonceOnly } from './peer.mjs'
 export { negotiateViaSignal } from './negotiate.mjs'

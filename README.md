@@ -2,7 +2,7 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** M0 contracts, M1 local core, M2 Node SDK, M3a durable convergence, and **M3c** (`v0.1.0` Decision Log act @ `177e247`) are complete. M3b remainder is **pinned** (E5–E8 live; **not** M3b exit). M4a-a (WASM + IDB/OPFS) landed main #23. M4a-hooks landed main #24. Current work: **M4a H6 WebRTC first-cut** (`conformance/ts/webrtc/`). **H6 is not closed. Not** M4a complete. O4 still open. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
+**Status:** M0 contracts, M1 local core, M2 Node SDK, M3a durable convergence, and **M3c** (`v0.1.0` Decision Log act @ `177e247`) are complete. M3b remainder is **pinned** (E5–E8 live; **not** M3b exit). M4a-a (WASM + IDB/OPFS) landed main #23. M4a-hooks landed main #24. H6 first-cut landed main #25. Current work: **H6 live WS SIGNAL fanout + role negotiation**. Live fanout is in; TURN/reconnect/admission/conformance still open. Signaling identity is still relay-asserted until DC AUTH. **H6 is not closed. Not** M4a complete. O4 still open. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
 
 
 ## Documents
@@ -32,7 +32,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [Archived reviews](plan/archive/) | Historical July 2026 FINDINGS (not the live backlog) |
 | [Node SDK (M2)](zerodb-napi/) | Experimental `@zerodb/node` NAPI binding — `npm install && npm run build && npm test` |
 | [React hooks (M4a)](zerodb-react/) | Optional `@zerodb/react` over wasm + `openDurable` — not M4a complete |
-| [WebRTC first-cut (H6)](conformance/ts/webrtc/) | SIGNAL + DataChannel carrying the shared peer protocol — H6 not closed |
+| [WebRTC / H6](conformance/ts/webrtc/) | Live WS SIGNAL fanout + PeerId roles + DataChannel peer protocol — H6 not closed |
 | [TS→IR (M1)](tools/ts-to-ir/) | Minimal authoring JSON → schema pin IR for `schema-apply` |
 
 ## v0.1 scope

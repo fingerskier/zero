@@ -111,6 +111,24 @@ export function negotiateWelcomeCaps(hello) {
   return RELAY_CAPS.filter((c) => hello.includes(c));
 }
 
+/**
+ * Who issues CHALLENGE/WELCOME on a direct DataChannel.
+ * Lexicographically smaller PeerId is the handshake server; the other
+ * peer sends HELLO/AUTH. Same rule as `is_handshake_server` in
+ * handshake.rs. Not a second AUTH preimage — AUTH is still
+ * `authTranscript` / `zerodb-relay-auth-v2`.
+ */
+export function isHandshakeServer(localPeerId, remotePeerId) {
+  const a = localPeerId instanceof Uint8Array ? localPeerId : hex32(localPeerId);
+  const b = remotePeerId instanceof Uint8Array ? remotePeerId : hex32(remotePeerId);
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] < b[i]) return true;
+    if (a[i] > b[i]) return false;
+  }
+  return a.length < b.length;
+}
+
 export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce, limits) {
   const hello = helloCaps instanceof Array ? helloCaps : [];
   return {

@@ -3,13 +3,12 @@
 //! Binary WebSocket frames; each message is one CBOR envelope.
 //! Loopback by default. Not a format freeze.
 
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
-use tungstenite::{Message, accept};
-use zerodb_relay::Relay;
+use zerodb_relay::{Relay, serve_connection};
 
 #[derive(Parser)]
 #[command(
@@ -48,41 +47,9 @@ fn main() {
         match stream {
             Ok(s) => {
                 let relay = relay.clone();
-                std::thread::spawn(move || serve(s, &relay));
+                std::thread::spawn(move || serve_connection(s, &relay));
             }
             Err(e) => eprintln!("accept: {e}"),
-        }
-    }
-}
-
-fn serve(stream: TcpStream, relay: &Relay) {
-    let mut ws = match accept(stream) {
-        Ok(ws) => ws,
-        Err(_) => return,
-    };
-    let mut sess = relay.accept();
-    loop {
-        let msg = match ws.read() {
-            Ok(m) => m,
-            Err(_) => break,
-        };
-        let Message::Binary(frame) = msg else {
-            continue;
-        };
-        let replies = match sess.handle(&frame) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("session: {e}");
-                break;
-            }
-        };
-        for r in replies {
-            if ws.send(Message::Binary(r)).is_err() {
-                return;
-            }
-        }
-        if sess.is_closed() {
-            break;
         }
     }
 }

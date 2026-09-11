@@ -1,5 +1,7 @@
 // SIGNAL-facilitated fake RTC: initiator offer DataChannel, answerer
 // receives ondatachannel. Payloads are opaque JSON bytes.
+// RTC offerer/answerer is not the DataChannel handshake role —
+// that is `isHandshakeServer` (PeerId order) after the channel is up.
 
 import { decodeEnvelope } from '../models/relay.mjs'
 import {
