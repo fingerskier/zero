@@ -56,6 +56,8 @@ pub const BYTE_FIELDS: &[&str] = &[
     "hash",
     "left",
     "right",
+    "target",
+    "sender",
 ];
 
 /// Envelope direction (RELAY §4).
@@ -69,6 +71,7 @@ pub const MSG_AUTH: u8 = 0x03;
 pub const MSG_WELCOME: u8 = 0x04;
 pub const MSG_SUBSCRIBE: u8 = 0x10;
 pub const MSG_SUBSCRIBED: u8 = 0x11;
+pub const MSG_UNSUBSCRIBE: u8 = 0x12;
 pub const MSG_SYNC_REQUEST: u8 = 0x20;
 pub const MSG_SYNC_RESPONSE: u8 = 0x21;
 pub const MSG_DELTA_REQUEST: u8 = 0x22;
@@ -80,6 +83,13 @@ pub const MSG_MERKLE_LEAF_REQUEST: u8 = 0x27;
 pub const MSG_MERKLE_LEAF_RESPONSE: u8 = 0x28;
 pub const MSG_OPS: u8 = 0x30;
 pub const MSG_OP_ACK: u8 = 0x31;
+pub const MSG_PEER_LIST_REQUEST: u8 = 0x40;
+pub const MSG_PEER_LIST_RESPONSE: u8 = 0x41;
+pub const MSG_SIGNAL: u8 = 0x42;
+pub const MSG_PING: u8 = 0x50;
+pub const MSG_PONG: u8 = 0x51;
+pub const MSG_THROTTLE: u8 = 0x52;
+pub const MSG_GOODBYE: u8 = 0xfe;
 pub const MSG_ERROR: u8 = 0xff;
 
 pub fn peer_id_from_pk(pk: &[u8; 32]) -> [u8; 32] {
@@ -103,6 +113,7 @@ pub fn known_message_type(ty: u8) -> bool {
             | MSG_WELCOME
             | MSG_SUBSCRIBE
             | MSG_SUBSCRIBED
+            | MSG_UNSUBSCRIBE
             | MSG_ERROR
             | MSG_SYNC_REQUEST
             | MSG_SYNC_RESPONSE
@@ -115,14 +126,28 @@ pub fn known_message_type(ty: u8) -> bool {
             | MSG_MERKLE_LEAF_RESPONSE
             | MSG_OPS
             | MSG_OP_ACK
+            | MSG_PEER_LIST_REQUEST
+            | MSG_PEER_LIST_RESPONSE
+            | MSG_SIGNAL
+            | MSG_PING
+            | MSG_PONG
+            | MSG_THROTTLE
+            | MSG_GOODBYE
     )
 }
 
 /// Fixed direction for unidirectional types. Bidirectional types return `None`.
 pub fn fixed_direction(ty: u8) -> Option<&'static str> {
     match ty {
-        MSG_HELLO | MSG_AUTH => Some(DIR_PEER_TO_RELAY),
-        MSG_CHALLENGE | MSG_WELCOME | MSG_OP_ACK => Some(DIR_RELAY_TO_PEER),
+        MSG_HELLO | MSG_AUTH | MSG_SUBSCRIBE | MSG_UNSUBSCRIBE | MSG_PEER_LIST_REQUEST => {
+            Some(DIR_PEER_TO_RELAY)
+        }
+        MSG_CHALLENGE
+        | MSG_WELCOME
+        | MSG_SUBSCRIBED
+        | MSG_OP_ACK
+        | MSG_PEER_LIST_RESPONSE
+        | MSG_THROTTLE => Some(DIR_RELAY_TO_PEER),
         _ => None,
     }
 }
@@ -133,8 +158,10 @@ pub fn required_payload_keys(ty: u8) -> &'static [&'static str] {
         MSG_CHALLENGE => &["nonce"],
         MSG_AUTH => &["signature"],
         MSG_WELCOME => &["protocol_version", "relay_level", "capabilities", "limits"],
+        MSG_SUBSCRIBE => &["datastores", "connectable"],
+        MSG_SUBSCRIBED | MSG_UNSUBSCRIBE => &["datastores"],
         MSG_ERROR => &["code", "message", "fatal"],
-        MSG_SYNC_REQUEST | MSG_SYNC_RESPONSE => &["datastore"],
+        MSG_SYNC_REQUEST | MSG_SYNC_RESPONSE | MSG_SYNC_ACK => &["datastore"],
         MSG_DELTA_REQUEST => &["datastore", "op_ids"],
         MSG_DELTA_BATCH => &["datastore", "operations", "remaining"],
         MSG_MERKLE_NODE_REQUEST => &["datastore", "level", "index"],
@@ -143,6 +170,12 @@ pub fn required_payload_keys(ty: u8) -> &'static [&'static str] {
         MSG_MERKLE_LEAF_RESPONSE => &["datastore", "leaf_index", "bucket_index", "op_ids"],
         MSG_OPS => &["datastore", "operations"],
         MSG_OP_ACK => &["outcomes"],
+        MSG_PEER_LIST_REQUEST => &["datastore"],
+        MSG_PEER_LIST_RESPONSE => &["datastore", "peers"],
+        MSG_SIGNAL => &["payload"],
+        MSG_PING | MSG_PONG => &["timestamp"],
+        MSG_THROTTLE => &["scope", "retry_after_ms"],
+        MSG_GOODBYE => &["reason"],
         _ => &[],
     }
 }
@@ -162,10 +195,13 @@ pub fn is_request(ty: u8, dir: &str, request_id: u32) -> bool {
         ty,
         MSG_HELLO
             | MSG_AUTH
+            | MSG_SUBSCRIBE
             | MSG_SYNC_REQUEST
             | MSG_DELTA_REQUEST
             | MSG_MERKLE_NODE_REQUEST
             | MSG_MERKLE_LEAF_REQUEST
+            | MSG_PEER_LIST_REQUEST
+            | MSG_PING
     ) || (ty == MSG_OPS && dir == DIR_PEER_TO_RELAY && request_id != 0)
 }
 
@@ -174,11 +210,14 @@ pub fn is_response(ty: u8, request_id: u32) -> bool {
         ty,
         MSG_CHALLENGE
             | MSG_WELCOME
+            | MSG_SUBSCRIBED
             | MSG_SYNC_RESPONSE
             | MSG_DELTA_BATCH
             | MSG_MERKLE_NODE_RESPONSE
             | MSG_MERKLE_LEAF_RESPONSE
             | MSG_OP_ACK
+            | MSG_PEER_LIST_RESPONSE
+            | MSG_PONG
     ) || (ty == MSG_ERROR && request_id != 0)
 }
 
@@ -186,11 +225,14 @@ pub fn expected_response_types(request_ty: u8) -> &'static [u8] {
     match request_ty {
         MSG_HELLO => &[MSG_CHALLENGE, MSG_ERROR],
         MSG_AUTH => &[MSG_WELCOME, MSG_ERROR],
+        MSG_SUBSCRIBE => &[MSG_SUBSCRIBED, MSG_ERROR],
         MSG_SYNC_REQUEST => &[MSG_SYNC_RESPONSE],
         MSG_DELTA_REQUEST => &[MSG_DELTA_BATCH],
         MSG_MERKLE_NODE_REQUEST => &[MSG_MERKLE_NODE_RESPONSE],
         MSG_MERKLE_LEAF_REQUEST => &[MSG_MERKLE_LEAF_RESPONSE],
         MSG_OPS => &[MSG_OP_ACK, MSG_ERROR],
+        MSG_PEER_LIST_REQUEST => &[MSG_PEER_LIST_RESPONSE],
+        MSG_PING => &[MSG_PONG],
         _ => &[],
     }
 }

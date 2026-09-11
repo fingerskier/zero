@@ -34,6 +34,7 @@ export const MSG_AUTH = 0x03;
 export const MSG_WELCOME = 0x04;
 export const MSG_SUBSCRIBE = 0x10;
 export const MSG_SUBSCRIBED = 0x11;
+export const MSG_UNSUBSCRIBE = 0x12;
 export const MSG_SYNC_REQUEST = 0x20;
 export const MSG_SYNC_RESPONSE = 0x21;
 export const MSG_DELTA_REQUEST = 0x22;
@@ -45,6 +46,13 @@ export const MSG_MERKLE_LEAF_REQUEST = 0x27;
 export const MSG_MERKLE_LEAF_RESPONSE = 0x28;
 export const MSG_OPS = 0x30;
 export const MSG_OP_ACK = 0x31;
+export const MSG_PEER_LIST_REQUEST = 0x40;
+export const MSG_PEER_LIST_RESPONSE = 0x41;
+export const MSG_SIGNAL = 0x42;
+export const MSG_PING = 0x50;
+export const MSG_PONG = 0x51;
+export const MSG_THROTTLE = 0x52;
+export const MSG_GOODBYE = 0xfe;
 export const MSG_ERROR = 0xff;
 
 export const DIR_PEER_TO_RELAY = 'P→R';
@@ -169,6 +177,7 @@ export function knownMessageType(ty) {
     ty === MSG_WELCOME ||
     ty === MSG_SUBSCRIBE ||
     ty === MSG_SUBSCRIBED ||
+    ty === MSG_UNSUBSCRIBE ||
     ty === MSG_ERROR ||
     ty === MSG_SYNC_REQUEST ||
     ty === MSG_SYNC_RESPONSE ||
@@ -180,13 +189,37 @@ export function knownMessageType(ty) {
     ty === MSG_MERKLE_LEAF_REQUEST ||
     ty === MSG_MERKLE_LEAF_RESPONSE ||
     ty === MSG_OPS ||
-    ty === MSG_OP_ACK
+    ty === MSG_OP_ACK ||
+    ty === MSG_PEER_LIST_REQUEST ||
+    ty === MSG_PEER_LIST_RESPONSE ||
+    ty === MSG_SIGNAL ||
+    ty === MSG_PING ||
+    ty === MSG_PONG ||
+    ty === MSG_THROTTLE ||
+    ty === MSG_GOODBYE
   );
 }
 
 export function fixedDirection(ty) {
-  if (ty === MSG_HELLO || ty === MSG_AUTH) return DIR_PEER_TO_RELAY;
-  if (ty === MSG_CHALLENGE || ty === MSG_WELCOME || ty === MSG_OP_ACK) return DIR_RELAY_TO_PEER;
+  if (
+    ty === MSG_HELLO ||
+    ty === MSG_AUTH ||
+    ty === MSG_SUBSCRIBE ||
+    ty === MSG_UNSUBSCRIBE ||
+    ty === MSG_PEER_LIST_REQUEST
+  ) {
+    return DIR_PEER_TO_RELAY;
+  }
+  if (
+    ty === MSG_CHALLENGE ||
+    ty === MSG_WELCOME ||
+    ty === MSG_SUBSCRIBED ||
+    ty === MSG_OP_ACK ||
+    ty === MSG_PEER_LIST_RESPONSE ||
+    ty === MSG_THROTTLE
+  ) {
+    return DIR_RELAY_TO_PEER;
+  }
   return null;
 }
 
@@ -201,12 +234,15 @@ export function requiredPayloadKeys(ty) {
     case MSG_WELCOME:
       return ['protocol_version', 'relay_level', 'capabilities', 'limits'];
     case MSG_SUBSCRIBE:
+      return ['datastores', 'connectable'];
     case MSG_SUBSCRIBED:
-      return ['datastore'];
+    case MSG_UNSUBSCRIBE:
+      return ['datastores'];
     case MSG_ERROR:
       return ['code', 'message', 'fatal'];
     case MSG_SYNC_REQUEST:
     case MSG_SYNC_RESPONSE:
+    case MSG_SYNC_ACK:
       return ['datastore'];
     case MSG_DELTA_REQUEST:
       return ['datastore', 'op_ids'];
@@ -224,6 +260,19 @@ export function requiredPayloadKeys(ty) {
       return ['datastore', 'operations'];
     case MSG_OP_ACK:
       return ['outcomes'];
+    case MSG_PEER_LIST_REQUEST:
+      return ['datastore'];
+    case MSG_PEER_LIST_RESPONSE:
+      return ['datastore', 'peers'];
+    case MSG_SIGNAL:
+      return ['payload'];
+    case MSG_PING:
+    case MSG_PONG:
+      return ['timestamp'];
+    case MSG_THROTTLE:
+      return ['scope', 'retry_after_ms'];
+    case MSG_GOODBYE:
+      return ['reason'];
     default:
       return [];
   }
@@ -236,14 +285,16 @@ export function requiredSyncRoot(dir) {
 }
 
 export function isRequest(ty, dir, requestId) {
-  return ty === MSG_HELLO || ty === MSG_AUTH || ty === MSG_SYNC_REQUEST ||
+  return ty === MSG_HELLO || ty === MSG_AUTH || ty === MSG_SUBSCRIBE || ty === MSG_SYNC_REQUEST ||
     ty === MSG_DELTA_REQUEST || ty === MSG_MERKLE_NODE_REQUEST || ty === MSG_MERKLE_LEAF_REQUEST ||
+    ty === MSG_PEER_LIST_REQUEST || ty === MSG_PING ||
     (ty === MSG_OPS && dir === DIR_PEER_TO_RELAY && requestId !== 0);
 }
 
 export function isResponse(ty, requestId) {
-  return ty === MSG_CHALLENGE || ty === MSG_WELCOME || ty === MSG_SYNC_RESPONSE ||
+  return ty === MSG_CHALLENGE || ty === MSG_WELCOME || ty === MSG_SUBSCRIBED || ty === MSG_SYNC_RESPONSE ||
     ty === MSG_DELTA_BATCH || ty === MSG_MERKLE_NODE_RESPONSE || ty === MSG_MERKLE_LEAF_RESPONSE || ty === MSG_OP_ACK ||
+    ty === MSG_PEER_LIST_RESPONSE || ty === MSG_PONG ||
     (ty === MSG_ERROR && requestId !== 0);
 }
 
@@ -253,6 +304,8 @@ export function expectedResponseTypes(requestTy) {
       return [MSG_CHALLENGE, MSG_ERROR];
     case MSG_AUTH:
       return [MSG_WELCOME, MSG_ERROR];
+    case MSG_SUBSCRIBE:
+      return [MSG_SUBSCRIBED, MSG_ERROR];
     case MSG_SYNC_REQUEST:
       return [MSG_SYNC_RESPONSE];
     case MSG_DELTA_REQUEST:
@@ -263,6 +316,10 @@ export function expectedResponseTypes(requestTy) {
       return [MSG_MERKLE_LEAF_RESPONSE];
     case MSG_OPS:
       return [MSG_OP_ACK, MSG_ERROR];
+    case MSG_PEER_LIST_REQUEST:
+      return [MSG_PEER_LIST_RESPONSE];
+    case MSG_PING:
+      return [MSG_PONG];
     default:
       return [];
   }
@@ -761,6 +818,7 @@ assertRelayConstants({
     WELCOME: MSG_WELCOME,
     SUBSCRIBE: MSG_SUBSCRIBE,
     SUBSCRIBED: MSG_SUBSCRIBED,
+    UNSUBSCRIBE: MSG_UNSUBSCRIBE,
     SYNC_REQUEST: MSG_SYNC_REQUEST,
     SYNC_RESPONSE: MSG_SYNC_RESPONSE,
     DELTA_REQUEST: MSG_DELTA_REQUEST,
@@ -772,8 +830,16 @@ assertRelayConstants({
     MERKLE_LEAF_RESPONSE: MSG_MERKLE_LEAF_RESPONSE,
     OPS: MSG_OPS,
     OP_ACK: MSG_OP_ACK,
+    PEER_LIST_REQUEST: MSG_PEER_LIST_REQUEST,
+    PEER_LIST_RESPONSE: MSG_PEER_LIST_RESPONSE,
+    SIGNAL: MSG_SIGNAL,
+    PING: MSG_PING,
+    PONG: MSG_PONG,
+    THROTTLE: MSG_THROTTLE,
+    GOODBYE: MSG_GOODBYE,
     ERROR: MSG_ERROR,
   },
+  requiredKeys: requiredPayloadKeys,
   errors: {
     AUTH_FAILED: ERR_AUTH_FAILED,
     UNSIGNED_OP: ERR_SIG_INVALID,

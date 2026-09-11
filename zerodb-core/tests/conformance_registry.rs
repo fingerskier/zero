@@ -13,9 +13,12 @@ use zerodb_core::handshake::{
 use zerodb_core::relay::{
     BYTE_FIELDS, ERR_AUTH_FAILED, ERR_CLOCK_DRIFT, ERR_PAYLOAD_TOO_LARGE, ERR_RATE_EXCEEDED,
     ERR_SIG_INVALID, ERR_TOO_MANY_SUBS, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH,
-    MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE,
-    MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE,
-    MSG_SUBSCRIBED, MSG_SYNC_ACK, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS,
+    MSG_DELTA_REQUEST, MSG_ERROR, MSG_GOODBYE, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST,
+    MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK,
+    MSG_OPS, MSG_PEER_LIST_REQUEST, MSG_PEER_LIST_RESPONSE, MSG_PING, MSG_PONG, MSG_SIGNAL,
+    MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_ACK, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_THROTTLE,
+    MSG_UNSUBSCRIBE, MSG_WELCOME, RELAY_CAPS, expected_response_types, fixed_direction,
+    known_message_type, required_payload_keys,
 };
 
 fn load_registry() -> Json {
@@ -73,6 +76,7 @@ fn registry_agrees_with_rust_constants() {
         ("WELCOME", MSG_WELCOME),
         ("SUBSCRIBE", MSG_SUBSCRIBE),
         ("SUBSCRIBED", MSG_SUBSCRIBED),
+        ("UNSUBSCRIBE", MSG_UNSUBSCRIBE),
         ("SYNC_REQUEST", MSG_SYNC_REQUEST),
         ("SYNC_RESPONSE", MSG_SYNC_RESPONSE),
         ("DELTA_REQUEST", MSG_DELTA_REQUEST),
@@ -84,13 +88,53 @@ fn registry_agrees_with_rust_constants() {
         ("MERKLE_LEAF_RESPONSE", MSG_MERKLE_LEAF_RESPONSE),
         ("OPS", MSG_OPS),
         ("OP_ACK", MSG_OP_ACK),
+        ("PEER_LIST_REQUEST", MSG_PEER_LIST_REQUEST),
+        ("PEER_LIST_RESPONSE", MSG_PEER_LIST_RESPONSE),
+        ("SIGNAL", MSG_SIGNAL),
+        ("PING", MSG_PING),
+        ("PONG", MSG_PONG),
+        ("THROTTLE", MSG_THROTTLE),
+        ("GOODBYE", MSG_GOODBYE),
         ("ERROR", MSG_ERROR),
     ];
+    assert_eq!(
+        pairs.len(),
+        messages.as_object().unwrap().len(),
+        "rust MSG_* pairs must cover every registry.relay_wire.messages entry"
+    );
     for (name, ty) in pairs {
         assert_eq!(
             messages[name]["type"].as_u64().unwrap() as u8,
             *ty,
             "{name}"
+        );
+        assert!(known_message_type(*ty), "{name} known");
+        let want_dir = messages[name]["dir"].as_str();
+        assert_eq!(fixed_direction(*ty), want_dir, "{name} dir");
+        let want_keys: Vec<&str> = messages[name]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            required_payload_keys(*ty),
+            want_keys.as_slice(),
+            "{name} keys"
+        );
+        let want_resp: Vec<u8> = messages[name]
+            .get("responses")
+            .and_then(Json::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .map(|n| messages[n.as_str().unwrap()]["type"].as_u64().unwrap() as u8)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            expected_response_types(*ty),
+            want_resp.as_slice(),
+            "{name} responses"
         );
     }
 

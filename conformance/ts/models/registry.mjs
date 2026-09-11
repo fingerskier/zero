@@ -62,9 +62,23 @@ export function assertRelayConstants(got) {
       throw new Error(`welcome limit ${k}=${v} != registry ${limits[k]}`)
     }
   }
+  for (const name of Object.keys(relayWire.messages)) {
+    if (!Object.prototype.hasOwnProperty.call(got.messages, name)) {
+      throw new Error(`MSG_${name} missing from runner (registry Appendix A)`)
+    }
+  }
   for (const [name, ty] of Object.entries(got.messages)) {
     const want = messageType(name)
     if (ty !== want) throw new Error(`MSG_${name} ${ty} != registry ${want}`)
+  }
+  if (got.requiredKeys) {
+    for (const [name, spec] of Object.entries(relayWire.messages)) {
+      const gotKeys = JSON.stringify(got.requiredKeys(spec.type))
+      const want = JSON.stringify(spec.required)
+      if (gotKeys !== want) {
+        throw new Error(`${name} required keys ${gotKeys} != registry ${want}`)
+      }
+    }
   }
   for (const [name, code] of Object.entries(got.errors || {})) {
     const want = errorCode(name)

@@ -41,24 +41,32 @@ function envelopeSchema() {
 }
 
 function messageSchemas() {
-  const properties = {}
+  const defs = {}
+  const oneOf = []
   for (const [name, spec] of Object.entries(wire.messages)) {
-    properties[name] = {
+    const properties = {}
+    for (const key of spec.required) {
+      properties[key] = { description: `${name}.${key}` }
+    }
+    defs[name] = {
       type: 'object',
+      title: name,
       description: `RELAY ${name} (0x${Number(spec.type).toString(16)})`,
       required: spec.required,
-      properties: Object.fromEntries(spec.required.map((k) => [k, true])),
-      dir: spec.dir,
-      type: spec.type,
-      responses: spec.responses || [],
+      properties,
+      'x-wire-type': spec.type,
+      'x-dir': spec.dir,
+      'x-responses': spec.responses || [],
     }
+    oneOf.push({ $ref: `#/$defs/${name}` })
   }
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     $id: 'zerodb-relay-messages',
     title: 'RELAY 0.2.2-draft message payloads (generated from registry.relay_wire)',
-    messages: properties,
-    byte_fields: wire.byte_fields,
+    $defs: defs,
+    oneOf,
+    'x-byte-fields': wire.byte_fields,
   }
 }
 

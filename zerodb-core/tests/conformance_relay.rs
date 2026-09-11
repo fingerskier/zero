@@ -124,23 +124,20 @@ fn encode_envelope(ty: u8, request_id: u64, payload: &Json) -> Vec<u8> {
 #[test]
 fn relay_transcript_vectors() {
     let vectors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../conformance/vectors");
+    // Blocking lane only. Demonstrated-red xfail is the TS `--lane xfail` job
+    // (exit 0); a red fixture here would fail `cargo test`.
+    let dir = vectors.join("required").join("relay");
     let mut ran = 0;
-    for lane in ["required", "xfail"] {
-        let dir = vectors.join(lane).join("relay");
-        let Ok(entries) = fs::read_dir(&dir) else {
+    for entry in fs::read_dir(&dir).expect("required/relay") {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
-        };
-        for entry in entries {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let vector: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-            check_vector(&vector, &path);
-            ran += 1;
         }
+        let vector: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        check_vector(&vector, &path);
+        ran += 1;
     }
-    assert!(ran > 0, "no relay-transcript vectors under {vectors:?}");
+    assert!(ran > 0, "no relay-transcript vectors under {dir:?}");
 }
 
 fn check_vector(v: &Json, path: &Path) {

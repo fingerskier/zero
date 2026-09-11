@@ -2,9 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "zerodb-relay-messages",
   "title": "RELAY 0.2.2-draft message payloads (generated from registry.relay_wire)",
-  "messages": {
+  "$defs": {
     "HELLO": {
-      "type": 1,
+      "type": "object",
+      "title": "HELLO",
       "description": "RELAY HELLO (0x1)",
       "required": [
         "peer_id",
@@ -13,46 +14,64 @@
         "capabilities"
       ],
       "properties": {
-        "peer_id": true,
-        "public_key": true,
-        "protocol_version": true,
-        "capabilities": true
+        "peer_id": {
+          "description": "HELLO.peer_id"
+        },
+        "public_key": {
+          "description": "HELLO.public_key"
+        },
+        "protocol_version": {
+          "description": "HELLO.protocol_version"
+        },
+        "capabilities": {
+          "description": "HELLO.capabilities"
+        }
       },
-      "dir": "P→R",
-      "responses": [
+      "x-wire-type": 1,
+      "x-dir": "P→R",
+      "x-responses": [
         "CHALLENGE",
         "ERROR"
       ]
     },
     "CHALLENGE": {
-      "type": 2,
+      "type": "object",
+      "title": "CHALLENGE",
       "description": "RELAY CHALLENGE (0x2)",
       "required": [
         "nonce"
       ],
       "properties": {
-        "nonce": true
+        "nonce": {
+          "description": "CHALLENGE.nonce"
+        }
       },
-      "dir": "R→P",
-      "responses": []
+      "x-wire-type": 2,
+      "x-dir": "R→P",
+      "x-responses": []
     },
     "AUTH": {
-      "type": 3,
+      "type": "object",
+      "title": "AUTH",
       "description": "RELAY AUTH (0x3)",
       "required": [
         "signature"
       ],
       "properties": {
-        "signature": true
+        "signature": {
+          "description": "AUTH.signature"
+        }
       },
-      "dir": "P→R",
-      "responses": [
+      "x-wire-type": 3,
+      "x-dir": "P→R",
+      "x-responses": [
         "WELCOME",
         "ERROR"
       ]
     },
     "WELCOME": {
-      "type": 4,
+      "type": "object",
+      "title": "WELCOME",
       "description": "RELAY WELCOME (0x4)",
       "required": [
         "protocol_version",
@@ -61,82 +80,137 @@
         "limits"
       ],
       "properties": {
-        "protocol_version": true,
-        "relay_level": true,
-        "capabilities": true,
-        "limits": true
+        "protocol_version": {
+          "description": "WELCOME.protocol_version"
+        },
+        "relay_level": {
+          "description": "WELCOME.relay_level"
+        },
+        "capabilities": {
+          "description": "WELCOME.capabilities"
+        },
+        "limits": {
+          "description": "WELCOME.limits"
+        }
       },
-      "dir": "R→P",
-      "responses": []
+      "x-wire-type": 4,
+      "x-dir": "R→P",
+      "x-responses": []
     },
     "SUBSCRIBE": {
-      "type": 16,
+      "type": "object",
+      "title": "SUBSCRIBE",
       "description": "RELAY SUBSCRIBE (0x10)",
       "required": [
-        "datastore"
+        "datastores",
+        "connectable"
       ],
       "properties": {
-        "datastore": true
+        "datastores": {
+          "description": "SUBSCRIBE.datastores"
+        },
+        "connectable": {
+          "description": "SUBSCRIBE.connectable"
+        }
       },
-      "dir": null,
-      "responses": []
+      "x-wire-type": 16,
+      "x-dir": "P→R",
+      "x-responses": [
+        "SUBSCRIBED",
+        "ERROR"
+      ]
     },
     "SUBSCRIBED": {
-      "type": 17,
+      "type": "object",
+      "title": "SUBSCRIBED",
       "description": "RELAY SUBSCRIBED (0x11)",
       "required": [
-        "datastore"
+        "datastores"
       ],
       "properties": {
-        "datastore": true
+        "datastores": {
+          "description": "SUBSCRIBED.datastores"
+        }
       },
-      "dir": null,
-      "responses": []
+      "x-wire-type": 17,
+      "x-dir": "R→P",
+      "x-responses": []
+    },
+    "UNSUBSCRIBE": {
+      "type": "object",
+      "title": "UNSUBSCRIBE",
+      "description": "RELAY UNSUBSCRIBE (0x12)",
+      "required": [
+        "datastores"
+      ],
+      "properties": {
+        "datastores": {
+          "description": "UNSUBSCRIBE.datastores"
+        }
+      },
+      "x-wire-type": 18,
+      "x-dir": "P→R",
+      "x-responses": []
     },
     "SYNC_REQUEST": {
-      "type": 32,
+      "type": "object",
+      "title": "SYNC_REQUEST",
       "description": "RELAY SYNC_REQUEST (0x20)",
       "required": [
         "datastore"
       ],
       "properties": {
-        "datastore": true
+        "datastore": {
+          "description": "SYNC_REQUEST.datastore"
+        }
       },
-      "dir": null,
-      "responses": [
+      "x-wire-type": 32,
+      "x-dir": null,
+      "x-responses": [
         "SYNC_RESPONSE"
       ]
     },
     "SYNC_RESPONSE": {
-      "type": 33,
+      "type": "object",
+      "title": "SYNC_RESPONSE",
       "description": "RELAY SYNC_RESPONSE (0x21)",
       "required": [
         "datastore"
       ],
       "properties": {
-        "datastore": true
+        "datastore": {
+          "description": "SYNC_RESPONSE.datastore"
+        }
       },
-      "dir": null,
-      "responses": []
+      "x-wire-type": 33,
+      "x-dir": null,
+      "x-responses": []
     },
     "DELTA_REQUEST": {
-      "type": 34,
+      "type": "object",
+      "title": "DELTA_REQUEST",
       "description": "RELAY DELTA_REQUEST (0x22)",
       "required": [
         "datastore",
         "op_ids"
       ],
       "properties": {
-        "datastore": true,
-        "op_ids": true
+        "datastore": {
+          "description": "DELTA_REQUEST.datastore"
+        },
+        "op_ids": {
+          "description": "DELTA_REQUEST.op_ids"
+        }
       },
-      "dir": null,
-      "responses": [
+      "x-wire-type": 34,
+      "x-dir": null,
+      "x-responses": [
         "DELTA_BATCH"
       ]
     },
     "DELTA_BATCH": {
-      "type": 35,
+      "type": "object",
+      "title": "DELTA_BATCH",
       "description": "RELAY DELTA_BATCH (0x23)",
       "required": [
         "datastore",
@@ -144,27 +218,39 @@
         "remaining"
       ],
       "properties": {
-        "datastore": true,
-        "operations": true,
-        "remaining": true
+        "datastore": {
+          "description": "DELTA_BATCH.datastore"
+        },
+        "operations": {
+          "description": "DELTA_BATCH.operations"
+        },
+        "remaining": {
+          "description": "DELTA_BATCH.remaining"
+        }
       },
-      "dir": null,
-      "responses": []
+      "x-wire-type": 35,
+      "x-dir": null,
+      "x-responses": []
     },
     "SYNC_ACK": {
-      "type": 36,
+      "type": "object",
+      "title": "SYNC_ACK",
       "description": "RELAY SYNC_ACK (0x24)",
       "required": [
         "datastore"
       ],
       "properties": {
-        "datastore": true
+        "datastore": {
+          "description": "SYNC_ACK.datastore"
+        }
       },
-      "dir": null,
-      "responses": []
+      "x-wire-type": 36,
+      "x-dir": null,
+      "x-responses": []
     },
     "MERKLE_NODE_REQUEST": {
-      "type": 37,
+      "type": "object",
+      "title": "MERKLE_NODE_REQUEST",
       "description": "RELAY MERKLE_NODE_REQUEST (0x25)",
       "required": [
         "datastore",
@@ -172,17 +258,25 @@
         "index"
       ],
       "properties": {
-        "datastore": true,
-        "level": true,
-        "index": true
+        "datastore": {
+          "description": "MERKLE_NODE_REQUEST.datastore"
+        },
+        "level": {
+          "description": "MERKLE_NODE_REQUEST.level"
+        },
+        "index": {
+          "description": "MERKLE_NODE_REQUEST.index"
+        }
       },
-      "dir": null,
-      "responses": [
+      "x-wire-type": 37,
+      "x-dir": null,
+      "x-responses": [
         "MERKLE_NODE_RESPONSE"
       ]
     },
     "MERKLE_NODE_RESPONSE": {
-      "type": 38,
+      "type": "object",
+      "title": "MERKLE_NODE_RESPONSE",
       "description": "RELAY MERKLE_NODE_RESPONSE (0x26)",
       "required": [
         "datastore",
@@ -193,34 +287,54 @@
         "right"
       ],
       "properties": {
-        "datastore": true,
-        "level": true,
-        "index": true,
-        "hash": true,
-        "left": true,
-        "right": true
+        "datastore": {
+          "description": "MERKLE_NODE_RESPONSE.datastore"
+        },
+        "level": {
+          "description": "MERKLE_NODE_RESPONSE.level"
+        },
+        "index": {
+          "description": "MERKLE_NODE_RESPONSE.index"
+        },
+        "hash": {
+          "description": "MERKLE_NODE_RESPONSE.hash"
+        },
+        "left": {
+          "description": "MERKLE_NODE_RESPONSE.left"
+        },
+        "right": {
+          "description": "MERKLE_NODE_RESPONSE.right"
+        }
       },
-      "dir": null,
-      "responses": []
+      "x-wire-type": 38,
+      "x-dir": null,
+      "x-responses": []
     },
     "MERKLE_LEAF_REQUEST": {
-      "type": 39,
+      "type": "object",
+      "title": "MERKLE_LEAF_REQUEST",
       "description": "RELAY MERKLE_LEAF_REQUEST (0x27)",
       "required": [
         "datastore",
         "leaf_index"
       ],
       "properties": {
-        "datastore": true,
-        "leaf_index": true
+        "datastore": {
+          "description": "MERKLE_LEAF_REQUEST.datastore"
+        },
+        "leaf_index": {
+          "description": "MERKLE_LEAF_REQUEST.leaf_index"
+        }
       },
-      "dir": null,
-      "responses": [
+      "x-wire-type": 39,
+      "x-dir": null,
+      "x-responses": [
         "MERKLE_LEAF_RESPONSE"
       ]
     },
     "MERKLE_LEAF_RESPONSE": {
-      "type": 40,
+      "type": "object",
+      "title": "MERKLE_LEAF_RESPONSE",
       "description": "RELAY MERKLE_LEAF_RESPONSE (0x28)",
       "required": [
         "datastore",
@@ -229,44 +343,189 @@
         "op_ids"
       ],
       "properties": {
-        "datastore": true,
-        "leaf_index": true,
-        "bucket_index": true,
-        "op_ids": true
+        "datastore": {
+          "description": "MERKLE_LEAF_RESPONSE.datastore"
+        },
+        "leaf_index": {
+          "description": "MERKLE_LEAF_RESPONSE.leaf_index"
+        },
+        "bucket_index": {
+          "description": "MERKLE_LEAF_RESPONSE.bucket_index"
+        },
+        "op_ids": {
+          "description": "MERKLE_LEAF_RESPONSE.op_ids"
+        }
       },
-      "dir": null,
-      "responses": []
+      "x-wire-type": 40,
+      "x-dir": null,
+      "x-responses": []
     },
     "OPS": {
-      "type": 48,
+      "type": "object",
+      "title": "OPS",
       "description": "RELAY OPS (0x30)",
       "required": [
         "datastore",
         "operations"
       ],
       "properties": {
-        "datastore": true,
-        "operations": true
+        "datastore": {
+          "description": "OPS.datastore"
+        },
+        "operations": {
+          "description": "OPS.operations"
+        }
       },
-      "dir": null,
-      "responses": [
-        "OP_ACK"
+      "x-wire-type": 48,
+      "x-dir": null,
+      "x-responses": [
+        "OP_ACK",
+        "ERROR"
       ]
     },
     "OP_ACK": {
-      "type": 49,
+      "type": "object",
+      "title": "OP_ACK",
       "description": "RELAY OP_ACK (0x31)",
       "required": [
         "outcomes"
       ],
       "properties": {
-        "outcomes": true
+        "outcomes": {
+          "description": "OP_ACK.outcomes"
+        }
       },
-      "dir": "R→P",
-      "responses": []
+      "x-wire-type": 49,
+      "x-dir": "R→P",
+      "x-responses": []
+    },
+    "PEER_LIST_REQUEST": {
+      "type": "object",
+      "title": "PEER_LIST_REQUEST",
+      "description": "RELAY PEER_LIST_REQUEST (0x40)",
+      "required": [
+        "datastore"
+      ],
+      "properties": {
+        "datastore": {
+          "description": "PEER_LIST_REQUEST.datastore"
+        }
+      },
+      "x-wire-type": 64,
+      "x-dir": "P→R",
+      "x-responses": [
+        "PEER_LIST_RESPONSE"
+      ]
+    },
+    "PEER_LIST_RESPONSE": {
+      "type": "object",
+      "title": "PEER_LIST_RESPONSE",
+      "description": "RELAY PEER_LIST_RESPONSE (0x41)",
+      "required": [
+        "datastore",
+        "peers"
+      ],
+      "properties": {
+        "datastore": {
+          "description": "PEER_LIST_RESPONSE.datastore"
+        },
+        "peers": {
+          "description": "PEER_LIST_RESPONSE.peers"
+        }
+      },
+      "x-wire-type": 65,
+      "x-dir": "R→P",
+      "x-responses": []
+    },
+    "SIGNAL": {
+      "type": "object",
+      "title": "SIGNAL",
+      "description": "RELAY SIGNAL (0x42)",
+      "required": [
+        "payload"
+      ],
+      "properties": {
+        "payload": {
+          "description": "SIGNAL.payload"
+        }
+      },
+      "x-wire-type": 66,
+      "x-dir": null,
+      "x-responses": []
+    },
+    "PING": {
+      "type": "object",
+      "title": "PING",
+      "description": "RELAY PING (0x50)",
+      "required": [
+        "timestamp"
+      ],
+      "properties": {
+        "timestamp": {
+          "description": "PING.timestamp"
+        }
+      },
+      "x-wire-type": 80,
+      "x-dir": null,
+      "x-responses": [
+        "PONG"
+      ]
+    },
+    "PONG": {
+      "type": "object",
+      "title": "PONG",
+      "description": "RELAY PONG (0x51)",
+      "required": [
+        "timestamp"
+      ],
+      "properties": {
+        "timestamp": {
+          "description": "PONG.timestamp"
+        }
+      },
+      "x-wire-type": 81,
+      "x-dir": null,
+      "x-responses": []
+    },
+    "THROTTLE": {
+      "type": "object",
+      "title": "THROTTLE",
+      "description": "RELAY THROTTLE (0x52)",
+      "required": [
+        "scope",
+        "retry_after_ms"
+      ],
+      "properties": {
+        "scope": {
+          "description": "THROTTLE.scope"
+        },
+        "retry_after_ms": {
+          "description": "THROTTLE.retry_after_ms"
+        }
+      },
+      "x-wire-type": 82,
+      "x-dir": "R→P",
+      "x-responses": []
+    },
+    "GOODBYE": {
+      "type": "object",
+      "title": "GOODBYE",
+      "description": "RELAY GOODBYE (0xfe)",
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "description": "GOODBYE.reason"
+        }
+      },
+      "x-wire-type": 254,
+      "x-dir": null,
+      "x-responses": []
     },
     "ERROR": {
-      "type": 255,
+      "type": "object",
+      "title": "ERROR",
       "description": "RELAY ERROR (0xff)",
       "required": [
         "code",
@@ -274,15 +533,102 @@
         "fatal"
       ],
       "properties": {
-        "code": true,
-        "message": true,
-        "fatal": true
+        "code": {
+          "description": "ERROR.code"
+        },
+        "message": {
+          "description": "ERROR.message"
+        },
+        "fatal": {
+          "description": "ERROR.fatal"
+        }
       },
-      "dir": null,
-      "responses": []
+      "x-wire-type": 255,
+      "x-dir": null,
+      "x-responses": []
     }
   },
-  "byte_fields": [
+  "oneOf": [
+    {
+      "$ref": "#/$defs/HELLO"
+    },
+    {
+      "$ref": "#/$defs/CHALLENGE"
+    },
+    {
+      "$ref": "#/$defs/AUTH"
+    },
+    {
+      "$ref": "#/$defs/WELCOME"
+    },
+    {
+      "$ref": "#/$defs/SUBSCRIBE"
+    },
+    {
+      "$ref": "#/$defs/SUBSCRIBED"
+    },
+    {
+      "$ref": "#/$defs/UNSUBSCRIBE"
+    },
+    {
+      "$ref": "#/$defs/SYNC_REQUEST"
+    },
+    {
+      "$ref": "#/$defs/SYNC_RESPONSE"
+    },
+    {
+      "$ref": "#/$defs/DELTA_REQUEST"
+    },
+    {
+      "$ref": "#/$defs/DELTA_BATCH"
+    },
+    {
+      "$ref": "#/$defs/SYNC_ACK"
+    },
+    {
+      "$ref": "#/$defs/MERKLE_NODE_REQUEST"
+    },
+    {
+      "$ref": "#/$defs/MERKLE_NODE_RESPONSE"
+    },
+    {
+      "$ref": "#/$defs/MERKLE_LEAF_REQUEST"
+    },
+    {
+      "$ref": "#/$defs/MERKLE_LEAF_RESPONSE"
+    },
+    {
+      "$ref": "#/$defs/OPS"
+    },
+    {
+      "$ref": "#/$defs/OP_ACK"
+    },
+    {
+      "$ref": "#/$defs/PEER_LIST_REQUEST"
+    },
+    {
+      "$ref": "#/$defs/PEER_LIST_RESPONSE"
+    },
+    {
+      "$ref": "#/$defs/SIGNAL"
+    },
+    {
+      "$ref": "#/$defs/PING"
+    },
+    {
+      "$ref": "#/$defs/PONG"
+    },
+    {
+      "$ref": "#/$defs/THROTTLE"
+    },
+    {
+      "$ref": "#/$defs/GOODBYE"
+    },
+    {
+      "$ref": "#/$defs/ERROR"
+    }
+  ],
+  "x-byte-fields": [
     "peer_id",
     "public_key",
     "nonce",
@@ -293,6 +639,8 @@
     "author",
     "hash",
     "left",
-    "right"
+    "right",
+    "target",
+    "sender"
   ]
 }

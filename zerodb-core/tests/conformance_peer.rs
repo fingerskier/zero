@@ -224,6 +224,25 @@ impl PeerModel {
     }
 }
 
+/// Same genesis / SchemaEpoch / data ranking as TS `epochFirst` (`store.mjs`).
+fn batch_apply_rank(kind: u64) -> u8 {
+    match kind {
+        0 => 0,
+        5 => 1,
+        _ => 2,
+    }
+}
+
+fn epoch_first(ops: &[Json]) -> Vec<Json> {
+    let mut indexed: Vec<(usize, Json)> = ops.iter().cloned().enumerate().collect();
+    indexed.sort_by(|a, b| {
+        let ra = batch_apply_rank(a.1["kind"].as_u64().unwrap_or(u64::MAX));
+        let rb = batch_apply_rank(b.1["kind"].as_u64().unwrap_or(u64::MAX));
+        ra.cmp(&rb).then(a.0.cmp(&b.0))
+    });
+    indexed.into_iter().map(|(_, op)| op).collect()
+}
+
 fn run_vector(v: &Json, path: &Path) {
     assert_eq!(v["type"], "peer-ingest", "{}", path.display());
     let wall = v["clock"].as_u64().unwrap_or(1_700_000_000_000);
@@ -240,7 +259,7 @@ fn run_vector(v: &Json, path: &Path) {
         lww: BTreeMap::new(),
     };
     if let Some(setup) = v["setup"].as_array() {
-        for w in setup {
+        for w in epoch_first(setup) {
             let r = peer.ingest(w, &expected);
             assert!(
                 r == "applied" || r == "duplicate",
@@ -305,23 +324,35 @@ fn run_vector(v: &Json, path: &Path) {
 }
 
 #[test]
+fn epoch_first_ranks_genesis_then_schema_then_data() {
+    let ops = vec![
+        serde_json::json!({"id": "d", "kind": 3}),
+        serde_json::json!({"id": "s", "kind": 5}),
+        serde_json::json!({"id": "g", "kind": 0}),
+        serde_json::json!({"id": "d2", "kind": 3}),
+    ];
+    let ordered: Vec<&str> = epoch_first(&ops)
+        .iter()
+        .map(|o| o["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ordered, vec!["g", "s", "d", "d2"]);
+}
+
+#[test]
 fn peer_ingest_vectors() {
+    // Blocking lane only. Demonstrated-red xfail is the TS `--lane xfail` job
+    // (exit 0); a red fixture here would fail `cargo test`.
     let vectors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../conformance/vectors");
+    let dir = vectors.join("required").join("peer");
     let mut ran = 0;
-    for lane in ["required", "xfail"] {
-        let dir = vectors.join(lane).join("peer");
-        let Ok(entries) = fs::read_dir(&dir) else {
+    for entry in fs::read_dir(&dir).expect("required/peer") {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
-        };
-        for entry in entries {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let vector: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-            run_vector(&vector, &path);
-            ran += 1;
         }
+        let vector: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        run_vector(&vector, &path);
+        ran += 1;
     }
-    assert!(ran > 0, "no peer-ingest vectors under {vectors:?}");
+    assert!(ran > 0, "no peer-ingest vectors under {dir:?}");
 }

@@ -92,7 +92,9 @@
       "author",
       "hash",
       "left",
-      "right"
+      "right",
+      "target",
+      "sender"
     ],
     "welcome_limits": {
       "comment": "Advertised experimental WELCOME defaults (RELAY-SPEC §8.1). Distinct from format `limits` (KERNEL/O6).",
@@ -109,8 +111,9 @@
       "CHALLENGE": { "type": 2, "dir": "R→P", "required": ["nonce"] },
       "AUTH": { "type": 3, "dir": "P→R", "required": ["signature"], "responses": ["WELCOME", "ERROR"] },
       "WELCOME": { "type": 4, "dir": "R→P", "required": ["protocol_version", "relay_level", "capabilities", "limits"] },
-      "SUBSCRIBE": { "type": 16, "dir": null, "required": ["datastore"] },
-      "SUBSCRIBED": { "type": 17, "dir": null, "required": ["datastore"] },
+      "SUBSCRIBE": { "type": 16, "dir": "P→R", "required": ["datastores", "connectable"], "responses": ["SUBSCRIBED", "ERROR"] },
+      "SUBSCRIBED": { "type": 17, "dir": "R→P", "required": ["datastores"] },
+      "UNSUBSCRIBE": { "type": 18, "dir": "P→R", "required": ["datastores"] },
       "SYNC_REQUEST": { "type": 32, "dir": null, "required": ["datastore"], "responses": ["SYNC_RESPONSE"] },
       "SYNC_RESPONSE": { "type": 33, "dir": null, "required": ["datastore"] },
       "DELTA_REQUEST": { "type": 34, "dir": null, "required": ["datastore", "op_ids"], "responses": ["DELTA_BATCH"] },
@@ -120,8 +123,15 @@
       "MERKLE_NODE_RESPONSE": { "type": 38, "dir": null, "required": ["datastore", "level", "index", "hash", "left", "right"] },
       "MERKLE_LEAF_REQUEST": { "type": 39, "dir": null, "required": ["datastore", "leaf_index"], "responses": ["MERKLE_LEAF_RESPONSE"] },
       "MERKLE_LEAF_RESPONSE": { "type": 40, "dir": null, "required": ["datastore", "leaf_index", "bucket_index", "op_ids"] },
-      "OPS": { "type": 48, "dir": null, "required": ["datastore", "operations"], "responses": ["OP_ACK"] },
+      "OPS": { "type": 48, "dir": null, "required": ["datastore", "operations"], "responses": ["OP_ACK", "ERROR"] },
       "OP_ACK": { "type": 49, "dir": "R→P", "required": ["outcomes"] },
+      "PEER_LIST_REQUEST": { "type": 64, "dir": "P→R", "required": ["datastore"], "responses": ["PEER_LIST_RESPONSE"] },
+      "PEER_LIST_RESPONSE": { "type": 65, "dir": "R→P", "required": ["datastore", "peers"] },
+      "SIGNAL": { "type": 66, "dir": null, "required": ["payload"] },
+      "PING": { "type": 80, "dir": null, "required": ["timestamp"], "responses": ["PONG"] },
+      "PONG": { "type": 81, "dir": null, "required": ["timestamp"] },
+      "THROTTLE": { "type": 82, "dir": "R→P", "required": ["scope", "retry_after_ms"] },
+      "GOODBYE": { "type": 254, "dir": null, "required": ["reason"] },
       "ERROR": { "type": 255, "dir": null, "required": ["code", "message", "fatal"] }
     },
     "errors": {
