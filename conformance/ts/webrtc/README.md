@@ -45,7 +45,13 @@ CI job: `WebRTC first-cut (H6)`.
 - Client `WELCOME.protocol_version` reject (`0x102`, PR #21) on the
   DataChannel path.
 - Signed KERNEL wire remains source of truth. Wrong `wire.ds` is
-  `AUTH_WRONG_DATASTORE` (fail closed, same as the WS peer).
+  `AUTH_WRONG_DATASTORE` (fail closed, same as the WS peer). A
+  populated answerer binds its existing datastore unless `expectedDs`
+  is set; only an empty store infers/adopts the incoming OPS datastore.
+- HELLO `protocol_version` other than `1` is fatal `0x102` before
+  CHALLENGE (same as the relay).
+- OPS is split with the existing `splitOpsBatches` helper against
+  advertised WELCOME limits; the answerer consumes every batch.
 - v1 nonce-only AUTH (`zerodb-relay-auth-v1`) is `AUTH_FAILED`.
 
 ## Honest limitations

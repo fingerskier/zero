@@ -12,6 +12,7 @@ import {
   MSG_AUTH,
   MSG_CHALLENGE,
   MSG_ERROR,
+  MSG_GOODBYE,
   MSG_HELLO,
   MSG_OP_ACK,
   MSG_OPS,
@@ -25,10 +26,11 @@ import {
   signAuth,
 } from '../models/relay.mjs'
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
-import { checkWelcomeProtocol } from '../peer/client.mjs'
+import { checkWelcomeProtocol, encodeRelayOp, splitOpsBatches, welcomeLimits } from '../peer/client.mjs'
 import { concatBytes, signBytes } from '../peer/crypto.mjs'
 import { ChannelTransport } from './channel.mjs'
 
+export const ERR_VERSION_MISMATCH = 0x102
 export { AUTH_WRONG_DATASTORE, ERR_AUTH_FAILED }
 
 const RELAY_PROTOCOL_VERSION = 1
@@ -111,6 +113,16 @@ export async function serveDirect(store, channel, opts = {}) {
   const pk = asBytes32(hello.payload.public_key)
   const helloVersion = hello.payload.protocol_version
   const helloCaps = hello.payload.capabilities || []
+  if (helloVersion !== RELAY_PROTOCOL_VERSION) {
+    t.send(
+      encodeEnvelope(MSG_ERROR, hello.request_id, {
+        code: ERR_VERSION_MISMATCH,
+        message: 'VERSION_MISMATCH',
+        fatal: true,
+      }),
+    )
+    return { phase: 'version-mismatch', code: ERR_VERSION_MISMATCH }
+  }
 
   t.send(
     encodeEnvelope(MSG_CHALLENGE, hello.request_id, {
@@ -157,36 +169,46 @@ export async function serveDirect(store, channel, opts = {}) {
     return { phase: 'welcomed', welcome }
   }
 
-  const opsFrame = decodeEnvelope(await t.recv())
-  if (opsFrame.type !== MSG_OPS) {
-    return { phase: 'welcomed', welcome, extra: opsFrame }
-  }
-  const ds = opsFrame.payload.datastore
-  const incoming = []
-  for (const op of opsFrame.payload.operations || []) {
-    const wire = catchupWire(op)
-    if (wire) incoming.push(wire)
-  }
-  const joinDs = expectedDs || ds
-  const adopting = store.ops.length === 0
+  const populated = store.ops.length > 0
+  const adopting = !populated
+  let joinDs = expectedDs || (populated ? store.dsHex : null)
   const outcomes = []
   let applied = 0
   let rejected = 0
-  for (const wire of incoming) {
-    const r = store.ingest(wire, { expectedDs: joinDs })
-    if (r === 'applied') {
-      applied += 1
-      outcomes.push({ op_id: wire.id, outcome: 'ACCEPT' })
-    } else if (r === 'duplicate') {
-      outcomes.push({ op_id: wire.id, outcome: 'DUPLICATE' })
-    } else {
-      rejected += 1
-      outcomes.push({ op_id: wire.id, outcome: 'REJECT', reason: r })
+  let batches = 0
+
+  for (;;) {
+    const opsFrame = decodeEnvelope(await t.recv())
+    if (opsFrame.type === MSG_GOODBYE) break
+    if (opsFrame.type !== MSG_OPS) {
+      return { phase: batches ? 'ops' : 'welcomed', welcome, extra: opsFrame, applied, rejected, outcomes, datastore: joinDs }
     }
+    batches += 1
+    const ds = opsFrame.payload.datastore
+    if (joinDs == null) joinDs = ds
+    const incoming = []
+    for (const op of opsFrame.payload.operations || []) {
+      const wire = catchupWire(op)
+      if (wire) incoming.push(wire)
+    }
+    const batchOutcomes = []
+    for (const wire of incoming) {
+      const r = store.ingest(wire, { expectedDs: joinDs })
+      if (r === 'applied') {
+        applied += 1
+        batchOutcomes.push({ op_id: wire.id, outcome: 'ACCEPT' })
+      } else if (r === 'duplicate') {
+        batchOutcomes.push({ op_id: wire.id, outcome: 'DUPLICATE' })
+      } else {
+        rejected += 1
+        batchOutcomes.push({ op_id: wire.id, outcome: 'REJECT', reason: r })
+      }
+    }
+    outcomes.push(...batchOutcomes)
+    t.send(encodeEnvelope(MSG_OP_ACK, opsFrame.request_id, { outcomes: batchOutcomes }))
   }
-  if (adopting && applied > 0) store.adoptDatastore(joinDs)
-  t.send(encodeEnvelope(MSG_OP_ACK, opsFrame.request_id, { outcomes }))
-  return { phase: 'ops', applied, rejected, outcomes, datastore: joinDs }
+  if (adopting && applied > 0 && joinDs) store.adoptDatastore(joinDs)
+  return { phase: 'ops', applied, rejected, outcomes, datastore: joinDs, batches }
 }
 
 function asBytes64(v) {
@@ -212,7 +234,7 @@ export async function connectDirect(store, channel, opts = {}) {
     encodeEnvelope(MSG_HELLO, 1, {
       peer_id: store.authorHex,
       public_key: store.pkHex,
-      protocol_version: 1,
+      protocol_version: opts.helloProtocolVersion == null ? 1 : opts.helloProtocolVersion,
       capabilities: helloCaps,
     }),
   )
@@ -233,11 +255,33 @@ export async function connectDirect(store, channel, opts = {}) {
   checkWelcomeProtocol(welcome.payload)
 
   const toSend = store.exportOps(joinDs)
-  t.send(encodeEnvelope(MSG_OPS, 3, opsPayload(joinDs, toSend)))
-  const ack = expectType(decodeEnvelope(await t.recv()), MSG_OP_ACK, 'OP_ACK')
+  const limits = welcomeLimits(welcome.payload)
+  const encoded = toSend.map(encodeRelayOp)
+  const batches = toSend.length
+    ? splitOpsBatches(
+        joinDs,
+        encoded,
+        limits.max_batch_ops,
+        limits.max_batch_bytes,
+        limits.max_payload_bytes,
+      )
+    : []
+  const outcomes = []
+  let requestId = 3
+  let offset = 0
+  for (const batch of batches) {
+    const wires = toSend.slice(offset, offset + batch.length)
+    offset += batch.length
+    t.send(encodeEnvelope(MSG_OPS, requestId, opsPayload(joinDs, wires)))
+    requestId += 1
+    const ack = expectType(decodeEnvelope(await t.recv()), MSG_OP_ACK, 'OP_ACK')
+    outcomes.push(...(ack.payload.outcomes || []))
+  }
+  t.send(encodeEnvelope(MSG_GOODBYE, 0, { reason: 'done' }))
   return {
     welcome: welcome.payload,
     sent: toSend.length,
-    outcomes: ack.payload.outcomes || [],
+    batches: batches.length,
+    outcomes,
   }
 }

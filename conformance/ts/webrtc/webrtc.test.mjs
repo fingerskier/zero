@@ -14,6 +14,7 @@ import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
 import {
   ERR_AUTH_FAILED,
   ERR_TARGET_NOT_CONNECTED,
+  ERR_VERSION_MISMATCH,
   FakeDataChannel,
   SignalRelay,
   connectDirect,
@@ -163,6 +164,75 @@ test('client WELCOME protocol_version reject still applies on DataChannel', asyn
   const err = await client
   await served
   assert.match(String(err && err.message), /0x102 VERSION_MISMATCH/)
+})
+
+test('HELLO protocol_version other than 1 is 0x102 before CHALLENGE', async () => {
+  const a = new PeerStore({ seed: seed(15) })
+  const b = new PeerStore({ seed: seed(16) })
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+
+  const served = serveDirect(b, right)
+  const client = connectDirect(a, left, { helloProtocolVersion: 2 }).catch((e) => e)
+  const [answer, err] = await Promise.all([served, client])
+  assert.equal(answer.phase, 'version-mismatch')
+  assert.equal(answer.code, ERR_VERSION_MISMATCH)
+  assert.equal(err && err.code, ERR_VERSION_MISMATCH)
+})
+
+test('populated answerer binds its own datastore when expectedDs is omitted', async () => {
+  const a = new PeerStore({ seed: seed(17) })
+  const b = new PeerStore({ seed: seed(18) })
+  a.applySchemaEpoch(schemaPin())
+  const created = a.createNode('Todo')
+  a.setLww(created.node, 'title', 'from-a')
+  b.applySchemaEpoch(schemaPin())
+  const other = b.createNode('Todo')
+  b.setLww(other.node, 'title', 'keep-b')
+  const bDs = b.dsHex
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+
+  const served = serveDirect(b, right)
+  const client = connectDirect(a, left, { joinDs: a.dsHex })
+  const [answer] = await Promise.all([served, client])
+
+  assert.equal(answer.phase, 'ops')
+  assert.equal(answer.applied, 0)
+  assert.ok(answer.outcomes.some((o) => o.reason === AUTH_WRONG_DATASTORE))
+  assert.equal(b.getLww(created.node, 'title'), null)
+  assert.equal(b.getLww(other.node, 'title'), 'keep-b')
+  assert.equal(b.dsHex, bDs)
+})
+
+test('OPS honors advertised WELCOME max_batch_ops', async () => {
+  const a = new PeerStore({ seed: seed(19) })
+  const b = new PeerStore({ seed: seed(20) })
+  a.applySchemaEpoch(schemaPin())
+  const titles = []
+  for (let i = 0; i < 65; i++) {
+    const { node } = a.createNode('Todo')
+    a.setLww(node, 'title', `n${i}`)
+    titles.push(node)
+  }
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+
+  const served = serveDirect(b, right, { expectedDs: a.dsHex })
+  const client = connectDirect(a, left, { joinDs: a.dsHex })
+  const [answer, init] = await Promise.all([served, client])
+
+  assert.equal(answer.phase, 'ops')
+  assert.ok(init.batches >= 2)
+  assert.equal(answer.batches, init.batches)
+  assert.equal(answer.rejected, 0)
+  assert.equal(b.getLww(titles[0], 'title'), 'n0')
+  assert.equal(b.getLww(titles[64], 'title'), 'n64')
 })
 
 test('wrong datastore OPS fail closed', async () => {
