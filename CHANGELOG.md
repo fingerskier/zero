@@ -17,9 +17,13 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
-### M4a-a — WASM + IndexedDB/OPFS persist/reopen (this PR)
+### M4a-hooks — optional `@zerodb/react` (this PR)
 
-Durable browser adapters behind `zerodb-wasm` (`js/storage.mjs`): IndexedDB + OPFS journal identity + signed KERNEL ops; `openDurable` restores after reload. Persist/reopen tests in `zerodb-wasm/test/persist-reopen.test.mjs`. WASM size (size-oriented build): 721.0 KiB raw / **262.6 KiB gzip -9**. O4 ~250 KB gz target not met; O4 stays open. **Not** M4a complete (no React hooks, no WebRTC/H6). Crates stay `0.1.0-alpha` unpublished.
+`ZeroDbProvider` + `useQuery` / `useNode` / `useMutation` / `useSyncStatus` wrapping live `zerodb-wasm` + `openDurable`. Persist-on-write via `journal.persist`. Tests: `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` is local ready/offline (no WebSocket / WebRTC). **Not** M4a complete. H6/WebRTC stay pinned. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
+
+### M4a-a — WASM + IndexedDB/OPFS persist/reopen (landed main #23 @ `56a3bad`)
+
+Durable browser adapters behind `zerodb-wasm` (`js/storage.mjs`): IndexedDB + OPFS journal identity + signed KERNEL ops; `openDurable` restores after reload. Persist/reopen tests in `zerodb-wasm/test/persist-reopen.test.mjs`. WASM size (size-oriented build): 721.0 KiB raw / **262.6 KiB gzip -9**. O4 ~250 KB gz target not met; O4 stays open. **Not** M4a complete (React hooks are the following slice; no WebRTC/H6). Crates stay `0.1.0-alpha` unpublished.
 
 Review fixes (Codex P1/P2 on #23): `auto` keeps an occupied IndexedDB name instead of minting empty OPFS; IDB opens at the existing version (no v2→v1 `VersionError`); persist/replace are serialized per journal; malformed OPFS identity fails closed.
 

@@ -4,9 +4,11 @@ wasm-bindgen wrapper over `LocalStore<MemoryBackend>`, plus durable
 **IndexedDB** and **OPFS** adapters that persist signed KERNEL ops so a
 browser peer can reopen after reload.
 
-This is the M4a-a slice (WASM + IDB/OPFS). **Not** M4a complete: React
-hooks and WebRTC/H6 are follow-on / pinned. Formats stay draft-1 /
-unfrozen. Crate version stays `0.1.0-alpha` unpublished.
+This is the M4a-a slice (WASM + IDB/OPFS). **Not** M4a complete: optional
+React hooks live in [`@zerodb/react`](../zerodb-react/); WebRTC/H6 stay
+pinned. Formats stay draft-1 / unfrozen. Crate version stays
+`0.1.0-alpha` unpublished. Hooks are JS beside this crate and must not
+bloat the wasm gzip artifact (O4 still open).
 
 ## Why JS adapters, not a Rust `StoreBackend`
 
@@ -57,3 +59,6 @@ pre-optimization artifact).
 
 Identity seed is stored client-side — any script on the origin can sign
 as this peer. Acceptable for this experimental slice.
+
+Optional React hooks: [`@zerodb/react`](../zerodb-react/). That package
+does not change this crate's wasm size.

@@ -24,6 +24,7 @@ The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M
 | TS wire peer smoke (`conformance/ts/peer/*.test.mjs`) | `ubuntu-latest`, Node 22 + built `zerodb-relay` | NAPI-free. |
 | `tools/ts-to-ir` | `ubuntu-latest`, Node 20 | Authoring JSON → IR helper. |
 | Browser / WASM (`zerodb-wasm`, Pages) | `wasm` job + `pages` workflow | M4a-a IDB/OPFS adapters + persist/reopen; **not** M4a complete; **not** this support profile's product platforms. |
+| `@zerodb/react` optional hooks | `react-hooks` job | M4a slice over wasm + `openDurable`; **not** M4a complete; **not** a product platform. |
 
 **Not in CI / not supported as product platforms:** macOS, iOS/Android, musl-only hosts, a hosted public relay, production TLS termination in-process.
 
@@ -40,6 +41,7 @@ Node engines stated by `@zerodb/node`: `>=18`. Conformance and the TS peer are e
 | `zerodb-napi` / `@zerodb/node` | Experimental M2 Node binding | crate unpublished; npm `"private": true` |
 | `zerodb-wasm` | Browser wasm peer; durable IDB/OPFS adapters (JS) | `publish = false` |
 | `@zerodb/ts-to-ir` | Minimal authoring → IR JSON | `"private": true` |
+| `@zerodb/react` | Optional React hooks over wasm + IDB/OPFS | `"private": true` |
 | `conformance/ts/runner.mjs` | Independent two-language harness (H9) | not a package |
 | `conformance/ts/peer/` | Independent RELAY 0.2 wire peer (M3c-b) | not a package; **not** the SDK |
 
@@ -133,7 +135,7 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 ## 8. Publish readiness (no publish)
 
 - Crates: workspace `publish = false`. Never `cargo publish`.
-- npm: `@zerodb/node` and `@zerodb/ts-to-ir` are `"private": true`. Never `npm publish`. NAPI consumers build the addon from this repo.
+- npm: `@zerodb/node`, `@zerodb/ts-to-ir`, and `@zerodb/react` are `"private": true`. Never `npm publish`. NAPI consumers build the addon from this repo.
 - Git tag `v0.1.0` follows this Decision Log act; it does not publish registries or freeze formats.
 
 ---
