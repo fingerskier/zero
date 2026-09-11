@@ -21,5 +21,4 @@ node conformance/ts/peer/cli.mjs --url ws://127.0.0.1:PORT --join <datastore-hex
 
 Tests: `node --test conformance/ts/peer/*.test.mjs`
 
-This slice is **not** M3c complete (no H9 two-language harness, no packaging,
-no `v0.1.0`).
+M3c-c H9 two-language harness lives beside this peer (`conformance/vectors/required/relay` + `peer`, runners in `ts/runner.mjs` and `zerodb-core` tests). This slice is **not** M3c complete (no packaging, no `v0.1.0`).

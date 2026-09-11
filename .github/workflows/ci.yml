@@ -65,6 +65,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - run: node conformance/generate-protocol.mjs --check
       - run: node conformance/ts/runner.mjs --lane required
 
   conformance-xfail:

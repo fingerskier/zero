@@ -6,13 +6,14 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
 use zerodb_core::cbor::{Cbor, encode};
-use zerodb_core::merkle::MerkleOp;
+use zerodb_core::merkle::{MerkleOp, MerkleTree};
 use zerodb_core::relay::{
-    AuthTranscript, DIR_PEER_TO_RELAY, DIR_RELAY_TO_PEER, ERR_AUTH_FAILED, FrontierTip, HeldOp,
-    MSG_AUTH, MSG_CHALLENGE, MSG_ERROR, MSG_HELLO, MSG_OP_ACK, MSG_OPS, MSG_SYNC_REQUEST,
-    MSG_SYNC_RESPONSE, MSG_WELCOME, authenticate, expected_response_types, fixed_direction,
-    is_request, is_response, known_message_type, negotiate_capabilities, peer_id_from_pk,
-    required_payload_keys, required_sync_root, retransmit, root_hex, sign_auth,
+    AuthTranscript, BYTE_FIELDS, DIR_PEER_TO_RELAY, DIR_RELAY_TO_PEER, ERR_AUTH_FAILED,
+    ERR_PAYLOAD_TOO_LARGE, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_REQUEST,
+    MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_NODE_REQUEST, MSG_OP_ACK, MSG_OPS,
+    MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, authenticate, expected_response_types,
+    fixed_direction, is_request, is_response, known_message_type, negotiate_capabilities,
+    peer_id_from_pk, required_payload_keys, required_sync_root, retransmit, root_hex, sign_auth,
 };
 
 fn hex_to_bytes(s: &str) -> Vec<u8> {
@@ -74,17 +75,6 @@ fn strs(v: &Json) -> Vec<&str> {
         .collect()
 }
 
-const BYTE_FIELDS: &[&str] = &[
-    "peer_id",
-    "public_key",
-    "nonce",
-    "signature",
-    "validated_root",
-    "accepted_root",
-    "op_id",
-    "author",
-];
-
 fn is_byte_field(k: &str) -> bool {
     BYTE_FIELDS.contains(&k)
 }
@@ -106,7 +96,11 @@ fn json_to_cbor(v: &Json, field: Option<&str>) -> Cbor {
         return Cbor::Text(s.to_owned());
     }
     if let Some(arr) = v.as_array() {
-        return Cbor::Array(arr.iter().map(|x| json_to_cbor(x, None)).collect());
+        let item_field = match field {
+            Some("op_ids") => Some("op_id"),
+            _ => None,
+        };
+        return Cbor::Array(arr.iter().map(|x| json_to_cbor(x, item_field)).collect());
     }
     if let Some(obj) = v.as_object() {
         return Cbor::Map(
@@ -130,23 +124,20 @@ fn encode_envelope(ty: u8, request_id: u64, payload: &Json) -> Vec<u8> {
 #[test]
 fn relay_transcript_vectors() {
     let vectors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../conformance/vectors");
+    // Blocking lane only. Demonstrated-red xfail is the TS `--lane xfail` job
+    // (exit 0); a red fixture here would fail `cargo test`.
+    let dir = vectors.join("required").join("relay");
     let mut ran = 0;
-    for lane in ["required", "xfail"] {
-        let dir = vectors.join(lane).join("relay");
-        let Ok(entries) = fs::read_dir(&dir) else {
+    for entry in fs::read_dir(&dir).expect("required/relay") {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
-        };
-        for entry in entries {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let vector: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-            check_vector(&vector, &path);
-            ran += 1;
         }
+        let vector: Json = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        check_vector(&vector, &path);
+        ran += 1;
     }
-    assert!(ran > 0, "no relay-transcript vectors under {vectors:?}");
+    assert!(ran > 0, "no relay-transcript vectors under {dir:?}");
 }
 
 fn check_vector(v: &Json, path: &Path) {
@@ -156,6 +147,7 @@ fn check_vector(v: &Json, path: &Path) {
         "dual-root" => check_dual_root(v, path),
         "resume" => check_resume(v, path),
         "reject-ack" => check_reject(v, path),
+        "ops-push" | "merkle-walk" | "limits" => {}
         other => panic!("{}: unknown kind {other}", path.display()),
     }
     check_frames(v, path);
@@ -421,8 +413,304 @@ fn check_frames(v: &Json, path: &Path) {
         "dual-root" => check_dual_root_frames(frames, path),
         "resume" => check_resume_frames(v, frames, path),
         "reject-ack" => check_reject_frames(v, frames, path),
+        "ops-push" => check_ops_push_frames(v, frames, path),
+        "merkle-walk" => check_merkle_walk_frames(v, frames, path),
+        "limits" => check_limits_frames(v, frames, path),
         _ => {}
     }
+}
+
+fn check_ops_push_frames(v: &Json, frames: &[Json], path: &Path) {
+    let mut saw_ops = false;
+    let mut outcomes: Vec<Json> = Vec::new();
+    for f in frames {
+        if f["type"].as_u64() == Some(MSG_OPS as u64) && f["dir"] == DIR_PEER_TO_RELAY {
+            saw_ops = true;
+        }
+        if f["type"].as_u64() == Some(MSG_OP_ACK as u64) {
+            for o in f["payload"]["outcomes"].as_array().unwrap() {
+                outcomes.push(o.clone());
+            }
+        }
+    }
+    assert!(
+        saw_ops,
+        "{}: ops-push frames must include peer OPS",
+        path.display()
+    );
+    assert!(
+        !outcomes.is_empty(),
+        "{}: ops-push frames must include OP_ACK outcomes",
+        path.display()
+    );
+    if let Some(want) = v["expect"]["outcomes"].as_array() {
+        assert_eq!(outcomes, *want, "{}: OP_ACK outcomes", path.display());
+    } else {
+        assert!(
+            outcomes.iter().all(|o| o["outcome"] == "ACCEPT"),
+            "{}: ops-push golden expects ACCEPT",
+            path.display()
+        );
+    }
+}
+
+fn merkle_walk_missing(
+    local: &[MerkleOp],
+    remote: &[MerkleOp],
+    buckets: &[u64],
+) -> (Vec<String>, Vec<(u8, usize, usize)>) {
+    let local_tree = MerkleTree::build_aligned(local, buckets);
+    let remote_tree = MerkleTree::build_aligned(remote, buckets);
+    let mut missing: Vec<String> = Vec::new();
+    let mut steps: Vec<(u8, usize, usize)> = Vec::new();
+    fn hex(b: &[u8; 32]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+    fn walk(
+        local: &MerkleTree,
+        remote: &MerkleTree,
+        level: usize,
+        index: usize,
+        missing: &mut Vec<String>,
+        steps: &mut Vec<(u8, usize, usize)>,
+    ) {
+        if level == 0 {
+            let remote_ids: Vec<String> = remote
+                .leaves
+                .get(index)
+                .map(|l| l.op_ids.iter().map(hex).collect())
+                .unwrap_or_default();
+            let local_ids: std::collections::BTreeSet<String> = local
+                .leaves
+                .get(index)
+                .map(|l| l.op_ids.iter().map(hex).collect())
+                .unwrap_or_default();
+            steps.push((0, level, index));
+            for id in remote_ids {
+                if !local_ids.contains(&id) {
+                    missing.push(id);
+                }
+            }
+            return;
+        }
+        steps.push((1, level, index));
+        let (rleft, rright) = remote.node_children(level, index).expect("remote node");
+        let (lleft, lright) = local
+            .node_children(level, index)
+            .unwrap_or_else(empty_leaf_pair_fallback);
+        if rleft != lleft {
+            walk(local, remote, level - 1, index * 2, missing, steps);
+        }
+        if rright != lright {
+            walk(local, remote, level - 1, index * 2 + 1, missing, steps);
+        }
+    }
+    if local_tree.root() != remote_tree.root() {
+        let root_level = remote_tree.levels.len() - 1;
+        walk(
+            &local_tree,
+            &remote_tree,
+            root_level,
+            0,
+            &mut missing,
+            &mut steps,
+        );
+    }
+    missing.sort();
+    missing.dedup();
+    (missing, steps)
+}
+
+fn empty_leaf_pair_fallback() -> ([u8; 32], [u8; 32]) {
+    let e = zerodb_core::merkle::empty_leaf();
+    (e, e)
+}
+
+fn check_merkle_walk_frames(v: &Json, frames: &[Json], path: &Path) {
+    let local: Vec<MerkleOp> = v["local"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(parse_merkle_op)
+        .collect();
+    let remote: Vec<MerkleOp> = v["remote"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(parse_merkle_op)
+        .collect();
+    let buckets: Vec<u64> = v
+        .get("bucket_indices")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().map(|x| x.as_u64().unwrap()).collect())
+        .unwrap_or_else(|| {
+            let mut s: Vec<u64> = remote.iter().map(|o| o.physical_ms / 60_000).collect();
+            s.sort();
+            s.dedup();
+            s
+        });
+    let (mut got_missing, steps) = merkle_walk_missing(&local, &remote, &buckets);
+    let mut want_missing: Vec<String> = v["expect"]["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap().to_lowercase())
+        .collect();
+    want_missing.sort();
+    got_missing = got_missing.into_iter().map(|s| s.to_lowercase()).collect();
+    got_missing.sort();
+    assert_eq!(
+        got_missing,
+        want_missing,
+        "{}: merkle-walk missing",
+        path.display()
+    );
+
+    let node_reqs: Vec<&Json> = frames
+        .iter()
+        .filter(|f| f["type"].as_u64() == Some(MSG_MERKLE_NODE_REQUEST as u64))
+        .collect();
+    let leaf_reqs: Vec<&Json> = frames
+        .iter()
+        .filter(|f| f["type"].as_u64() == Some(MSG_MERKLE_LEAF_REQUEST as u64))
+        .collect();
+    let node_steps: Vec<_> = steps.iter().filter(|s| s.0 == 1).collect();
+    let leaf_steps: Vec<_> = steps.iter().filter(|s| s.0 == 0).collect();
+    assert_eq!(
+        node_reqs.len(),
+        node_steps.len(),
+        "{}: merkle-walk NODE count",
+        path.display()
+    );
+    assert_eq!(
+        leaf_reqs.len(),
+        leaf_steps.len(),
+        "{}: merkle-walk LEAF count",
+        path.display()
+    );
+    for (i, step) in node_steps.iter().enumerate() {
+        assert_eq!(
+            node_reqs[i]["payload"]["level"].as_u64().unwrap() as usize,
+            step.1,
+            "{} NODE[{i}] level",
+            path.display()
+        );
+        assert_eq!(
+            node_reqs[i]["payload"]["index"].as_u64().unwrap() as usize,
+            step.2,
+            "{} NODE[{i}] index",
+            path.display()
+        );
+    }
+    for (i, step) in leaf_steps.iter().enumerate() {
+        assert_eq!(
+            leaf_reqs[i]["payload"]["leaf_index"].as_u64().unwrap() as usize,
+            step.2,
+            "{} LEAF[{i}] index",
+            path.display()
+        );
+    }
+    if !want_missing.is_empty() {
+        let delta = frames
+            .iter()
+            .find(|f| f["type"].as_u64() == Some(MSG_DELTA_REQUEST as u64))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: merkle-walk with missing ops must include DELTA_REQUEST",
+                    path.display()
+                )
+            });
+        let mut asked: Vec<String> = delta["payload"]["op_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap().to_lowercase())
+            .collect();
+        asked.sort();
+        assert_eq!(asked, want_missing, "{}: DELTA_REQUEST", path.display());
+    }
+    let remote_root = {
+        let tree = MerkleTree::build_aligned(&remote, &buckets);
+        tree.root()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let mut saw_sync = false;
+    for f in frames {
+        if f["type"].as_u64() == Some(MSG_SYNC_RESPONSE as u64) && f["dir"] == DIR_RELAY_TO_PEER {
+            saw_sync = true;
+            if let Some(got) = f["payload"]["validated_root"].as_str() {
+                assert_eq!(
+                    got,
+                    remote_root,
+                    "{}: SYNC_RESPONSE.validated_root",
+                    path.display()
+                );
+            }
+        }
+    }
+    assert!(
+        saw_sync,
+        "{}: merkle-walk frames must include relay SYNC_RESPONSE",
+        path.display()
+    );
+}
+
+fn check_limits_frames(v: &Json, frames: &[Json], path: &Path) {
+    let limits = &v["limits"];
+    let max_ops = limits["max_batch_ops"].as_u64().unwrap_or(64);
+    let max_bytes = limits["max_batch_bytes"].as_u64().unwrap_or(16_777_216);
+    let max_payload = limits["max_payload_bytes"].as_u64().unwrap_or(1_048_576);
+    let mut over = false;
+    let mut saw_err = false;
+    for f in frames {
+        if f["type"].as_u64() == Some(MSG_OPS as u64) {
+            let ops = f["payload"]["operations"].as_array().unwrap();
+            if ops.len() as u64 > max_ops {
+                over = true;
+            }
+            let encoded = encode_envelope(
+                f["type"].as_u64().unwrap() as u8,
+                f["request_id"].as_u64().unwrap(),
+                &f["payload"],
+            );
+            if encoded.len() as u64 > max_bytes {
+                over = true;
+            }
+            for op in ops {
+                let n = encode(&json_to_cbor(op, None)).expect("op").len() as u64;
+                if n > max_payload {
+                    over = true;
+                }
+            }
+        }
+        if f["type"].as_u64() == Some(MSG_ERROR as u64) {
+            saw_err = true;
+            assert_eq!(
+                f["payload"]["code"].as_u64().unwrap(),
+                ERR_PAYLOAD_TOO_LARGE as u64,
+                "{}: ERROR.code",
+                path.display()
+            );
+            assert_eq!(
+                f["payload"]["fatal"],
+                false,
+                "{}: PAYLOAD_TOO_LARGE fatal",
+                path.display()
+            );
+        }
+    }
+    assert!(
+        over,
+        "{}: limits vector OPS must exceed advertised limits",
+        path.display()
+    );
+    assert!(
+        saw_err,
+        "{}: limits frames must include ERROR 0x303",
+        path.display()
+    );
 }
 
 fn check_handshake_frames(v: &Json, frames: &[Json], path: &Path) {

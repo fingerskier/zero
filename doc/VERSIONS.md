@@ -39,7 +39,7 @@ Violations are **pre-auth** decode errors (do not require signature verification
 
 ## 4. Identifier encodings
 
-Registry `identifier_encodings` is normative for lengths; KERNEL §2 for derivation. H9 full wire schema generation is M3 harness work; the registry is the M0 machine-readable seed.
+Registry `identifier_encodings` is normative for lengths; KERNEL §2 for derivation. H9 wire schemas/transcript/limits generate from `conformance/registry.json` (`conformance/generate-protocol.mjs` → `conformance/schemas/`; M3c-c). The registry remains draft-1 / unfrozen.
 
 ---
 

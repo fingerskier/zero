@@ -1,0 +1,116 @@
+{
+  "id": "PEER-REJECT-002",
+  "type": "peer-ingest",
+  "kind": "named-reject",
+  "invariants": [
+    "I-17"
+  ],
+  "description": "Data op with ep past the applied kind-5 chain is EPOCH_UNKNOWN and does not apply.",
+  "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+  "salt": "22222222222222222222222222222222",
+  "clock": 1700000000000,
+  "datastore": "14defcf421590b98da34301f3421488e7fdc8a867f69035368ae574f73233fef",
+  "setup": [
+    {
+      "id": "0b9441f7a1cd50bd1f456ca59e1a6cb5b43a0cd76237f6115304e6883fbfa94d",
+      "v": 1,
+      "ds": "14defcf421590b98da34301f3421488e7fdc8a867f69035368ae574f73233fef",
+      "ep": 0,
+      "author": "4a78877c4a0926fc5d5cb282bb45c11c8489b202fe1890fa0c6593e6192b9f75",
+      "author_pk": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "ts": {
+        "p": 1700000000000,
+        "l": 0
+      },
+      "deps": [],
+      "kind": 5,
+      "body": {
+        "epoch": 1,
+        "schema": "767605f6334dddba875faa0c37ec332799907d2b7c27378c417983807cf987c0",
+        "ir": "a3617601656564676573a0656e6f646573a164546f646fa16570726f7073a1657469746c65a4646372647400647479706504686e756c6c61626c65f569656e63727970746564f4",
+        "prev": null,
+        "migration": []
+      },
+      "sig": "9622318ccac0245ee66f6fe6e4765c00658145b9acb45b6b6de2b7ebf8d7fcb82730dc495ce2e0453e39756950c41a05c6687f9191597acdcf7304b60909bb07"
+    },
+    {
+      "id": "c56e5930c0bb1ea15fac97cec0baacb8ee64f196f67a993605f6b1025511a917",
+      "v": 1,
+      "ds": "14defcf421590b98da34301f3421488e7fdc8a867f69035368ae574f73233fef",
+      "ep": 1,
+      "author": "4a78877c4a0926fc5d5cb282bb45c11c8489b202fe1890fa0c6593e6192b9f75",
+      "author_pk": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "ts": {
+        "p": 1700000000000,
+        "l": 1
+      },
+      "deps": [],
+      "kind": 1,
+      "body": {
+        "label": "Todo",
+        "node": "0102030405060708090a0b0c0d0e0f10"
+      },
+      "sig": "ced675c2725821751b69ec48712681484abacaa681e0e48d1ffb7fb2f625d8cde68fcf3325cfc4eb65d99f23962360a2126ddce824716341b2c42a63f9592005"
+    },
+    {
+      "id": "749b05bd80836e8cf48c24761bc20ee45b9b77922652782cc752941f62d9b253",
+      "v": 1,
+      "ds": "14defcf421590b98da34301f3421488e7fdc8a867f69035368ae574f73233fef",
+      "ep": 1,
+      "author": "4a78877c4a0926fc5d5cb282bb45c11c8489b202fe1890fa0c6593e6192b9f75",
+      "author_pk": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "ts": {
+        "p": 1700000000000,
+        "l": 2
+      },
+      "deps": [],
+      "kind": 3,
+      "body": {
+        "node": "0102030405060708090a0b0c0d0e0f10",
+        "path": "title",
+        "crdt": "lww",
+        "value": "milk"
+      },
+      "sig": "bad3c83824e8deed61a39a4fbd16faa1834b4779ecc90121195ce7d0c34ae02c5a2f34e6c579200789f755e4ed1aa17b6c10271283988bef7f052cf1ed43b20f"
+    }
+  ],
+  "ingest": [
+    {
+      "id": "28c8f301fc66dac8de984dda778ae6033ed690f7b3afee5aed4986886e6837a7",
+      "v": 1,
+      "ds": "14defcf421590b98da34301f3421488e7fdc8a867f69035368ae574f73233fef",
+      "ep": 2,
+      "author": "4a78877c4a0926fc5d5cb282bb45c11c8489b202fe1890fa0c6593e6192b9f75",
+      "author_pk": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "ts": {
+        "p": 1700000000000,
+        "l": 3
+      },
+      "deps": [],
+      "kind": 3,
+      "body": {
+        "node": "0102030405060708090a0b0c0d0e0f10",
+        "path": "title",
+        "crdt": "lww",
+        "value": "x"
+      },
+      "sig": "8cf6f26d251fcafd2d780a800cde1a2cd380daaab493d2e51aaec426619997645e315669e3ec289a0dddba8d49ce4878a88af15efed69f13040353ffaf471607"
+    }
+  ],
+  "expect": {
+    "schema_epoch": 1,
+    "rejects": [
+      {
+        "op_id": "28c8f301fc66dac8de984dda778ae6033ed690f7b3afee5aed4986886e6837a7",
+        "reason": "EPOCH_UNKNOWN"
+      }
+    ],
+    "lww": [
+      {
+        "node": "0102030405060708090a0b0c0d0e0f10",
+        "path": "title",
+        "value": "milk"
+      }
+    ]
+  }
+}

@@ -6,18 +6,25 @@ Cross-implementation conformance harness (PLAN P0-5). Golden vectors are the nor
 
 ```
 conformance/
+├── registry.json    # H9 machine-readable protocol definition (versions, encodings,
+│                    #   RELAY 0.2 messages/errors/limits, peer reject names)
+├── generate-protocol.mjs
+├── generate-vectors.mjs
+├── schemas/         # generated from registry.json
 ├── vectors/
 │   ├── required/    # promoted vectors — CI-blocking, must be green in BOTH runners
 │   └── xfail/       # newly activated contract fixtures — expected-failure lane,
 │                    #   non-blocking until promoted at their package gate
 └── ts/
     ├── runner.mjs   # independent TypeScript/JS model runner (pure encoder/decoder +
-                     #   semantic models; NOT the SDK, never NAPI-backed)
+    │                #   semantic models; NOT the SDK, never NAPI-backed)
     └── peer/        # M3c-b independent RELAY 0.2 wire peer (same invariant:
                      #   reuses models/; NOT the SDK, never NAPI-backed)
 ```
 
-The Rust side runs the same vectors via `cargo test` harnesses in the workspace crates (added per package as contracts land).
+The Rust side runs the same vectors via `cargo test` harnesses in the workspace crates (added per package as contracts land). `relay-transcript` and `peer-ingest` are `zerodb-core` tests `conformance_relay` / `conformance_peer`; both load `registry.json` (`conformance_registry`). Those two suites iterate `vectors/required/` only so a demonstrated-red xfail fixture cannot fail `cargo test`. xfail demonstration is the TS `--lane xfail` job (exit 0).
+
+H9 M3c-c wire vectors (RELAY 0.2.2-draft, unfrozen): HELLO/AUTH/WELCOME (existing `RELAY-HELLO-*`), OPS push+ack (`RELAY-OPS-001`), merkle-walk catch-up (`RELAY-WALK-001`), advertised-limit reject (`RELAY-LIMIT-001`), named peer rejects (`PEER-REJECT-001..004`), SchemaEpoch n=1 ingest (`PEER-EPOCH-001`). A vector without a runner is not evidence.
 
 ## Vector format
 
