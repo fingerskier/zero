@@ -1,4 +1,4 @@
-# Browser peer (experimental M4a slice)
+# Browser peer (M4a-a WASM + durable adapters)
 
 A web page with its own local zerodb store — `zerodb-wasm`
 (`LocalStore<MemoryBackend>` compiled to WebAssembly) — that syncs two-way
@@ -15,11 +15,8 @@ with a Node peer over the existing WebSocket sync protocol v2.
   back immediately), and `autoSync(db, url, intervalMs)` (push session
   preferred, interval poll fallback against push-unaware servers).
 - `index.html` — demo UI: create nodes, set LWW props, sync once or
-  auto-sync against a peer URL. Persists to IndexedDB incrementally: an
-  op-journal object store keyed by op id, appended from `db.onChange`
-  events; on load the identity is restored via `ZeroDb.fromSeed(seed, ds)`
-  and the journal is re-imported (with a compact/rewrite pass when the
-  journal drifts from the op set).
+  auto-sync against a peer URL. Persists through `zerodb-wasm/js/storage.mjs`
+  (`openDurable`, IndexedDB or OPFS).
 - `test/sync-driver.test.mjs` — Node test proving two-way convergence
   between the wasm store and a NAPI `Database.serve` peer.
 
@@ -72,8 +69,6 @@ npm run build:debug`.)
 - **Push needs a push-capable server**: `autoSync` upgrades to a persistent
   push session only when the server acks the v2 `push` capability (NAPI
   `serve` does by default); otherwise it falls back to interval polling.
-- **Memory store + op journal**: state still lives in wasm memory; the
-  IndexedDB op-journal is incremental but a true OPFS/sqlite-wasm backend
-  remains future work.
-- M4a formally depends on M3c; this slice rides ahead as an experiment, the
-  same way M2 rides on M1.
+- **Memory store + adapter journal**: state still lives in wasm memory;
+  IDB/OPFS adapters journal signed ops (M4a-a). sqlite-wasm / wa-sqlite
+  remains parked. React hooks and WebRTC are not this slice.

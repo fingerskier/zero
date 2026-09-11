@@ -1,14 +1,14 @@
-//! Experimental M4a browser peer: wasm-bindgen wrapper over
-//! `LocalStore<MemoryBackend>`. Mirrors the NAPI `Database` surface where it
-//! makes sense, plus sync-driver hooks (`opIds`, `exportOpsByIds`) so a JS
-//! WebSocket driver can speak sync protocol v2 as a client.
+//! M4a-a browser peer: wasm-bindgen wrapper over `LocalStore<MemoryBackend>`.
+//! Mirrors the NAPI `Database` surface where it makes sense, plus sync-driver
+//! hooks (`opIds`, `exportOpsByIds`) so a JS WebSocket driver can speak sync
+//! protocol v2 as a client.
 //!
-//! Identity/persistence model (honest about the risk): the store lives in
-//! memory; the embedder persists `seedHex()` + `datastoreId()` + the export
-//! bundle (e.g. to IndexedDB) and restores via `ZeroDb.fromSeed(...)` +
-//! `importJson(...)`. The ed25519 seed therefore sits in browser storage —
-//! any script with origin access can sign as this peer. Acceptable for this
-//! experimental slice only.
+//! Durability is the JS adapter pair in `js/storage.mjs` (IndexedDB + OPFS):
+//! they persist `seedHex()` + `datastoreId()` + signed KERNEL wire ops and
+//! restore via `fromSeed` + `importJson` + `replay`. The live store stays in
+//! wasm memory because `StoreBackend` is synchronous. The ed25519 seed sits
+//! in browser storage — any script with origin access can sign as this peer.
+//! Not M4a complete (no React hooks / WebRTC).
 
 use wasm_bindgen::prelude::*;
 use zerodb_storage::{ExportBundle, LocalStore, MemoryBackend, StoreError};

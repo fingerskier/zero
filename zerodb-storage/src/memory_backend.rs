@@ -1,7 +1,8 @@
 //! In-memory implementation of [`StoreBackend`] (always compiled).
 //!
-//! Primary consumer is the wasm/browser peer, where durability is handled by
-//! the embedder (e.g. export bundle + identity seed persisted to IndexedDB).
+//! Primary consumer is the wasm/browser peer, where durability is the M4a-a
+//! IndexedDB / OPFS adapters (`zerodb-wasm/js/storage.mjs`) journaling
+//! identity + signed KERNEL ops.
 //! Transactions are snapshot-based: `with_txn` clones the whole state and
 //! restores it if the closure errors — correct rollback, fine at MVP scale.
 

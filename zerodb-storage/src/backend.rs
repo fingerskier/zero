@@ -1,8 +1,9 @@
 //! Persistence backend abstraction (M2 prep).
 //!
 //! All durable state — meta KV, oplog, materialized nodes/props/edges — goes
-//! through [`StoreBackend`] so alternative backends (e.g. browser OPFS or
-//! IndexedDB) can be implemented without forking the store logic. The trait is
+//! through [`StoreBackend`] so alternative backends can be implemented without
+//! forking the store logic. Browser IndexedDB/OPFS durability for wasm is the
+//! JS adapter pair (sync trait; async browser I/O). The trait is
 //! object-safe; transactions are closure-based via [`StoreBackend::with_txn`].
 
 use crate::StoreError;

@@ -30,7 +30,7 @@ Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)` · `pin
 | perf-s0 | 2026-08-28 | `perf_s0` fixtures/phase counters (1k). No invented README numbers. |
 | perf-s1 | 2026-08-28 | `import_replay_equiv` + `limits` + chunk tests. Advertised payload/batch; import≡replay. Not Stage 2/3. |
 | M3c Interop + release (`v0.1.0`) | 2026-09-11 | Decision Log act (this PR); steward tags `v0.1.0` after merge. #17 SchemaEpoch n=1, #18 TS wire peer, #19 H9 two-language fixtures (H9 not removed), #20 SUPPORT/UPGRADE, #21 WELCOME `protocol_version` reject (`0x102`), existing Rust E3, TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze. Not M3b exit / H9 closed. |
-| M4a-browser-slice / wasm-events / push-driver / idb-journal | experimental shipped | `zerodb-wasm`; `memory_backend.rs`; `sync-driver.test.mjs`; `examples/browser-peer`. M4a proper is next live work. |
+| M4a-browser-slice / wasm-events / push-driver / idb-journal | experimental shipped | Grew into M4a-a this PR (`zerodb-wasm/js/storage.mjs`). Not M4a complete. |
 
 Detailed resolved-issue audit prose lives in the [ISSUES Decision Log](../doc/ISSUES.md) only (no second copy here).
 
@@ -70,6 +70,15 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 | M3b-h10-remain | H10 leftovers | done(`e6_encrypted_notes` H10 cases) | Offline-revoke at open, key-before/after-data hold, principal+device wrap, wrap-shape draft. **H10 not closed.** |
 | perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
 | perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
+
+### M4a — Browser / WASM / React (H6/WebRTC later)
+
+Depends: M3c done. **Not** M4a complete this PR (no React hooks, no WebRTC/H6, no E10).
+
+| ID | Work | Status | Notes |
+|----|------|--------|-------|
+| M4a-a | WASM + IndexedDB + OPFS persist/reopen | done(this PR) | Product-surface adapters in `zerodb-wasm/js/storage.mjs`; live store remains `MemoryBackend`. Evidence: `zerodb-wasm/test/persist-reopen.test.mjs`. WASM gzip recorded in SUPPORT (O4 target still open). React hooks next. Not M4a complete. |
+| M4a | Browser/WASM/WebRTC/React | open | Hooks + WebRTC/H6 remain. Do not mark complete. |
 
 ### Later gates
 
