@@ -150,5 +150,11 @@ fn signal_forwards_opaque_payload_with_relay_sender() {
     assert_eq!(rid, 9);
     assert_eq!(as_bytes(map_get(&pl, "sender")), peer_id_from_pk(&PK));
     assert_eq!(as_bytes(map_get(&pl, "payload")), blob);
-    assert!(matches!(map_get(&pl, "target"), Cbor::Null));
+    let Cbor::Map(ents) = &pl else {
+        panic!("payload map");
+    };
+    assert!(
+        ents.iter().all(|(k, _)| k != "target"),
+        "forwarded SIGNAL must drop target"
+    );
 }
