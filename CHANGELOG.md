@@ -17,7 +17,7 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## v0.1.0
 
-Decision Log act for product git tag `v0.1.0` (steward tags after this merge). Crates remain `0.1.0-alpha` unpublished. Two-language bar is #19 harness + #18 TS peer live to `zerodb-relay`. Partition/rejoin remains M3a E3 (Rust) plus TS merkle-walk. **Not** a live Rust↔TS mixed-peer partition executable.
+Decision Log act for product git tag `v0.1.0` (steward tags after this merge). Crates remain `0.1.0-alpha` unpublished. Evidence is H9 two-language fixtures (#19), existing Rust E3, and TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze.
 
 ### Client WELCOME `protocol_version` reject — landed main #21 (`ca508d0`)
 

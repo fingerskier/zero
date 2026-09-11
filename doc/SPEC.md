@@ -1061,7 +1061,7 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 - [x] Reference relay + conformance harness with golden/negative vectors in two languages (ISSUES H9) — landed main PR #19; H9 not removed
 - [x] Version/upgrade matrix, packaging, support profile — landed main PR #20 ([SUPPORT.md](SUPPORT.md), [UPGRADE.md](UPGRADE.md), [CHANGELOG.md](../CHANGELOG.md))
 
-**Exit gate:** `v0.1.0` Decision Log (this act) — not a format freeze. Two-language bar is PR #19 (shared fixtures, both runners) plus PR #18 TS peer live to `zerodb-relay`. Partition/rejoin and duplicate/loss/reorder remain the M3a E3 Rust suite plus TS merkle-walk catch-up. **Not** a live Rust↔TS mixed-peer partition executable.
+**Exit gate:** `v0.1.0` Decision Log (this act) — experimental; not a format freeze. Evidence: H9 two-language fixtures (#19), existing Rust E3, TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze.
 
 ### M4 — Browser, P2P & evolution (tracks M4a / M4b)
 
