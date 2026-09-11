@@ -16,9 +16,10 @@
 <body>
 <h1>zerodb browser peer</h1>
 <p class="muted">
-  Experimental: local in-browser store (wasm) persisted to IndexedDB, syncing
-  with a Node peer over WebSocket (sync protocol v2). The identity seed lives
-  in IndexedDB — any script on this origin can sign as this peer.
+  M4a-a: local in-browser store (wasm) persisted through the IndexedDB /
+  OPFS adapters, syncing with a Node peer over WebSocket (sync protocol v2).
+  The identity seed lives in browser storage — any script on this origin can
+  sign as this peer. Not WebRTC / not React hooks.
 </p>
 
 <fieldset>
@@ -58,6 +59,9 @@ const wasmMod = await import('./pkg/zerodb_wasm.js')
 const init = wasmMod.default
 const { ZeroDb } = wasmMod
 import { syncOnce, autoSync } from './zero-sync.mjs'
+const storage = await import('../../zerodb-wasm/js/storage.mjs')
+  .catch(() => import('./storage.mjs'))
+const { openDurable } = storage
 
 const $ = id => document.getElementById(id)
 const log = msg => {
@@ -65,86 +69,20 @@ const log = msg => {
   $('log').scrollTop = $('log').scrollHeight
 }
 
-// --- IndexedDB persistence -------------------------------------------------
-// Incremental op-journal: 'state' holds { seed, ds }; 'journal' holds one
-// wire op per key (op id). Each onChange event appends only the new ops
-// instead of rewriting the whole bundle. A true OPFS/sqlite-wasm backend
-// remains future work.
-const DB_NAME = 'zerodb-browser-peer'
-const idb = await new Promise((resolve, reject) => {
-  const req = indexedDB.open(DB_NAME, 2)
-  req.onupgradeneeded = () => {
-    if (!req.result.objectStoreNames.contains('state')) req.result.createObjectStore('state')
-    if (!req.result.objectStoreNames.contains('journal')) req.result.createObjectStore('journal')
-  }
-  req.onsuccess = () => resolve(req.result)
-  req.onerror = () => reject(req.error)
-})
-const idbReq = req => new Promise((resolve, reject) => {
-  req.onsuccess = () => resolve(req.result)
-  req.onerror = () => reject(req.error)
-})
-const idbGet = key => idbReq(idb.transaction('state').objectStore('state').get(key))
-const idbSet = (key, value) =>
-  idbReq(idb.transaction('state', 'readwrite').objectStore('state').put(value, key))
-const journalAll = () => idbReq(idb.transaction('journal').objectStore('journal').getAll())
-const journalPut = ops => new Promise((resolve, reject) => {
-  const tx = idb.transaction('journal', 'readwrite')
-  const store = tx.objectStore('journal')
-  for (const op of ops) store.put(op, op.id)
-  tx.oncomplete = () => resolve()
-  tx.onerror = () => reject(tx.error)
-})
-const journalClear = () => idbReq(idb.transaction('journal', 'readwrite').objectStore('journal').clear())
-
 await init()
 
-let db
-const persistedIds = new Set()
-const saved = await idbGet('peer')
-if (saved) {
-  db = ZeroDb.fromSeed(saved.seed, saved.ds)
-  let ops = await journalAll()
-  if (ops.length === 0 && saved.bundle) {
-    // Migrate the old whole-bundle format into the journal.
-    ops = JSON.parse(saved.bundle).ops
-  }
-  if (ops.length > 0) {
-    const res = db.importJson(JSON.stringify({
-      format: 1,
-      datastore_id: saved.ds,
-      ops,
-    }))
-    if (res.accepted > 0) db.replay()
-  }
-  // Compact/rewrite if the journal drifted from the op set (skipped dupes,
-  // old-format migration, interrupted writes).
-  if (ops.length !== db.opCount()) {
-    await journalClear()
-    await journalPut(JSON.parse(db.exportJson()).ops)
-  }
-  for (const id of db.opIds()) persistedIds.add(id)
-  await idbSet('peer', { seed: db.seedHex(), ds: db.datastoreId() })
-  log(`restored identity + ${db.opCount()} ops from IndexedDB journal`)
-} else {
-  db = new ZeroDb()
-  await idbSet('peer', { seed: db.seedHex(), ds: db.datastoreId() })
-  log('fresh identity created')
-}
+const opened = await openDurable(ZeroDb, {
+  name: 'zerodb-browser-peer',
+  adapter: 'auto',
+})
+let db = opened.db
+const journal = opened.journal
+log(opened.restored
+  ? `restored identity + ${opened.opCount} ops via ${opened.adapter}`
+  : `fresh identity created (${opened.adapter})`)
 
-// Append only the ops not yet journaled (identity meta re-written when the
-// datastore id changes — first sync may adopt the peer's datastore).
 async function persist() {
-  const ids = db.opIds().filter(id => !persistedIds.has(id))
-  if (ids.length > 0) {
-    const ops = JSON.parse(db.exportOpsByIds(ids))
-    await journalPut(ops)
-    for (const op of ops) persistedIds.add(op.id)
-  }
-  const meta = await idbGet('peer')
-  if (!meta || meta.ds !== db.datastoreId()) {
-    await idbSet('peer', { seed: db.seedHex(), ds: db.datastoreId() })
-  }
+  await journal.persist(db)
 }
 
 // Every successful mutation/import/replay persists incrementally (deferred:
@@ -199,8 +137,7 @@ $('setProp').onclick = async () => {
   await mutated()
 }
 $('reset').onclick = async () => {
-  await idbSet('peer', undefined)
-  indexedDB.deleteDatabase(DB_NAME)
+  await journal.reset()
   location.reload()
 }
 

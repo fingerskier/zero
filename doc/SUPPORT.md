@@ -23,7 +23,7 @@ The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M
 | Conformance required lane + `generate-protocol.mjs --check` | `ubuntu-latest`, Node 20 | Independent TS runner; never NAPI. |
 | TS wire peer smoke (`conformance/ts/peer/*.test.mjs`) | `ubuntu-latest`, Node 22 + built `zerodb-relay` | NAPI-free. |
 | `tools/ts-to-ir` | `ubuntu-latest`, Node 20 | Authoring JSON → IR helper. |
-| Browser / WASM (`zerodb-wasm`, Pages) | separate `pages` workflow | Experimental M4a slice; **not** this support profile. |
+| Browser / WASM (`zerodb-wasm`, Pages) | `wasm` job + `pages` workflow | M4a-a IDB/OPFS adapters + persist/reopen; **not** M4a complete; **not** this support profile's product platforms. |
 
 **Not in CI / not supported as product platforms:** macOS, iOS/Android, musl-only hosts, a hosted public relay, production TLS termination in-process.
 
@@ -38,7 +38,7 @@ Node engines stated by `@zerodb/node`: `>=18`. Conformance and the TS peer are e
 | `zerodb-cli` (`zerodb`) | M1 local CLI | `publish = false` |
 | `zerodb-relay` (`zerodb-relay`) | Experimental **L2** RELAY 0.2.2-draft process | `publish = false` |
 | `zerodb-napi` / `@zerodb/node` | Experimental M2 Node binding | crate unpublished; npm `"private": true` |
-| `zerodb-wasm` | Experimental browser in-memory store | `publish = false` |
+| `zerodb-wasm` | Browser wasm peer; durable IDB/OPFS adapters (JS) | `publish = false` |
 | `@zerodb/ts-to-ir` | Minimal authoring → IR JSON | `"private": true` |
 | `conformance/ts/runner.mjs` | Independent two-language harness (H9) | not a package |
 | `conformance/ts/peer/` | Independent RELAY 0.2 wire peer (M3c-b) | not a package; **not** the SDK |
@@ -117,6 +117,7 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 
 ## 7. Not supported (do not claim)
 
+- **M4a-a WASM size (O4 still open).** Size-oriented `scripts/build.sh` artifact `zerodb_wasm_bg.wasm`: **738317 bytes raw (721.0 KiB), 268908 bytes gzip -9 (262.6 KiB)**. ISSUES O4 target vs Automerge ~250 KB gz is **not** met and is **not** closed. CI records size and fails only if gzip exceeds 400 KiB (regression vs the pre-optimization ~393 KiB artifact). Not a format freeze.
 - **H6 direct P2P / WebRTC** — parked to M4.
 - **Full TLS production story** — no in-process TLS, no CA, no minted certs; `--allow-insecure` is a LAN escape hatch only.
 - **Format freeze** — no versioned frozen profile; wrap-body unfrozen.

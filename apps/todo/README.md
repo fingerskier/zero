@@ -6,8 +6,9 @@ todos are graph nodes labeled `Todo` with `title: LWW<string>`,
 `done: Flag` (enable wins), `tags: ORSet<string>`; delete is a node tombstone.
 Buildless static ES modules — no bundler, no framework.
 
-- **Persistence**: IndexedDB op-journal (identity seed + datastore id +
-  incremental ops, compacted on drift) via `zero-idb.mjs`.
+- **Persistence**: M4a-a IndexedDB / OPFS adapters (`zerodb-wasm/js/storage.mjs`;
+  `zero-idb.mjs` is a compatibility re-export). Identity + signed ops;
+  rematerialize on reopen.
 - **Sync**: WebSocket sync protocol v2 via `zero-sync.mjs`
   (canonical copy in `examples/browser-peer/`). Auto-sync prefers a
   persistent push session and falls back to 2s polling; status shown as

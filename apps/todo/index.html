@@ -60,10 +60,10 @@
 <h1>zerodb todo</h1>
 <p class="muted">
   A distributed todo list dogfooding the zerodb browser peer: a local-first
-  CRDT store (wasm) persisted to IndexedDB, syncing with any zerodb peer over
-  WebSocket (sync protocol v2). Titles are last-writer-wins, done is an
-  enable-wins flag, tags are an observed-remove set — concurrent edits merge
-  without conflicts.
+  CRDT store (wasm) persisted through the M4a-a IndexedDB / OPFS adapters,
+  syncing with any zerodb peer over WebSocket (sync protocol v2). Titles are
+  last-writer-wins, done is an enable-wins flag, tags are an observed-remove
+  set — concurrent edits merge without conflicts. Not WebRTC / not React hooks.
 </p>
 
 <fieldset>
@@ -72,7 +72,7 @@
   <span title="Datastore id — identity of the shared database. A fresh (empty) store adopts the peer's datastore id on first sync">datastore <code id="ds">-</code></span> ·
   <span title="Number of operations in the local append-only oplog (the source of truth; todos are derived from it)">ops <code id="ops">0</code></span> ·
   <span title="Sync status: live-push (persistent session, ops stream both ways), polling (periodic sync-once), disconnected, or error">sync <span id="status" class="off">disconnected</span></span>
-  <button id="reset" style="float:right" title="Delete the IndexedDB copy (identity seed + todos) and mint a fresh identity — this store becomes a brand-new empty peer">reset local store</button>
+  <button id="reset" style="float:right" title="Delete the durable copy (identity seed + todos) and mint a fresh identity — this store becomes a brand-new empty peer">reset local store</button>
 </fieldset>
 
 <fieldset>
@@ -119,7 +119,9 @@ const wasmMod = await import('./pkg/zerodb_wasm.js')
 const init = wasmMod.default
 const { ZeroDb } = wasmMod
 import { syncOnce, connectPush } from './zero-sync.mjs'
-import { ZeroJournal } from './zero-idb.mjs'
+const storage = await import('./storage.mjs')
+  .catch(() => import('../../zerodb-wasm/js/storage.mjs'))
+const { openDurable } = storage
 import * as model from './todo-model.mjs'
 
 const $ = id => document.getElementById(id)
@@ -130,11 +132,13 @@ const log = msg => {
 
 await init()
 
-const journal = await ZeroJournal.open('zerodb-todo')
-const { db, restored, opCount } = await journal.restore(ZeroDb)
+const { db, journal, restored, opCount, adapter } = await openDurable(ZeroDb, {
+  name: 'zerodb-todo',
+  adapter: 'auto',
+})
 log(restored
-  ? `restored identity + ${opCount} ops from IndexedDB journal`
-  : 'fresh identity created')
+  ? `restored identity + ${opCount} ops via ${adapter}`
+  : `fresh identity created (${adapter})`)
 
 // Every successful mutation/import/replay persists incrementally (deferred:
 // onChange fires while the wasm borrow is held).

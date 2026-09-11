@@ -39,8 +39,7 @@ jobs:
           tool: wasm-pack
 
       - name: Build wasm pkg into the app
-        working-directory: zerodb-wasm
-        run: wasm-pack build --target web --out-dir ../apps/todo/pkg
+        run: bash zerodb-wasm/scripts/build.sh --out-dir ../apps/todo/pkg
 
       - name: Assemble site
         run: |
@@ -49,6 +48,7 @@ jobs:
           # Replace the dev re-export shim with the canonical driver so the
           # deployed app is self-contained (all imports relative).
           cp examples/browser-peer/zero-sync.mjs _site/zero-sync.mjs
+          cp zerodb-wasm/js/storage.mjs _site/storage.mjs
           rm -rf _site/test _site/.gitignore _site/pkg/.gitignore
           ls -R _site
 
