@@ -127,7 +127,6 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 - **M3c complete / `v0.1.0` released** — tag requires a Decision Log act after M3c-a..d.
 - **M4 rolling-upgrade / adjacent-version rollback matrix** — [UPGRADE.md](UPGRADE.md) points forward; do not treat this profile as E10.
 - **Format `limits` as a resource bound** — O6 policy numbers are listed above; they are not the relay/store ingress caps (WELCOME is).
-- **Client reject of `WELCOME.protocol_version ≠ 1`** — policy window is size 1; only the relay’s HELLO check is implemented.
 - **crates.io / npm registry publish**, hosted relay, mobile bindings, entity-level ACLs (C6), MVRegister/RGA/LWWMap, production backup/SLO (M5a).
 
 ## 8. Publish readiness (no publish)

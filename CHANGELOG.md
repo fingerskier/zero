@@ -19,6 +19,10 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 Packaging and M3c-a..c on `main`. Preparable for a later `v0.1.0` tag; not that tag.
 
+### Client WELCOME `protocol_version` reject
+
+- Rust `relay_client` and the independent TS peer fail-closed on `WELCOME.protocol_version` other than `1` or missing (`0x102 VERSION_MISMATCH`). They do not proceed to OPS/sync. Not `FORMAT_UNSUPPORTED`. HELLO-side relay reject unchanged.
+
 ### M3c-d — packaging / support profile (this PR)
 
 - [SUPPORT.md](doc/SUPPORT.md) — draft-1 support profile (platforms, crates, binaries, TS peer/runner, L2 relay, limits, explicit non-support). Registry format `limits` are O6 **policy**, not store/relay ingress caps (WELCOME is).

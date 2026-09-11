@@ -32,6 +32,7 @@ import { merkleRootOnce, buildTreeAligned, emptyLeaf } from '../models/merkle.mj
 const MERKLE_FORMAT_VERSION = 1
 const BUCKET_WIDTH_MS = 60_000
 const RATE_WINDOW_MS = 1100
+const RELAY_PROTOCOL_VERSION = 1
 
 export function welcomeLimits(welcome) {
   const limits = (welcome && welcome.limits) || {}
@@ -42,6 +43,13 @@ export function welcomeLimits(welcome) {
     max_batch_bytes: num(limits.max_batch_bytes, DEFAULT_LIMITS.max_batch_bytes),
     ops_per_second: num(limits.ops_per_second, DEFAULT_LIMITS.ops_per_second),
     bytes_per_second: num(limits.bytes_per_second, DEFAULT_LIMITS.bytes_per_second),
+  }
+}
+
+/** RELAY-SPEC `0x102 VERSION_MISMATCH`. Window size 1: accept draft-1 `1` only. */
+export function checkWelcomeProtocol(welcome) {
+  if (!welcome || welcome.protocol_version !== RELAY_PROTOCOL_VERSION) {
+    throw new Error('0x102 VERSION_MISMATCH')
   }
 }
 
@@ -255,6 +263,7 @@ async function handshake(store, handle) {
   const sig = signAuth(store.seed, transcript)
   const auth = encodeEnvelope(MSG_AUTH, 2, { signature: bytesToHex(sig) })
   const welcome = expectType(firstReply(await handle(auth)), MSG_WELCOME, 'WELCOME')
+  checkWelcomeProtocol(welcome.payload)
   return welcomeLimits(welcome.payload)
 }
 

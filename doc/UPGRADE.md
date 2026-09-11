@@ -39,7 +39,7 @@ A peer MUST accept the current value only. Unknown or other values are rejected 
 | `bucket_width_ms` | `60000` | any other on RootOffer | same walk abort (`MERKLE_VERSION_MISMATCH` / `unsupported merkle bucket_width_ms`). |
 | `snapshot_format_version` | `1` | other | Snapshot identity is content-addressed at v1; there is no v0.1 shipping/upgrade path (M4). |
 | `storage_format_version` | experimental `1` | other written value | `unsupported storage_format_version {v}` on open. Missing meta is **backfilled** to `1` (legacy DBs) — not a wire upgrade. Layouts may still change while unfrozen. |
-| `relay_protocol_version` | `1` | other HELLO | Relay rejects HELLO `protocol_version != 1` (`0x102 VERSION_MISMATCH`) and closes. **Not** an op-format error. Rust `relay_client` and the TS peer do **not** inspect `WELCOME.protocol_version` — they read `limits` and continue. Window size 1 is the policy; client-side WELCOME reject is a known gap, not claimed implemented. |
+| `relay_protocol_version` | `1` | other / missing HELLO or WELCOME | Relay rejects HELLO `protocol_version != 1` (`0x102 VERSION_MISMATCH`) and closes. Rust `relay_client` and the TS peer reject WELCOME with `protocol_version` other than `1` or missing (`0x102 VERSION_MISMATCH`) and do not proceed to OPS/sync. **Not** an op-format error (`FORMAT_UNSUPPORTED`). Window size 1. |
 
 `FORMAT_UNSUPPORTED` and `MERKLE_VERSION_MISMATCH` are the **policy names**. Implementations may still surface a descriptive string; do not treat string drift as a new format generation.
 
@@ -53,7 +53,6 @@ A peer MUST accept the current value only. Unknown or other values are rejected 
 - No schema migration DSL across mixed-version peers (SCHEMA.md: cross-peer shipping remains M4). This slice’s SchemaEpoch is n=1 / empty `migration`.
 - No `BlobRef` materialization (`BLOB_UNSUPPORTED` at operation_format 1).
 - Format registry `limits` (`max_operation_bytes` 65536, format `max_batch_*`) are policy, not a second runtime cap beside WELCOME. See [SUPPORT.md](SUPPORT.md) §6.
-- Clients do not fail-closed on an incompatible `WELCOME.protocol_version` (HELLO-side only).
 
 Until an explicit Decision Log freeze names a versioned profile, a byte-affecting change **re-runs the approved-resolution checklist** rather than bumping a namespace and keeping old bytes readable.
 
