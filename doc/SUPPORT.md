@@ -1,6 +1,6 @@
 # ZeroDB support profile (draft-1 / unfrozen)
 
-**Status:** packaging notes for the M3c product slice. Formats remain **draft-1 / unfrozen**. This is **not** a format freeze, **not** M3c complete, **not** M3b exit, and **not** the `v0.1.0` tag.
+**Status:** packaging notes for the M3c product slice (`v0.1.0` Decision Log act; git tag follows this act). Formats remain **draft-1 / unfrozen**. This is **not** a format freeze, **not** M3b exit, and **not** a crates.io/npm publish.
 
 **Authority:** descriptive of what the tree actually builds and CI actually runs. Normative version policy is [VERSIONS.md](VERSIONS.md); current constants live in [`conformance/registry.json`](../conformance/registry.json). Upgrade/reject names: [UPGRADE.md](UPGRADE.md). Product tags vs crate/npm versions: [CHANGELOG.md](../CHANGELOG.md).
 
@@ -8,11 +8,11 @@
 
 ## 1. What this slice is
 
-The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M3c) is **preparable** once M3c-a..d land and a Decision Log act tags `v0.1.0`. Until that act:
+The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M3c) is named by the `v0.1.0` Decision Log act. The git tag follows this act (steward tags after merge):
 
-- Git tags that exist: `v0.1.0-local` (M1 experimental), `v0.1.0-sdk` (M2 experimental).
+- Git tags: `v0.1.0-local` (M1 experimental), `v0.1.0-sdk` (M2 experimental), `v0.1.0` (M3c; tag follows this Decision Log act).
 - Workspace crates and npm packages stay `0.1.0-alpha` with `publish = false` / `"private": true`.
-- All wire, bundle, SQLite, wrap-body, and RELAY shapes stay draft-1.
+- All wire, bundle, SQLite, wrap-body, and RELAY shapes stay draft-1 / unfrozen.
 
 ## 2. Platforms (what CI covers)
 
@@ -43,7 +43,7 @@ Node engines stated by `@zerodb/node`: `>=18`. Conformance and the TS peer are e
 | `conformance/ts/runner.mjs` | Independent two-language harness (H9) | not a package |
 | `conformance/ts/peer/` | Independent RELAY 0.2 wire peer (M3c-b) | not a package; **not** the SDK |
 
-Workspace version is `0.1.0-alpha` in the root `Cargo.toml`. Do not bump it to `0.1.0` and do not `cargo publish` / `npm publish` until a Decision Log act says so. That act is also the only thing that may create git tag `v0.1.0`.
+Workspace version is `0.1.0-alpha` in the root `Cargo.toml`. Do not bump it to `0.1.0` and do not `cargo publish` / `npm publish` until a later Decision Log act says so. Git tag `v0.1.0` follows this Decision Log act; it does not publish crates.
 
 ## 4. Relay level
 
@@ -124,7 +124,7 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 - **H9 closed** — two-language harness landed (PR #19); issue stays open until an approved-resolution removal.
 - **H10 closed** — leftovers implemented; envelope/key lifecycle not closed.
 - **M3b exit** — remainder pinned; E5–E8 live is the security bar carried into M3c, not a gate close.
-- **M3c complete / `v0.1.0` released** — tag requires a Decision Log act after M3c-a..d.
+- **Live Rust↔TS partition/rejoin** — follow-on, not this tag, not format freeze. Evidence for this act is H9 two-language fixtures (#19), existing Rust E3, and TS smoke.
 - **M4 rolling-upgrade / adjacent-version rollback matrix** — [UPGRADE.md](UPGRADE.md) points forward; do not treat this profile as E10.
 - **Format `limits` as a resource bound** — O6 policy numbers are listed above; they are not the relay/store ingress caps (WELCOME is).
 - **crates.io / npm registry publish**, hosted relay, mobile bindings, entity-level ACLs (C6), MVRegister/RGA/LWWMap, production backup/SLO (M5a).
@@ -133,8 +133,8 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 
 - Crates: workspace `publish = false`. Never `cargo publish`.
 - npm: `@zerodb/node` and `@zerodb/ts-to-ir` are `"private": true`. Never `npm publish`. NAPI consumers build the addon from this repo.
-- A future `v0.1.0` **git tag** does not by itself publish registries or freeze formats.
+- Git tag `v0.1.0` follows this Decision Log act; it does not publish registries or freeze formats.
 
 ---
 
-*Draft-1 / unfrozen. A Decision Log freeze or `v0.1.0` tag is a later act.*
+*Draft-1 / unfrozen. Git tag `v0.1.0` follows this Decision Log act. A format freeze is a later, separate act.*

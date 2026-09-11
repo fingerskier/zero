@@ -1,7 +1,7 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
-**Date:** 2026-08-28
-**Status:** current work **M3c-d packaging**. M3c-a..c on main. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M3b exit, **not** M3c complete, **not** `v0.1.0`.
+**Date:** 2026-09-11
+**Status:** M3c-a..d + client WELCOME reject landed. Decision Log act for `v0.1.0` (this PR; steward tags after merge). Next work **M4a**. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M3b exit, **not** format freeze.
 **Authority:** delivery/tracking only. [SPEC §10](../doc/SPEC.md) is the normative roadmap; [ISSUES.md](../doc/ISSUES.md) the issue ledger; [LEDGER.md](LEDGER.md) the live work tracker. On conflict, SPEC wins.
 
 ---
@@ -30,8 +30,8 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 | Stage 0+1 | **done** — landed `9903280` |
 | Format freeze | **not done** — draft-1, unfrozen |
 | M3b | **not done** — remainder pinned. **Not** M3b exit |
-| M3c | **open** — current work |
-| `v0.1.0` | **not done** |
+| M3c | **done** — Decision Log act (this PR) |
+| `v0.1.0` | **Decision Log act** — git tag follows this merge; not format freeze |
 
 Detailed evidence lives in the [LEDGER Closed index](LEDGER.md) and the [ISSUES Decision Log](../doc/ISSUES.md).
 
@@ -74,11 +74,12 @@ Resolved DQ-1..DQ-8, DQ-10 live in AUTH / KERNEL / SCHEMA / WAL — not tracked 
 
 This is the only live action list.
 
-1. **M3c-a `SchemaEpoch`** — landed on main (PR #17): signed KERNEL kind 5 persist/ingest/import (n=1, empty migration; `encrypted: true` rides the op; unknown `ep` is `EPOCH_UNKNOWN`). Codex P1s: same-batch kind-5 applies before epoch-bound data; late ops validate against their own epoch IR (ep=0 schemaless). Fork/quarantine and non-empty migration DSL not started. Do not freeze wrap-body. **Not** M3c complete.
-2. **M3c-b TS wire peer** — landed on main (PR #18): independent TypeScript wire peer evolved from the conformance runner (`conformance/ts/peer/`), **not** NAPI-backed (SPEC M3c). Speaks live RELAY 0.2 HELLO/AUTH/WELCOME, signed KERNEL ops including kind 5, merkle-walk catch-up, `EPOCH_UNKNOWN` fail-closed, advertised WELCOME limits. **Not** M3c complete.
-3. **M3c-c two-language harness** — landed on main (PR #19): golden/negative relay+peer vectors in Rust + independent TS (H9). Registry is the protocol definition; `conformance/schemas/` is generated from it. Evidence: `RELAY-OPS-001`, `RELAY-WALK-001`, `RELAY-LIMIT-001`, `PEER-EPOCH-001`, `PEER-REJECT-001..004` in `conformance/vectors/required/` (green in `conformance/ts/runner.mjs` and `zerodb-core` `conformance_relay` / `conformance_peer`). HELLO/AUTH/WELCOME already on main as `RELAY-HELLO-001..003`. **Not** M3c complete; H9 not removed; formats remain draft-1 / unfrozen.
-4. **M3c-d packaging** — this PR: support profile ([SUPPORT.md](../doc/SUPPORT.md)), v0.1 window-size-1 upgrade matrix ([UPGRADE.md](../doc/UPGRADE.md)), changelog / crate version story (`0.1.0-alpha`, unpublished). **Not** a `v0.1.0` tag; **not** M3c complete; formats remain draft-1 / unfrozen. M4 adjacent-version / rolling-upgrade tests not started.
-5. **`v0.1.0` tag** — only after M3c-a..d and a Decision Log act at tag time. Still not format freeze unless that act says so.
+1. **M3c-a `SchemaEpoch`** — landed on main (PR #17): signed KERNEL kind 5 persist/ingest/import (n=1, empty migration; `encrypted: true` rides the op; unknown `ep` is `EPOCH_UNKNOWN`). Codex P1s: same-batch kind-5 applies before epoch-bound data; late ops validate against their own epoch IR (ep=0 schemaless). Fork/quarantine and non-empty migration DSL not started. Do not freeze wrap-body.
+2. **M3c-b TS wire peer** — landed on main (PR #18): independent TypeScript wire peer evolved from the conformance runner (`conformance/ts/peer/`), **not** NAPI-backed (SPEC M3c). Speaks live RELAY 0.2 HELLO/AUTH/WELCOME, signed KERNEL ops including kind 5, merkle-walk catch-up, `EPOCH_UNKNOWN` fail-closed, advertised WELCOME limits.
+3. **M3c-c two-language harness** — landed on main (PR #19): golden/negative relay+peer vectors in Rust + independent TS (H9). Registry is the protocol definition; `conformance/schemas/` is generated from it. Evidence: `RELAY-OPS-001`, `RELAY-WALK-001`, `RELAY-LIMIT-001`, `PEER-EPOCH-001`, `PEER-REJECT-001..004` in `conformance/vectors/required/` (green in `conformance/ts/runner.mjs` and `zerodb-core` `conformance_relay` / `conformance_peer`). HELLO/AUTH/WELCOME already on main as `RELAY-HELLO-001..003`. H9 not removed; formats remain draft-1 / unfrozen.
+4. **M3c-d packaging** — landed on main (PR #20): support profile ([SUPPORT.md](../doc/SUPPORT.md)), v0.1 window-size-1 upgrade matrix ([UPGRADE.md](../doc/UPGRADE.md)), changelog / crate version story (`0.1.0-alpha`, unpublished). Formats remain draft-1 / unfrozen. M4 adjacent-version / rolling-upgrade tests not started.
+5. **`v0.1.0` Decision Log act** — this PR: names `v0.1.0` as first multi-peer secure product slice with offline catch-up (SPEC M3c exit). Evidence is H9 two-language fixtures (#19), existing Rust E3, and TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze. Steward creates the git tag after this merge. Formats remain draft-1 / unfrozen. **Not** M3b exit / H9 closed.
+6. **M4a** — next live work: browser/WASM/IDB/OPFS/React. H6/WebRTC later on this track.
 
 **Pinned (do not start):**
 - **perf Stage 2** — trigger: Stage 0 still scan-dominated
@@ -87,6 +88,6 @@ This is the only live action list.
 - **H10** remains open (leftovers implemented this pass: offline-revoke at `open`, bootstrap hold, principal/device wrap, wrap-shape draft). Not closed.
 - M3b remainder stays pinned/open (this work is the pinned remainder, not a gate rename / not M3b exit)
 - M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm; WebRTC
-- Experimental browser-peer/IDB slice already shipped; M4a proper still waits on M3c
+- Experimental browser-peer/IDB slice already shipped; M4a proper is next (H6/WebRTC later on that track)
 
 Live rows: [LEDGER.md](LEDGER.md). Historical July reviews: [plan/archive/](archive/).
