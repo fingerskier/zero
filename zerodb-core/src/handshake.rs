@@ -1,8 +1,9 @@
 //! Deterministic handshake transcript (RELAY AUTH / future shared peer sync).
 //!
-//! H5: AUTH signs this transcript, not the nonce alone. H6 (direct P2P) is
-//! parked to M4 and MUST reuse this helper rather than inventing a second
-//! preimage. Draft-1 / unfrozen — not a format freeze.
+//! H5: AUTH signs this transcript, not the nonce alone. H6 (direct P2P)
+//! first-cut MUST reuse this helper rather than inventing a second
+//! preimage (`conformance/ts/webrtc/`). H6 is not closed. Draft-1 /
+//! unfrozen — not a format freeze.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 

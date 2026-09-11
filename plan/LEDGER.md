@@ -64,22 +64,23 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
-| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH, session limits/TLS-outside-dev, and H10 leftovers landed as `M3b-h5` / `M3b-limits` / `M3b-h10-remain` below. H6 parked M4. **Not** M3b exit. |
+| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH, session limits/TLS-outside-dev, and H10 leftovers landed as `M3b-h5` / `M3b-limits` / `M3b-h10-remain` below. H6 first-cut is M4a-webrtc (not closed). **Not** M3b exit. |
 | M3b-h5 | Transcript AUTH (draft) | done(handshake + RELAY-HELLO-001 + limits H5 negatives) | `zerodb-relay-auth-v2` ‖ HELLO+nonce+intended WELCOME. v1 nonce-only `AUTH_FAILED`. Not a format freeze. |
 | M3b-limits | Session rate/sub/conn + plaintext listen | done(`zerodb-relay/tests/limits.rs`) | `0x305 TOO_MANY_SUBS`, `0x304 RATE_EXCEEDED` / `TOO_MANY_CONNECTIONS`, `--allow-insecure`. No global quota. |
 | M3b-h10-remain | H10 leftovers | done(`e6_encrypted_notes` H10 cases) | Offline-revoke at open, key-before/after-data hold, principal+device wrap, wrap-shape draft. **H10 not closed.** |
 | perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
 | perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
 
-### M4a — Browser / WASM / React (H6/WebRTC later)
+### M4a — Browser / WASM / React (H6 first-cut this PR)
 
-Depends: M3c done. **Not** M4a complete this PR (no WebRTC/H6, no E10; hooks are this slice only).
+Depends: M3c done. **Not** M4a complete (H6 not closed, O4 open, no E10).
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
 | M4a-a | WASM + IndexedDB + OPFS persist/reopen | done(landed main #23 @ `56a3bad`) | Product-surface adapters in `zerodb-wasm/js/storage.mjs`; live store remains `MemoryBackend`. Evidence: `zerodb-wasm/test/persist-reopen.test.mjs` (occupied-IDB auto, IDB v2 open, serialized persist, corrupt identity fail-closed). WASM gzip recorded in SUPPORT (O4 target still open). Not M4a complete. |
-| M4a-hooks | Optional React hooks over wasm + `openDurable` | done(this PR) | `@zerodb/react`: `ZeroDbProvider` + `useQuery` / `useNode` / `useMutation` / `useSyncStatus` wrapping live WASM (`onChange`, O3 string query, `listNodes`, `setLww`, `createNode`) and `journal.persist`. Evidence: `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` is local ready/offline (no live WS/WebRTC). H6/WebRTC stay pinned. Not M4a complete. |
-| M4a | Browser/WASM/WebRTC/React | open | WebRTC/H6 remain. Do not mark complete. |
+| M4a-hooks | Optional React hooks over wasm + `openDurable` | done(landed main #24 @ `3f81d62`) | `@zerodb/react`: `ZeroDbProvider` + `useQuery` / `useNode` / `useMutation` / `useSyncStatus` wrapping live WASM (`onChange`, O3 string query, `listNodes`, `setLww`, `createNode`) and `journal.persist`. Evidence: `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` is local ready/offline. Not M4a complete. |
+| M4a-webrtc | H6 first-cut WebRTC DataChannel | in-progress(this PR) | SIGNAL 0x42 + ordered `zerodb-relay` DataChannel carrying shared peer protocol. Reuses `AuthTranscript` / `zerodb-relay-auth-v2` (no second preimage). Evidence: `conformance/ts/webrtc/webrtc.test.mjs` (fake ordered channel; not wrtc) + `zerodb-relay/tests/signal.rs` (0x307). **H6 not closed.** Role negotiation, datastore admission tokens, reconnect, conformance profile remain. O4 still open. Not M4a complete. |
+| M4a | Browser/WASM/WebRTC/React | open | First-cut WebRTC landed this PR. Do not mark complete. |
 
 ### Later gates
 

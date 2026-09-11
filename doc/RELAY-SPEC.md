@@ -528,7 +528,7 @@ The handshake proves the peer controls the Ed25519 private key corresponding to 
 
 If either check fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
 
-> Draft AUTH preimage (unfrozen). Direct P2P reuse of this helper is parked with H6 → M4.
+> Draft AUTH preimage (unfrozen). H6 first-cut reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). H6 is not closed.
 
 ### 5.3 Relay Identity
 

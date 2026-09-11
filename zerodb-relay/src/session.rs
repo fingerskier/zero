@@ -19,12 +19,12 @@ use zerodb_core::handshake::{
     DEFAULT_RELAY_LEVEL, WelcomeLimits,
 };
 use zerodb_core::relay::{
-    ERR_AUTH_FAILED, ERR_PAYLOAD_TOO_LARGE, ERR_RATE_EXCEEDED, ERR_TOO_MANY_SUBS, FrontierTip,
-    HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO,
-    MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST,
-    MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
-    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, admit_experimental_op, authenticate,
-    negotiate_capabilities, retransmit,
+    ERR_AUTH_FAILED, ERR_PAYLOAD_TOO_LARGE, ERR_RATE_EXCEEDED, ERR_TARGET_NOT_CONNECTED,
+    ERR_TOO_MANY_SUBS, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH,
+    MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE,
+    MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SIGNAL,
+    MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS,
+    admit_experimental_op, authenticate, negotiate_capabilities, retransmit,
 };
 
 use crate::store::{OpStore, StoredOp, validated_root_hex};
@@ -53,6 +53,8 @@ pub struct Inner {
     subscribers: HashMap<String, HashSet<u64>>,
     /// Live sessions per authenticated PeerId (RELAY §8.3 RECOMMENDED 3).
     connections: HashMap<[u8; 32], HashSet<u64>>,
+    /// SIGNAL frames waiting for another session (in-process / tests).
+    outbound: HashMap<u64, Vec<Vec<u8>>>,
     /// When true, skip membership filters and persist even unsigned / forged /
     /// tampered ops so peers can prove AUTH.md §4 / KERNEL §4.4 independently
     /// of the relay (EXEMPLAR E5 / E7).
@@ -81,6 +83,7 @@ impl Relay {
                 next_session: 0,
                 subscribers: HashMap::new(),
                 connections: HashMap::new(),
+                outbound: HashMap::new(),
                 colluding,
             })),
         }
@@ -94,6 +97,7 @@ impl Relay {
                 next_session: 0,
                 subscribers: HashMap::new(),
                 connections: HashMap::new(),
+                outbound: HashMap::new(),
                 colluding: false,
             })),
         })
@@ -282,6 +286,15 @@ impl RelaySession {
                     }
                 }
             }
+            g.outbound.remove(&self.session_id);
+        }
+    }
+
+    /// Drain SIGNAL frames forwarded to this session (in-process / tests).
+    pub fn take_outbound(&self) -> Vec<Vec<u8>> {
+        match self.inner.lock() {
+            Ok(mut g) => g.outbound.remove(&self.session_id).unwrap_or_default(),
+            Err(_) => Vec::new(),
         }
     }
 
@@ -304,6 +317,7 @@ impl RelaySession {
             MSG_MERKLE_LEAF_REQUEST => self.require_auth(&env, |s, e| s.on_merkle_leaf(e)),
             MSG_DELTA_REQUEST => self.require_auth(&env, |s, e| s.on_delta(e)),
             MSG_SUBSCRIBE => self.require_auth(&env, |s, e| s.on_subscribe(e)),
+            MSG_SIGNAL => self.require_auth(&env, |s, e| s.on_signal(e)),
             _ => Ok(vec![error_frame(
                 env.request_id,
                 0x400,
@@ -850,6 +864,69 @@ impl RelaySession {
         )])
     }
 
+    fn on_signal(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        let target = match take32(map_get(&env.payload, "target")) {
+            Ok(t) => t,
+            Err(_) => {
+                return Ok(vec![error_frame(
+                    env.request_id,
+                    0x400,
+                    "BAD_SIGNAL",
+                    false,
+                )]);
+            }
+        };
+        let payload = match take_bytes(map_get(&env.payload, "payload")) {
+            Ok(p) => p,
+            Err(_) => {
+                return Ok(vec![error_frame(
+                    env.request_id,
+                    0x400,
+                    "BAD_SIGNAL",
+                    false,
+                )]);
+            }
+        };
+        let sender = match &self.phase {
+            Phase::Authed { peer_id, .. } => *peer_id,
+            _ => {
+                return Ok(vec![error_frame(
+                    env.request_id,
+                    ERR_AUTH_FAILED,
+                    "AUTH_FAILED",
+                    true,
+                )]);
+            }
+        };
+        let mut g = self.inner.lock().map_err(|_| RelayError::Poison)?;
+        let Some(sessions) = g
+            .connections
+            .get(&target)
+            .filter(|s| !s.is_empty())
+            .cloned()
+        else {
+            drop(g);
+            return Ok(vec![error_frame(
+                env.request_id,
+                ERR_TARGET_NOT_CONNECTED,
+                "TARGET_NOT_CONNECTED",
+                false,
+            )]);
+        };
+        let forwarded = encode_env(
+            MSG_SIGNAL,
+            env.request_id,
+            Cbor::Map(vec![
+                ("sender".into(), Cbor::Bytes(sender.to_vec())),
+                ("payload".into(), Cbor::Bytes(payload)),
+            ]),
+        );
+        for sid in sessions {
+            g.outbound.entry(sid).or_default().push(forwarded.clone());
+        }
+        Ok(vec![])
+    }
+
     fn datastore_allowed(&self, ds: &str) -> Result<bool, RelayError> {
         let guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         if guard.colluding {
@@ -1109,6 +1186,13 @@ fn take32(c: &Cbor) -> Result<[u8; 32], RelayError> {
     match c {
         Cbor::Bytes(b) if b.len() == 32 => Ok(b.as_slice().try_into().unwrap()),
         _ => Err(RelayError::Protocol("b32".into())),
+    }
+}
+
+fn take_bytes(c: &Cbor) -> Result<Vec<u8>, RelayError> {
+    match c {
+        Cbor::Bytes(b) => Ok(b.clone()),
+        _ => Err(RelayError::Protocol("bytes".into())),
     }
 }
 

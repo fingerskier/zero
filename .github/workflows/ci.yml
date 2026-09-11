@@ -114,6 +114,17 @@ jobs:
       - name: Persist/reopen (IDB + OPFS doubles)
         run: node --test --test-concurrency=1 zerodb-wasm/test/persist-reopen.test.mjs
 
+  webrtc:
+    name: WebRTC first-cut (H6)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: SIGNAL + DataChannel peer protocol
+        run: node --test conformance/ts/webrtc/*.test.mjs
+
   react-hooks:
     name: React hooks (M4a)
     runs-on: ubuntu-latest

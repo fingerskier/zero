@@ -1,7 +1,7 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
 **Date:** 2026-09-11
-**Status:** M3c exited (`v0.1.0` Decision Log act @ `177e247`; steward tags). M4a-a landed main #23 @ `56a3bad`. This PR is the **M4a React-hooks** slice (`@zerodb/react` over wasm + `openDurable`). H6/WebRTC stay pinned. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M4a complete, **not** M3b exit, **not** format freeze.
+**Status:** M3c exited (`v0.1.0` Decision Log act @ `177e247`; steward tags). M4a-a landed main #23 @ `56a3bad`. M4a-hooks landed main #24 @ `3f81d62`. This PR is the **M4a H6 WebRTC first-cut**. H6 is unpinned but **not closed**. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M4a complete, **not** M3b exit, **not** format freeze. O4 still open.
 **Authority:** delivery/tracking only. [SPEC §10](../doc/SPEC.md) is the normative roadmap; [ISSUES.md](../doc/ISSUES.md) the issue ledger; [LEDGER.md](LEDGER.md) the live work tracker. On conflict, SPEC wins.
 
 ---
@@ -33,7 +33,8 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 | M3c | **done** — Decision Log act @ `177e247` |
 | `v0.1.0` | **Decision Log act** — git tag follows steward; not format freeze |
 | M4a-a | **done** — WASM + IDB/OPFS persist/reopen (main #23 @ `56a3bad`) |
-| M4a-hooks | **this PR** — optional `@zerodb/react` over live WASM. Not M4a complete |
+| M4a-hooks | **done** — optional `@zerodb/react` over live WASM (main #24 @ `3f81d62`). Not M4a complete |
+| M4a-webrtc | **this PR** — H6 first-cut DataChannel + SIGNAL. H6 not closed. Not M4a complete |
 
 Detailed evidence lives in the [LEDGER Closed index](LEDGER.md) and the [ISSUES Decision Log](../doc/ISSUES.md).
 
@@ -82,15 +83,16 @@ This is the only live action list.
 4. **M3c-d packaging** — landed on main (PR #20): support profile ([SUPPORT.md](../doc/SUPPORT.md)), v0.1 window-size-1 upgrade matrix ([UPGRADE.md](../doc/UPGRADE.md)), changelog / crate version story (`0.1.0-alpha`, unpublished). Formats remain draft-1 / unfrozen. M4 adjacent-version / rolling-upgrade tests not started.
 5. **`v0.1.0` Decision Log act** — landed @ `177e247` (#22): names `v0.1.0` as first multi-peer secure product slice with offline catch-up (SPEC M3c exit). Evidence is H9 two-language fixtures (#19), existing Rust E3, and TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze. Steward creates the git tag. Formats remain draft-1 / unfrozen. **Not** M3b exit / H9 closed.
 6. **M4a-a** — landed main #23 @ `56a3bad`: IndexedDB + OPFS adapters behind `zerodb-wasm`; persist/reopen of signed KERNEL ops. Occupied-IDB auto, versionless IDB open, serialized persist, fail-closed OPFS identity. O4 gzip 262.6 KiB vs ~250 KB stays open. Not M4a complete.
-7. **M4a-hooks** — this PR: optional `@zerodb/react` (`ZeroDbProvider`, `useQuery` / `useNode` / `useMutation` / `useSyncStatus`) wrapping the live WASM API + `journal.persist`. No typed query DSL. `useSyncStatus` is local ready/offline (no `zero-sync.mjs` / WebRTC). H6/WebRTC stay pinned. Do not mark M4a complete.
+7. **M4a-hooks** — landed main #24 @ `3f81d62`: optional `@zerodb/react` (`ZeroDbProvider`, `useQuery` / `useNode` / `useMutation` / `useSyncStatus`) wrapping the live WASM API + `journal.persist`. No typed query DSL. `useSyncStatus` is local ready/offline. Not M4a complete.
+8. **M4a-webrtc (this PR)** — H6 first-cut: SIGNAL (0x42) + ordered `zerodb-relay` DataChannel carrying the shared peer protocol (HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS). Reuses `handshake.rs` `AuthTranscript` — no second AUTH preimage. Evidence: `conformance/ts/webrtc/webrtc.test.mjs` + `zerodb-relay/tests/signal.rs`. **H6 not closed** (role negotiation, datastore admission tokens, reconnect, conformance profile still open). **Not** M4a complete. O4 still open.
 
 **Pinned (do not start):**
 - **perf Stage 2** — trigger: Stage 0 still scan-dominated
 - **perf Stage 3** — trigger: equal/one-op-delta still full-history
-- **H6 direct P2P** — parked to M4; reuse the handshake transcript helper
+- **H6 remainder** — first-cut is this PR; do not mark closed until role negotiation, datastore admission, reconnect, and a conformance profile have evidence
 - **H10** remains open (leftovers implemented this pass: offline-revoke at `open`, bootstrap hold, principal/device wrap, wrap-shape draft). Not closed.
 - M3b remainder stays pinned/open (this work is the pinned remainder, not a gate rename / not M3b exit)
-- M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm; WebRTC
-- Experimental browser-peer/IDB slice grew into M4a-a adapters (#23); this PR is the React-hooks slice; H6/WebRTC later on that track
+- M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm
+- Experimental browser-peer/IDB slice grew into M4a-a adapters (#23); hooks landed #24; this PR is the H6 first-cut on that track
 
 Live rows: [LEDGER.md](LEDGER.md). Historical July reviews: [plan/archive/](archive/).
