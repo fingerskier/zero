@@ -14,7 +14,16 @@ import {
   KIND_SET_PROPERTY,
   encodeSchemaIr,
 } from './store.mjs'
-import { splitOpsBatches, encodeRelayOp, welcomeLimits } from './client.mjs'
+import { splitOpsBatches, encodeRelayOp, welcomeLimits, checkWelcomeProtocol, sync } from './client.mjs'
+import {
+  encodeEnvelope,
+  decodeEnvelope,
+  MSG_HELLO,
+  MSG_CHALLENGE,
+  MSG_AUTH,
+  MSG_OPS,
+  MSG_SYNC_REQUEST,
+} from '../models/relay.mjs'
 
 const TODO_PIN = { nodes: { Todo: { props: { title: 'lww' } } } }
 
@@ -250,4 +259,66 @@ test('welcomeLimits reads advertised values', () => {
   assert.equal(limits.max_payload_bytes, 256)
   assert.equal(limits.ops_per_second, 100)
   assert.equal(limits.bytes_per_second, 4096)
+})
+
+test('checkWelcomeProtocol accepts draft-1 only', () => {
+  assert.doesNotThrow(() => checkWelcomeProtocol({ protocol_version: 1 }))
+  assert.throws(() => checkWelcomeProtocol({ protocol_version: 2 }), /0x102 VERSION_MISMATCH/)
+  assert.throws(() => checkWelcomeProtocol({}), /0x102 VERSION_MISMATCH/)
+  assert.throws(() => checkWelcomeProtocol({ protocol_version: '1' }), /VERSION_MISMATCH/)
+  assert.throws(() => checkWelcomeProtocol(null), /VERSION_MISMATCH/)
+})
+
+function welcomePayload(version) {
+  const payload = {
+    relay_level: 2,
+    capabilities: [],
+    limits: {
+      max_batch_ops: 64,
+      max_batch_bytes: 1024,
+      max_payload_bytes: 256,
+      ops_per_second: 100,
+      bytes_per_second: 4096,
+    },
+  }
+  if (version !== undefined) payload.protocol_version = version
+  return payload
+}
+
+function mockWelcomeHandle(version) {
+  const seen = []
+  const handle = async (frame) => {
+    const env = decodeEnvelope(frame)
+    seen.push(env.type)
+    if (env.type === MSG_HELLO) {
+      return [encodeEnvelope(MSG_CHALLENGE, env.request_id, { nonce: '00'.repeat(32) })]
+    }
+    if (env.type === MSG_AUTH) {
+      return [encodeEnvelope(MSG_WELCOME, env.request_id, welcomePayload(version))]
+    }
+    throw new Error(`client proceeded past WELCOME with type ${env.type}`)
+  }
+  return { handle, seen }
+}
+
+test('sync rejects WELCOME protocol_version other than 1 and does not send OPS', async () => {
+  const store = new PeerStore()
+  store.applySchemaEpoch(TODO_PIN)
+  const { node } = store.createNode('Todo')
+  store.setLww(node, 'title', 'milk')
+  const { handle, seen } = mockWelcomeHandle(2)
+  await assert.rejects(() => sync(store, null, handle), /0x102 VERSION_MISMATCH/)
+  assert.ok(!seen.includes(MSG_OPS), `must not send OPS, seen=${seen}`)
+  assert.ok(!seen.includes(MSG_SYNC_REQUEST), `must not send SYNC_REQUEST, seen=${seen}`)
+})
+
+test('sync rejects missing WELCOME protocol_version and does not send OPS', async () => {
+  const store = new PeerStore()
+  store.applySchemaEpoch(TODO_PIN)
+  const { node } = store.createNode('Todo')
+  store.setLww(node, 'title', 'milk')
+  const { handle, seen } = mockWelcomeHandle(undefined)
+  await assert.rejects(() => sync(store, null, handle), /0x102 VERSION_MISMATCH/)
+  assert.ok(!seen.includes(MSG_OPS), `must not send OPS, seen=${seen}`)
+  assert.ok(!seen.includes(MSG_SYNC_REQUEST), `must not send SYNC_REQUEST, seen=${seen}`)
 })

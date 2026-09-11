@@ -16,11 +16,11 @@ use zerodb_core::merkle::{
     BUCKET_WIDTH_MS, MERKLE_FORMAT_VERSION, MerkleOp, MerkleTree, merkle_root,
 };
 use zerodb_core::relay::{
-    DEFAULT_BYTES_PER_SECOND, DEFAULT_OPS_PER_SECOND, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH,
-    MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE,
-    MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE,
-    MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk,
-    sign_auth_for_hello,
+    DEFAULT_BYTES_PER_SECOND, DEFAULT_OPS_PER_SECOND, DEFAULT_PROTOCOL_VERSION, MSG_AUTH,
+    MSG_CHALLENGE, MSG_DELTA_BATCH, MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO,
+    MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST,
+    MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
+    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, peer_id_from_pk, sign_auth_for_hello,
 };
 
 use crate::authz::bundle_datastore_id;
@@ -88,6 +88,7 @@ where
         "WELCOME",
     )?;
     let (_, _, welcome_pl) = decode_env(&welcome)?;
+    check_welcome_protocol(&welcome_pl)?;
     let limits = welcome_limits(&welcome_pl);
 
     let ds = join_ds
@@ -409,6 +410,15 @@ struct ClientLimits {
     max_payload_bytes: usize,
     ops_per_second: u32,
     bytes_per_second: u64,
+}
+
+/// RELAY-SPEC `0x102 VERSION_MISMATCH`. Window size 1: accept draft-1 `1` only.
+/// Missing, unknown, or other values fail closed. Not `FORMAT_UNSUPPORTED`.
+fn check_welcome_protocol(welcome: &Cbor) -> Result<(), StoreError> {
+    match map_get(welcome, "protocol_version") {
+        Cbor::Uint(n) if *n == DEFAULT_PROTOCOL_VERSION as u64 => Ok(()),
+        _ => Err(err("0x102 VERSION_MISMATCH")),
+    }
 }
 
 fn welcome_limits(welcome: &Cbor) -> ClientLimits {
@@ -835,6 +845,25 @@ mod split_tests {
         assert_eq!(limits.max_batch_ops, 16);
         assert_eq!(limits.ops_per_second, 100);
         assert_eq!(limits.bytes_per_second, 4096);
+    }
+
+    #[test]
+    fn welcome_protocol_accepts_draft_1_only() {
+        let v1 = Cbor::Map(vec![("protocol_version".into(), Cbor::Uint(1))]);
+        assert!(check_welcome_protocol(&v1).is_ok());
+
+        let other = Cbor::Map(vec![("protocol_version".into(), Cbor::Uint(2))]);
+        let err = check_welcome_protocol(&other).unwrap_err().to_string();
+        assert!(err.contains("0x102"), "got {err}");
+        assert!(err.contains("VERSION_MISMATCH"), "got {err}");
+
+        let missing = Cbor::Map(vec![("limits".into(), Cbor::Map(vec![]))]);
+        let err = check_welcome_protocol(&missing).unwrap_err().to_string();
+        assert!(err.contains("VERSION_MISMATCH"), "got {err}");
+
+        let wrong_type = Cbor::Map(vec![("protocol_version".into(), Cbor::Text("1".into()))]);
+        let err = check_welcome_protocol(&wrong_type).unwrap_err().to_string();
+        assert!(err.contains("VERSION_MISMATCH"), "got {err}");
     }
 
     #[test]

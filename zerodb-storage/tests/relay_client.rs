@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use zerodb_core::cbor::{self, Cbor};
 use zerodb_core::merkle::{MerkleOp, empty_leaf, merkle_root};
-use zerodb_core::relay::{MSG_OPS, MSG_SYNC_REQUEST};
+use zerodb_core::relay::{
+    MSG_AUTH, MSG_CHALLENGE, MSG_HELLO, MSG_OPS, MSG_SYNC_REQUEST, MSG_WELCOME,
+};
 use zerodb_relay::Relay;
 use zerodb_storage::relay_client;
 use zerodb_storage::{LocalStore, MemoryBackend, StoreBackend, StoreError};
@@ -83,6 +85,52 @@ fn drive<B: StoreBackend>(
             .map_err(|e| StoreError::Invalid(e.to_string()))
     })
     .expect("relay client session")
+}
+
+fn encode_test_env(ty: u8, request_id: u32, payload: Cbor) -> Vec<u8> {
+    cbor::encode(&Cbor::Map(vec![
+        ("type".into(), Cbor::Uint(ty as u64)),
+        ("request_id".into(), Cbor::Uint(request_id as u64)),
+        ("payload".into(), payload),
+    ]))
+    .expect("encode envelope")
+}
+
+fn challenge_frame(request_id: u32) -> Vec<u8> {
+    encode_test_env(
+        MSG_CHALLENGE,
+        request_id,
+        Cbor::Map(vec![("nonce".into(), Cbor::Bytes(vec![0u8; 32]))]),
+    )
+}
+
+fn welcome_frame(request_id: u32, protocol_version: Option<u64>) -> Vec<u8> {
+    let mut ents = vec![
+        ("relay_level".into(), Cbor::Uint(2)),
+        ("capabilities".into(), Cbor::Array(vec![])),
+        ("limits".into(), Cbor::Map(vec![])),
+    ];
+    if let Some(v) = protocol_version {
+        ents.insert(0, ("protocol_version".into(), Cbor::Uint(v)));
+    }
+    encode_test_env(MSG_WELCOME, request_id, Cbor::Map(ents))
+}
+
+fn sync_against_welcome(
+    store: &mut LocalStore<MemoryBackend>,
+    protocol_version: Option<u64>,
+) -> (Result<relay_client::RelaySyncSummary, StoreError>, Vec<u8>) {
+    let mut seen = Vec::new();
+    let result = relay_client::sync(store, None, |frame| {
+        let ty = frame_type(frame);
+        seen.push(ty);
+        match ty {
+            MSG_HELLO => Ok(vec![challenge_frame(1)]),
+            MSG_AUTH => Ok(vec![welcome_frame(2, protocol_version)]),
+            other => panic!("client proceeded past WELCOME with type {other}"),
+        }
+    });
+    (result, seen)
 }
 
 fn tmp_db(name: &str) -> PathBuf {
@@ -228,6 +276,56 @@ fn outgoing_ops_split_to_welcome_batch_limits() {
     assert_eq!(summary.sent, 70);
     assert_eq!(summary.ack_accepted, 70);
     assert_eq!(summary.ack_rejected, 0);
+}
+
+#[test]
+fn welcome_protocol_v1_still_syncs_through_in_process_relay() {
+    let mut a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    let node = a.create_node("Todo").unwrap();
+    a.set_lww(&node, "title", "milk").unwrap();
+
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    let pushed = drive(&mut a, &mut sess, None);
+    assert!(pushed.sent >= 2);
+    assert_eq!(pushed.ack_accepted, pushed.sent);
+    assert_eq!(pushed.ack_rejected, 0);
+}
+
+#[test]
+fn welcome_protocol_other_than_1_does_not_send_ops() {
+    let mut a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    let node = a.create_node("Todo").unwrap();
+    a.set_lww(&node, "title", "milk").unwrap();
+    assert!(a.op_count().unwrap() >= 2);
+
+    let (result, seen) = sync_against_welcome(&mut a, Some(2));
+    let err = result.expect_err("non-1 WELCOME must fail closed");
+    let msg = err.to_string();
+    assert!(msg.contains("0x102"), "got {msg}");
+    assert!(msg.contains("VERSION_MISMATCH"), "got {msg}");
+    assert!(!seen.contains(&MSG_OPS), "must not send OPS, seen={seen:?}");
+    assert!(
+        !seen.contains(&MSG_SYNC_REQUEST),
+        "must not send SYNC_REQUEST, seen={seen:?}"
+    );
+}
+
+#[test]
+fn welcome_protocol_missing_does_not_send_ops() {
+    let mut a = LocalStore::init_with_backend(MemoryBackend::new()).unwrap();
+    let node = a.create_node("Todo").unwrap();
+    a.set_lww(&node, "title", "milk").unwrap();
+
+    let (result, seen) = sync_against_welcome(&mut a, None);
+    let err = result.expect_err("missing WELCOME protocol_version must fail closed");
+    let msg = err.to_string();
+    assert!(msg.contains("VERSION_MISMATCH"), "got {msg}");
+    assert!(!seen.contains(&MSG_OPS), "must not send OPS, seen={seen:?}");
+    assert!(
+        !seen.contains(&MSG_SYNC_REQUEST),
+        "must not send SYNC_REQUEST, seen={seen:?}"
+    );
 }
 
 #[test]
