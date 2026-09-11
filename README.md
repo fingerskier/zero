@@ -2,7 +2,7 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** M0 contracts, M1 local core, M2 Node SDK, M3a durable convergence, and **M3c** (`v0.1.0` Decision Log act @ `177e247`) are complete. M3b remainder is **pinned** (E5–E8 live; **not** M3b exit). Current work: **M4a-a** WASM + IndexedDB/OPFS persist/reopen. **Not** M4a complete (React hooks / WebRTC later). *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
+**Status:** M0 contracts, M1 local core, M2 Node SDK, M3a durable convergence, and **M3c** (`v0.1.0` Decision Log act @ `177e247`) are complete. M3b remainder is **pinned** (E5–E8 live; **not** M3b exit). M4a-a (WASM + IDB/OPFS) landed main #23. Current work: **M4a React hooks** (`@zerodb/react`). **Not** M4a complete (WebRTC / H6 stay pinned). *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
 
 
 ## Documents
@@ -31,6 +31,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [Performance review](plan/PERF.md) | Static review + Stage 0+1 / pinned Stage 2/3 disposition (not a benchmark report) |
 | [Archived reviews](plan/archive/) | Historical July 2026 FINDINGS (not the live backlog) |
 | [Node SDK (M2)](zerodb-napi/) | Experimental `@zerodb/node` NAPI binding — `npm install && npm run build && npm test` |
+| [React hooks (M4a)](zerodb-react/) | Optional `@zerodb/react` over wasm + `openDurable` — not M4a complete |
 | [TS→IR (M1)](tools/ts-to-ir/) | Minimal authoring JSON → schema pin IR for `schema-apply` |
 
 ## v0.1 scope
@@ -85,4 +86,4 @@ Ops are signed Ed25519; LWW merge uses the KERNEL §4.5 total order. This is an 
 ## Contributing
 
 Start with [ISSUES.md](doc/ISSUES.md).
-Current work is **M3c-d packaging** (support profile + v0.1 upgrade matrix). M3c-a..c are on main. Pinned: Stage 2/3, H6 P2P (M4), H10 open (leftovers implemented, not closed), M3b remainder. All formats remain draft-1 and unfrozen. Do not claim M3b exit, M3c complete, or tag `v0.1.0`.
+Current work is the **M4a React-hooks** slice. M4a-a is on main (#23). Pinned: Stage 2/3, H6 P2P/WebRTC, H10 open (leftovers implemented, not closed), M3b remainder. All formats remain draft-1 and unfrozen. Do not claim M4a complete, M3b exit, format freeze, or retag `v0.1.0`.

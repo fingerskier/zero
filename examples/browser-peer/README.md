@@ -71,4 +71,5 @@ npm run build:debug`.)
   `serve` does by default); otherwise it falls back to interval polling.
 - **Memory store + adapter journal**: state still lives in wasm memory;
   IDB/OPFS adapters journal signed ops (M4a-a). sqlite-wasm / wa-sqlite
-  remains parked. React hooks and WebRTC are not this slice.
+  remains parked. React hooks live in `@zerodb/react` (optional; this
+  demo stays vanilla). WebRTC is not this slice.

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>zerodb react hooks (experimental M4a)</title>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client"
+  }
+}
+</script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 36rem; margin: 2rem auto; padding: 0 1rem; }
+  .muted { color: #666; font-size: 0.85rem; }
+  li { font-family: monospace; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<h1>zerodb react hooks</h1>
+<p class="muted">
+  Optional <code>@zerodb/react</code> over wasm + IDB/OPFS.
+  Not M4a complete. No WebRTC. <code>useSyncStatus</code> is local ready/offline.
+</p>
+<div id="root"></div>
+<script type="module" src="./app.mjs"></script>
+</body>
+</html>

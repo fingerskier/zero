@@ -113,3 +113,24 @@ jobs:
         run: node zerodb-wasm/scripts/measure-size.mjs
       - name: Persist/reopen (IDB + OPFS doubles)
         run: node --test --test-concurrency=1 zerodb-wasm/test/persist-reopen.test.mjs
+
+  react-hooks:
+    name: React hooks (M4a)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - name: Build wasm pkg
+        run: bash zerodb-wasm/scripts/build.sh
+      - name: Hook tests
+        working-directory: zerodb-react
+        run: npm ci && npm test
