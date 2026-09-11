@@ -29,6 +29,8 @@ export interface ZeroDbContextValue {
   adapter: string | null
   opCount: number
   error: Error | null
+  /** Last `journal.persist` failure (quota / denied IDB). Cleared on success. */
+  persistError: Error | null
   persist: () => Promise<void>
 }
 

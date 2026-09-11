@@ -279,4 +279,131 @@ test('hooks: durable open, mutate+reopen, onChange, occupied-IDB auto', async ()
     )
     tree.unmount()
   }
+
+  {
+    const indexedDB = fakeIndexedDB()
+    let renders = 0
+    const snap = { current: null }
+    function Probe() {
+      const ctx = useZeroDb()
+      const sync = useSyncStatus()
+      const q = useQuery('MATCH (t:Todo) RETURN t.title', { unused: 1 })
+      renders += 1
+      useEffect(() => {
+        snap.current = { ctx, sync, q, renders }
+      })
+      return null
+    }
+    const tree = renderer.create(
+      createElement(
+        ZeroDbProvider,
+        { ZeroDb, name: 'hooks-params', adapter: 'indexeddb', indexedDB },
+        createElement(Probe),
+      ),
+    )
+    const ready = await waitFor(
+      () => snap.current,
+      v => assert.equal(v?.sync, 'ready'),
+    )
+    const atReady = ready.renders
+    await flush(12)
+    assert.ok(
+      snap.current.renders - atReady < 8,
+      `inline params re-rendered too often: ${atReady} -> ${snap.current.renders}`,
+    )
+    assert.equal(snap.current.q.ready, true)
+    tree.unmount()
+  }
+
+  {
+    const indexedDB = fakeIndexedDB()
+    const first = mount({
+      name: 'store-a',
+      adapter: 'indexeddb',
+      indexedDB,
+    })
+    const opened = await waitFor(
+      () => first.snap.current,
+      v => assert.equal(v?.sync, 'ready'),
+    )
+    const peerA = opened.ctx.db.peerId()
+    await act(async () => {
+      const id = await opened.mutate.createNode('Todo')
+      await opened.mutate.setLww(id, 'title', 'only-a')
+    })
+    await waitFor(
+      () => first.snap.current,
+      v => assert.equal(v.q.rows[0]?.['t.title'], 'only-a'),
+    )
+    first.tree.update(
+      createElement(
+        ZeroDbProvider,
+        { ZeroDb, persistOnChange: true, name: 'store-b', adapter: 'indexeddb', indexedDB },
+        createElement(Harness, {
+          onTick: v => { first.snap.current = v },
+        }),
+      ),
+    )
+    await waitFor(
+      () => first.snap.current,
+      v => {
+        assert.equal(v?.sync, 'ready')
+        assert.notEqual(v.ctx.db.peerId(), peerA)
+        assert.equal(v.q.rows.length, 0)
+      },
+    )
+    first.tree.unmount()
+  }
+
+  {
+    const indexedDB = fakeIndexedDB()
+    const { tree, snap } = mount({
+      name: 'hooks-persist-err',
+      adapter: 'indexeddb',
+      indexedDB,
+    })
+    const opened = await waitFor(
+      () => snap.current,
+      v => assert.equal(v?.sync, 'ready'),
+    )
+    const boom = new Error('quota')
+    opened.ctx.journal.persist = async () => { throw boom }
+    await act(async () => {
+      await assert.rejects(() => opened.mutate.createNode('Todo'), /quota/)
+    })
+    await waitFor(
+      () => snap.current,
+      v => assert.equal(v.ctx.persistError, boom),
+    )
+    tree.unmount()
+  }
+
+  {
+    const indexedDB = fakeIndexedDB()
+    const { tree, snap } = mount({
+      name: 'hooks-edge',
+      adapter: 'indexeddb',
+      indexedDB,
+    })
+    const opened = await waitFor(
+      () => snap.current,
+      v => assert.equal(v?.sync, 'ready'),
+    )
+    let queries = 0
+    const orig = opened.ctx.db.query.bind(opened.ctx.db)
+    opened.ctx.db.query = (...args) => {
+      queries += 1
+      return orig(...args)
+    }
+    await act(async () => {
+      const a = await opened.mutate.createNode('Todo')
+      const b = await opened.mutate.createNode('Todo')
+      await flush(6)
+      const before = queries
+      await opened.mutate(db => db.createEdge('rel', a, b))
+      await flush(6)
+      assert.ok(queries > before, `createEdge did not invalidate query (${before} -> ${queries})`)
+    })
+    tree.unmount()
+  }
 })

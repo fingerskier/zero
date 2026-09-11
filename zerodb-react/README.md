@@ -73,8 +73,17 @@ persistence path.
 ### Subscribe
 
 `useQuery(q, params?)` re-runs `db.query` / `db.queryWith` after
-`onChange`. `useNode(id)` re-reads `listNodes()`. Callbacks are deferred
-with `queueMicrotask` so they do not re-enter the wasm borrow.
+`onChange` and after `useMutation`. Inline `params` objects are compared
+by JSON (`paramsKey`), not identity. `useNode(id)` re-reads `listNodes()`.
+Callbacks are deferred with `queueMicrotask` so they do not re-enter the
+wasm borrow.
+
+`useZeroDb().persistError` is set when `journal.persist` fails (quota,
+denied IndexedDB) and cleared on the next success. `useSyncStatus` stays
+local `offline` / `ready` — it is not a persist-error channel.
+
+Changing `name` / `adapter` / injected storage on a mounted provider
+leaves `ready` immediately so children do not mutate the previous store.
 
 ## Honest limitations
 

@@ -20,6 +20,17 @@ import { openDurable } from '../../zerodb-wasm/js/storage.mjs'
 
 const ZeroDbContext = createContext(null)
 
+const EMPTY_OPEN = {
+  status: 'loading',
+  db: null,
+  journal: null,
+  restored: false,
+  adapter: null,
+  opCount: 0,
+  error: null,
+  persistError: null,
+}
+
 function notReady() {
   throw new Error('useZeroDb must be used within ZeroDbProvider')
 }
@@ -70,22 +81,20 @@ export function ZeroDbProvider({
   persistOnChange = true,
   fallback = null,
 }) {
-  const [state, setState] = useState({
-    status: 'loading',
-    db: null,
-    journal: null,
-    restored: false,
-    adapter: null,
-    opCount: 0,
-    error: null,
-  })
+  const [state, setState] = useState(EMPTY_OPEN)
+  const [revision, setRevision] = useState(0)
   const openedRef = useRef(null)
   const aliveRef = useRef(true)
+
+  const setPersistError = useCallback(persistError => {
+    setState(s => (s.persistError === persistError ? s : { ...s, persistError }))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     aliveRef.current = true
     openedRef.current = null
+    setState(EMPTY_OPEN)
     openDurable(ZeroDb, { name, adapter, indexedDB, opfsRoot, getDirectory })
       .then(opened => {
         if (cancelled) {
@@ -101,6 +110,7 @@ export function ZeroDbProvider({
           adapter: opened.adapter,
           opCount: opened.opCount,
           error: null,
+          persistError: null,
         })
       })
       .catch(error => {
@@ -125,20 +135,31 @@ export function ZeroDbProvider({
     const id = db.onChange(() => {
       queueMicrotask(() => {
         if (!aliveRef.current) return
-        journal.persist(db).catch(() => {})
+        journal.persist(db).then(
+          () => setPersistError(null),
+          error => setPersistError(error),
+        )
       })
     })
     return () => safeOff(db, id)
-  }, [state.db, state.journal, persistOnChange])
+  }, [state.db, state.journal, persistOnChange, setPersistError])
 
   const persist = useCallback(async () => {
     if (!state.db || !state.journal) throw new Error('ZeroDb is not ready')
-    await state.journal.persist(state.db)
-  }, [state.db, state.journal])
+    try {
+      await state.journal.persist(state.db)
+      setPersistError(null)
+    } catch (error) {
+      setPersistError(error)
+      throw error
+    }
+  }, [state.db, state.journal, setPersistError])
+
+  const invalidate = useCallback(() => setRevision(n => n + 1), [])
 
   const value = useMemo(
-    () => ({ ...state, persist }),
-    [state, persist],
+    () => ({ ...state, persist, revision, invalidate }),
+    [state, persist, revision, invalidate],
   )
 
   const tree = fallback != null && state.status !== 'ready' ? fallback : children
@@ -156,7 +177,7 @@ export function useZeroDb() {
  * `params` is optional and passed to `queryWith` as JSON.
  */
 export function useQuery(query, params) {
-  const { db, status } = useZeroDb()
+  const { db, status, revision } = useZeroDb()
   const version = useGraphVersion(db)
   const paramsKey = params === undefined ? '' : JSON.stringify(params)
   const [result, setResult] = useState({ rows: [], error: null, ready: false })
@@ -168,7 +189,7 @@ export function useQuery(query, params) {
     }
     let mounted = true
     try {
-      const raw = params === undefined
+      const raw = paramsKey === ''
         ? db.query(query)
         : db.queryWith(query, paramsKey)
       const rows = Array.isArray(raw) ? raw : []
@@ -177,14 +198,14 @@ export function useQuery(query, params) {
       if (mounted) setResult({ rows: [], error, ready: true })
     }
     return () => { mounted = false }
-  }, [db, status, version, query, params, paramsKey])
+  }, [db, status, version, revision, query, paramsKey])
 
   return result
 }
 
 /** One materialized node `{ id, label, deleted, props }` from `listNodes`. */
 export function useNode(id) {
-  const { db, status } = useZeroDb()
+  const { db, status, revision } = useZeroDb()
   const version = useGraphVersion(db)
   const [node, setNode] = useState(null)
 
@@ -202,7 +223,7 @@ export function useNode(id) {
       if (mounted) setNode(null)
     }
     return () => { mounted = false }
-  }, [db, status, version, id])
+  }, [db, status, version, revision, id])
 
   return node
 }
@@ -227,16 +248,20 @@ function bindMutators(mutate) {
  * Not the SPEC sketch `p => p.viewCount.increment(1)` DSL.
  */
 export function useMutation() {
-  const { db, journal, status, persist } = useZeroDb()
+  const { db, journal, status, persist, invalidate } = useZeroDb()
 
   const mutate = useCallback(async fn => {
     if (!db || !journal || status !== 'ready') {
       throw new Error('ZeroDb is not ready')
     }
     const result = fn(db)
-    await persist()
-    return result
-  }, [db, journal, status, persist])
+    try {
+      await persist()
+      return result
+    } finally {
+      invalidate()
+    }
+  }, [db, journal, status, persist, invalidate])
 
   return useMemo(() => {
     const wrapped = mutate
