@@ -121,7 +121,7 @@ fn sync_against_welcome(
     protocol_version: Option<u64>,
 ) -> (Result<relay_client::RelaySyncSummary, StoreError>, Vec<u8>) {
     let mut seen = Vec::new();
-    let result = relay_client::sync(store, None, |frame| {
+    let result = relay_client::sync(store, None, |frame| -> Result<Vec<Vec<u8>>, StoreError> {
         let ty = frame_type(frame);
         seen.push(ty);
         match ty {

@@ -21,6 +21,7 @@ import {
   MSG_HELLO,
   MSG_CHALLENGE,
   MSG_AUTH,
+  MSG_WELCOME,
   MSG_OPS,
   MSG_SYNC_REQUEST,
 } from '../models/relay.mjs'
