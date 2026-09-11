@@ -77,7 +77,7 @@ Depends: M3c done. **Not** M4a complete this PR (no React hooks, no WebRTC/H6, n
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
-| M4a-a | WASM + IndexedDB + OPFS persist/reopen | done(this PR) | Product-surface adapters in `zerodb-wasm/js/storage.mjs`; live store remains `MemoryBackend`. Evidence: `zerodb-wasm/test/persist-reopen.test.mjs`. WASM gzip recorded in SUPPORT (O4 target still open). React hooks next. Not M4a complete. |
+| M4a-a | WASM + IndexedDB + OPFS persist/reopen | done(this PR) | Product-surface adapters in `zerodb-wasm/js/storage.mjs`; live store remains `MemoryBackend`. Evidence: `zerodb-wasm/test/persist-reopen.test.mjs` (occupied-IDB auto, IDB v2 open, serialized persist, corrupt identity fail-closed). WASM gzip recorded in SUPPORT (O4 target still open). React hooks next. Not M4a complete. |
 | M4a | Browser/WASM/WebRTC/React | open | Hooks + WebRTC/H6 remain. Do not mark complete. |
 
 ### Later gates
