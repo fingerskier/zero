@@ -260,7 +260,7 @@ fn run_vector(v: &Json, path: &Path) {
     };
     if let Some(setup) = v["setup"].as_array() {
         for w in epoch_first(setup) {
-            let r = peer.ingest(w, &expected);
+            let r = peer.ingest(&w, &expected);
             assert!(
                 r == "applied" || r == "duplicate",
                 "{} setup {}: {r}",
@@ -331,11 +331,9 @@ fn epoch_first_ranks_genesis_then_schema_then_data() {
         serde_json::json!({"id": "g", "kind": 0}),
         serde_json::json!({"id": "d2", "kind": 3}),
     ];
-    let ordered: Vec<&str> = epoch_first(&ops)
-        .iter()
-        .map(|o| o["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ordered, vec!["g", "s", "d", "d2"]);
+    let ordered = epoch_first(&ops);
+    let ids: Vec<&str> = ordered.iter().map(|o| o["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["g", "s", "d", "d2"]);
 }
 
 #[test]
