@@ -1070,7 +1070,7 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 **M4a — platform:**
 
 - [ ] IndexedDB + OPFS adapters; WASM build within size budget (ISSUES O4); React hooks
-- [ ] WebRTC direct sync using the shared peer protocol
+- [x] WebRTC direct sync using the shared peer protocol
 
 **M4b — evolution:**
 

@@ -40,7 +40,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 This specification does **not** define:
 
-- Peer-to-peer direct sync behavior (see SPEC.md §4, ISSUES H6)
+- Peer-to-peer direct sync behavior (see SPEC.md §4; H6 closed — RELAY-SPEC §14.2 / Decision Log)
 - CRDT merge semantics (see SPEC.md §3)
 - Storage engine internals for relay persistence
 - Application-level access control evaluation (see SPEC.md §9.2)
@@ -530,7 +530,7 @@ The handshake proves the peer controls the Ed25519 private key corresponding to 
 
 If either check fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
 
-> Draft AUTH preimage (unfrozen). H6 reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). Optional `HELLO.datastore` is in the hello map when present and omitted when absent (no-ds goldens stay byte-identical). A swapped or present-but-invalid claim (wrong length / non-hex) fails closed. H6 is a close candidate — not closed until the steward confirms.
+> Draft AUTH preimage (unfrozen). H6 reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). Optional `HELLO.datastore` is in the hello map when present and omitted when absent (no-ds goldens stay byte-identical). A swapped or present-but-invalid claim (wrong length / non-hex) fails closed. H6 is closed (Decision Log); the AUTH preimage stays draft-1 / unfrozen.
 
 ### 5.3 Relay Identity
 
@@ -764,7 +764,7 @@ Relays are **untrusted intermediaries**. This is a core design principle inherit
 - Forge operations (Ed25519 signatures verify authorship)
 - Undetectably drop operations **from a peer that compares Merkle roots with a second independent source** (§12.3) — a peer relying on this relay alone can be censored
 - Read E2E-encrypted operation content (relay sees only ciphertext; encryption scope per ISSUES H8/H10)
-- Impersonate a peer **to the relay's own auth layer** (challenge-response). Caveat: the forwarded `SIGNAL.sender` field is relay-asserted — signaling identity is not end-to-end authenticated until the signed peer handshake ships (ISSUES H6, M3)
+- Impersonate a peer **to the relay's own auth layer** (challenge-response). Caveat: the forwarded `SIGNAL.sender` field is relay-asserted — signaling identity is not end-to-end authenticated until the signed peer handshake on the DataChannel (RELAY-SPEC §14.2; H6 closed)
 
 ### 12.2 Metadata Leakage
 
@@ -817,7 +817,7 @@ For relay-facilitated P2P upgrade or environments without WebSocket.
 - There is no session resumption token: a reconnecting peer repeats the full handshake. Already-acked ops are omitted (or `DUPLICATE`) via `resume-cursor` / DELIVERY §4 — not a second resume protocol.
 - SIGNAL already carries opaque ICE. Hosted TURN / public STUN is a **deployment** choice, not a protocol requirement (Decision Log: H6 close does not require a TURN server).
 
-H6 is a protocol close *candidate* until the steward confirms; this section is draft-1 / unfrozen.
+H6 is closed (Decision Log 2026-09-12). The DataChannel wire remains draft-1 / unfrozen — that is a format stance, not an H6 reopen.
 
 ---
 

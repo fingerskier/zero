@@ -1,7 +1,7 @@
 /**
  * Live zerodb-relay WebSocket SIGNAL fanout. Two authenticated sockets;
  * forwarded {sender, payload} arrives on the other socket. Target gone
- * → 0x307. Not H6 closed. Not M4a complete.
+ * → 0x307. H6 closed (protocol). Not M4a complete.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
