@@ -2,7 +2,7 @@
 
 Canonical work tracker. A gate closes only with **Exit evidence** (commit, fixture path, or CI run).
 
-**DRI:** `fingerskier` unless a row names someone else. Effort bands (rough solo): S ≤ 1 wk, M ≤ 1 mo, L > 1 mo. DQ-12 capacity ratification remains open.
+**DRI:** `fingerskier` unless a row names someone else. Effort bands (rough solo): S ≤ 1 wk, M ≤ 1 mo, L > 1 mo — informational; DQ-12 capacity ratification was dropped 2026-09-12.
 
 Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)` · `pinned`.
 

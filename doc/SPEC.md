@@ -1040,7 +1040,8 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 
 #### M3a — Durable convergence (internal)
 
-- [x] **L2 reference relay**: durable SQLite persistence, full-oplog catch-up, GC off — `zerodb-relay` (M3a, 2026-08-15). Receipt vs durable ack (ISSUES H11) still open.
+- [x] **L2 reference relay**: durable SQLite persistence, full-oplog catch-up, GC off — `zerodb-relay` (M3a, 2026-08-15).
+- [ ] Receipt vs durable acknowledgement (ISSUES H11; RELAY-SPEC §4.4) — `OP_ACK` still acknowledges receipt before L2 persistence. Open; not part of the M3a exit claim.
 - [x] Merkle/delta wire protocol (`merkle-walk-v1`, frozen-snapshot walk) + delivery/ack/resume semantics (`resume-cursor`, `reject-ack`, DELIVERY §4) — M3a; `RELAY-WALK-001`, `RELAY-RESUME-001`.
 - [x] Loss/reorder/partition/rejoin, three-peer offline catch-up, crash/restart — `full_exemplar_e3_1000_ops_hard_crash_and_relay_only_catchup`, `m3a-relay.test.mjs`.
 
@@ -1048,8 +1049,10 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 
 #### M3b — Security (internal)
 
-- [x] Mandatory signing policy, OpId/datastore bind, datastore-membership admission — `m3b_admission`, `e5_membership` (C4 on-wire). Author-key resolution via device certs is live; the C5 device-cert **trust store / PKI story** is not (a write member can still mint a well-signed cert under its own root).
-- [x] Handshake hardening: CBOR-only through auth, transcript AUTH binding version/limits/caps (`zerodb-relay-auth-v2`), DTLS channel binding on the DataChannel (#31); shared peer handshake for direct P2P and relay (H6 closed #29). **H5 remainder:** handshake-server identity.
+- [x] Mandatory signing policy, OpId/datastore bind, datastore-membership admission, author-key resolution via device certs — `m3b_admission`, `e5_membership` (C4 on-wire; AUTH §1).
+- [ ] C5 device-cert **trust store / PKI**: a write member can still mint a well-signed cert under its own root and rebind a device. Open.
+- [x] Handshake hardening: CBOR-only through auth, transcript AUTH binding version/limits/caps (`zerodb-relay-auth-v2`), DTLS channel binding on the DataChannel (#31); shared peer handshake for direct P2P and relay (H6 closed #29).
+- [ ] Handshake-server identity (ISSUES H5 remainder): the client cannot authenticate the relay / DC handshake server in-protocol; TLS + DTLS binding are the interim story. Open.
 - [ ] E2E encrypted-property envelope + group-key wrap + offline revoke are live (E6, H10 leftovers 2026-08-28); key **rotation** and the wrap-body freeze are not — H10 not closed. Whole-op encryption (H8) undecided by choice.
 - [x] Future-clock quarantine (`CLOCK_DRIFT`, H1 closed 2026-08-27); resource limits enforced pre-auth and at the transport (O6 resolved 2026-09-12; `limits.rs`, `hardening.rs`).
 
