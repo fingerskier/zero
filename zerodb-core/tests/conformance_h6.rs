@@ -207,7 +207,8 @@ fn run_auth(v: &Json, path: &Path) {
         let a: [u8; 32] = b.try_into().expect("hello_datastore 32");
         a
     });
-    let t = AuthTranscript::for_relay_hello(peer, pk, 1, &caps, nonce).with_hello_datastore(hello_ds);
+    let t =
+        AuthTranscript::for_relay_hello(peer, pk, 1, &caps, nonce).with_hello_datastore(hello_ds);
     let pre = auth_transcript_preimage(&t);
     assert!(
         pre.starts_with(DOMAIN_V2),

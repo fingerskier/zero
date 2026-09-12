@@ -401,14 +401,9 @@ impl RelaySession {
         let hello_datastore = *hello_datastore;
         let request_id = env.request_id;
         let sig = take64(map_get(&env.payload, "signature"))?;
-        let transcript = AuthTranscript::for_relay_hello(
-            claimed,
-            pk,
-            protocol_version,
-            &hello_caps,
-            self.nonce,
-        )
-        .with_hello_datastore(hello_datastore);
+        let transcript =
+            AuthTranscript::for_relay_hello(claimed, pk, protocol_version, &hello_caps, self.nonce)
+                .with_hello_datastore(hello_datastore);
         if authenticate(&claimed, &pk, &transcript, &sig).is_err() {
             self.close();
             return Ok(vec![error_frame(
