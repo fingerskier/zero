@@ -1,5 +1,6 @@
 // H6 close-candidate contract: SIGNAL, PeerId roles, v2 AUTH, WELCOME
-// version reject, datastore admission, resume-cursor. Same rules as
+// version reject, datastore admission, resume-cursor. Optional
+// HELLO.datastore is in AuthTranscript when present. Same rules as
 // handshake.rs / webrtc/peer.mjs. Not H6 closed. Not M4a complete.
 
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
@@ -109,7 +110,7 @@ function runAuth(v) {
   const pk = hex32(v.public_key)
   const nonce = hex32(v.nonce)
   const seed = hex32(v.secret_key)
-  const t = authTranscript(peer, pk, 1, v.hello_capabilities, nonce)
+  const t = authTranscript(peer, pk, 1, v.hello_capabilities, nonce, undefined, v.hello_datastore)
   const pre = authTranscriptPreimage(t)
   const domain = new TextDecoder().decode(pre.subarray(0, DOMAIN_RELAY_AUTH.length))
   if (domain !== 'zerodb-relay-auth-v2') {
@@ -122,6 +123,15 @@ function runAuth(v) {
     const sig = signAuthV1NonceOnly(seed, nonce)
     const err = authenticate(peer, pk, t, sig)
     if (err !== ERR_AUTH_FAILED) throw new Error(`v1 must be AUTH_FAILED, got ${err}`)
+    return
+  }
+  if (v.kind === 'auth-swapped-ds') {
+    const sig = signAuth(seed, t)
+    const honest = authenticate(peer, pk, t, sig)
+    if (honest !== null) throw new Error(`honest HELLO.datastore must AUTH, got ${honest}`)
+    const swapped = authTranscript(peer, pk, 1, v.hello_capabilities, nonce, undefined, v.swapped_datastore)
+    const err = authenticate(peer, pk, swapped, sig)
+    if (err !== ERR_AUTH_FAILED) throw new Error(`swapped datastore must be AUTH_FAILED, got ${err}`)
     return
   }
   const sig = signAuth(seed, t)
@@ -177,6 +187,7 @@ const kinds = {
   'peer-role': runPeerRole,
   'auth-v2': runAuth,
   'auth-v1-reject': runAuth,
+  'auth-swapped-ds': runAuth,
   'welcome-version': runWelcomeVersion,
   admit: runAdmit,
   'resume-cursor': runResume,

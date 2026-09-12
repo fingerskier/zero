@@ -129,9 +129,20 @@ export function isHandshakeServer(localPeerId, remotePeerId) {
   return a.length < b.length;
 }
 
-export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce, limits) {
+function optHelloDatastore(v) {
+  if (v == null || v === '') return undefined;
+  if (v instanceof Uint8Array) {
+    if (v.length !== 32) return undefined;
+    return v;
+  }
+  const s = String(v);
+  if (!/^[0-9a-f]{64}$/i.test(s)) return undefined;
+  return hex32(s);
+}
+
+export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce, limits, helloDatastore) {
   const hello = helloCaps instanceof Array ? helloCaps : [];
-  return {
+  const t = {
     peer_id: peerId instanceof Uint8Array ? peerId : hex32(peerId),
     public_key: publicKey instanceof Uint8Array ? publicKey : hex32(publicKey),
     hello_protocol_version: helloVersion,
@@ -142,17 +153,23 @@ export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce
     welcome_capabilities: negotiateWelcomeCaps(hello),
     limits: limits || DEFAULT_LIMITS,
   };
+  const ds = optHelloDatastore(helloDatastore);
+  if (ds) t.hello_datastore = ds;
+  return t;
 }
 
 export function authTranscriptPreimage(t) {
+  const hello = {
+    capabilities: t.hello_capabilities,
+    peer_id: t.peer_id,
+    protocol_version: t.hello_protocol_version,
+    public_key: t.public_key,
+  };
+  const ds = optHelloDatastore(t.hello_datastore);
+  if (ds) hello.datastore = ds;
   const body = encode(
     tagged({
-      hello: {
-        capabilities: t.hello_capabilities,
-        peer_id: t.peer_id,
-        protocol_version: t.hello_protocol_version,
-        public_key: t.public_key,
-      },
+      hello,
       nonce: t.nonce,
       welcome: {
         capabilities: t.welcome_capabilities,

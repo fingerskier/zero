@@ -138,10 +138,11 @@ Initiates a connection. Sent by the peer immediately after transport establishme
 
 ```
 {
-  peer_id:          PeerId      // Claimed peer identity
-  public_key:       bytes       // Ed25519 public key (32 bytes)
-  protocol_version: uint8       // Requested protocol version (currently 1)
-  capabilities:     [text]      // Offered session capabilities (§4.1.1)
+  peer_id:          PeerId         // Claimed peer identity
+  public_key:       bytes          // Ed25519 public key (32 bytes)
+  protocol_version: uint8          // Requested protocol version (currently 1)
+  capabilities:     [text]         // Offered session capabilities (§4.1.1)
+  datastore:        DatastoreId?   // Optional; bound into AUTH transcript when present
 }
 ```
 
@@ -174,6 +175,7 @@ Peer signs the negotiated handshake transcript with domain separation (draft AUT
     public_key:         bytes
     protocol_version:   uint
     capabilities:       [text]   // as offered in HELLO
+    datastore:          bytes?   // optional 32-byte HELLO.datastore; omit when absent
   }
   nonce:                bytes    // CHALLENGE nonce
   welcome: {
@@ -528,7 +530,7 @@ The handshake proves the peer controls the Ed25519 private key corresponding to 
 
 If either check fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
 
-> Draft AUTH preimage (unfrozen). H6 reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). Optional `HELLO.datastore` is not in the transcript. H6 is a close candidate — not closed until the steward confirms.
+> Draft AUTH preimage (unfrozen). H6 reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). Optional `HELLO.datastore` is in the hello map when present and omitted when absent (no-ds goldens stay byte-identical). A swapped claim fails AUTH. H6 is a close candidate — not closed until the steward confirms.
 
 ### 5.3 Relay Identity
 
@@ -811,7 +813,7 @@ For relay-facilitated P2P upgrade or environments without WebSocket.
 - **Ordered:** Yes
 - **Reliable:** Yes
 - Each DataChannel message is one protocol message
-- Handshake is the same HELLO / `zerodb-relay-auth-v2` / WELCOME as §4.1 (`AuthTranscript`). Optional `HELLO.datastore` (and `HELLO.cursor` when `resume-cursor` is on) is **not** in the AUTH transcript. A populated peer bound to datastore A MUST fail closed with `AUTH_WRONG_DATASTORE` when the other side offers B, before OPS mix graphs; an empty store may adopt.
+- Handshake is the same HELLO / `zerodb-relay-auth-v2` / WELCOME as §4.1 (`AuthTranscript`). Optional `HELLO.datastore` is in the AUTH transcript when present (omit when absent so no-ds vectors stay identical). `HELLO.cursor` when `resume-cursor` is on is still not in the transcript. A signaling MITM that rewrites the offered datastore MUST fail AUTH (`0x201`) before OPS mix graphs. A populated peer bound to datastore A MUST fail closed with `AUTH_WRONG_DATASTORE` when the other side offers B; an empty store may adopt.
 - There is no session resumption token: a reconnecting peer repeats the full handshake. Already-acked ops are omitted (or `DUPLICATE`) via `resume-cursor` / DELIVERY §4 — not a second resume protocol.
 - SIGNAL already carries opaque ICE. Hosted TURN / public STUN is a **deployment** choice, not a protocol requirement (Decision Log: H6 close does not require a TURN server).
 

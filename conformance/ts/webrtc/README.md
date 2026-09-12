@@ -6,9 +6,9 @@ run the **existing** RELAY 0.2 peer protocol on that channel: HELLO /
 the handshake client appears on the handshake server.
 
 First-cut landed main #25 @ `671adba`. Live WS SIGNAL fanout + PeerId
-roles landed main #26 @ `45a88b5`. This slice is the **H6 protocol close
-candidate**: reconnect/resume, session datastore admission, and a named
-`h6-profile` in the required lane.
+roles landed main #26 @ `45a88b5`. Close candidate landed main #27 @
+`ef2fca9`. This remainder binds optional `HELLO.datastore` into
+`AuthTranscript` / `zerodb-relay-auth-v2`.
 
 **This is not H6 closed and not M4a complete.** Steward/Matt confirm
 before the issue is removed. O4 (WASM gzip) is untouched — this slice
@@ -55,10 +55,11 @@ CI job: `WebRTC first-cut (H6)` (extended, not replaced).
   DataChannel path.
 - Signed KERNEL wire remains source of truth. Wrong `wire.ds` is
   `AUTH_WRONG_DATASTORE` (fail closed, same as the WS peer).
-- **Admission:** optional `HELLO.datastore` is **not** in the AUTH
-  transcript. A populated (or `expectedDs`-bound) store of A vs offered
-  B is one named `AUTH_WRONG_DATASTORE` **before** OPS. An empty store
-  may adopt A.
+- **Admission:** optional `HELLO.datastore` is in the AUTH transcript
+  when present (omit when absent). A signaling MITM that swaps the
+  offer fails AUTH. A populated (or `expectedDs`-bound) store of A vs
+  offered B is one named `AUTH_WRONG_DATASTORE` **before** OPS. An
+  empty store may adopt A.
 - **Reconnect / resume:** drop the channel, re-SIGNAL, repeat the same
   handshake, then filter `exportOps` with the receiver `resume-cursor`
   / DELIVERY frontier. Pre-drop ops are omitted or `DUPLICATE`, not
@@ -70,7 +71,7 @@ CI job: `WebRTC first-cut (H6)` (extended, not replaced).
 - v1 nonce-only AUTH (`zerodb-relay-auth-v1`) is `AUTH_FAILED`.
 - **Named fixtures:** `conformance/registry.json` `h6_profile` +
   `conformance/vectors/required/h6/` (`H6-SIGNAL-*`, `H6-ROLE-001`,
-  `H6-AUTH-*`, `H6-WELCOME-001`, `H6-ADMIT-*`, `H6-RESUME-001`).
+  `H6-AUTH-001/002/003`, `H6-WELCOME-001`, `H6-ADMIT-*`, `H6-RESUME-001`).
 
 ## Honest limitations
 

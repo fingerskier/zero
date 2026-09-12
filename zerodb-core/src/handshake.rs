@@ -5,9 +5,12 @@
 //! (`conformance/ts/webrtc/`). Handshake *roles* (who issues
 //! CHALLENGE/WELCOME) use [`is_handshake_server`] — not a second AUTH
 //! domain. Session datastore admission is [`admit_datastore`] (populated
-//! A vs offered B is `AUTH_WRONG_DATASTORE` before OPS). Reconnect
-//! repeats this handshake; already-acked ops resume via `resume-cursor`
-//! / DELIVERY §4, not a second AUTH preimage. H6 is a close *candidate*
+//! A vs offered B is `AUTH_WRONG_DATASTORE` before OPS). Optional
+//! `HELLO.datastore` is bound into [`AuthTranscript`] when present
+//! (omitted when absent so no-ds goldens stay byte-identical). A
+//! signaling MITM that swaps the claim fails AUTH. Reconnect repeats
+//! this handshake; already-acked ops resume via `resume-cursor` /
+//! DELIVERY §4, not a second AUTH preimage. H6 is a close *candidate*
 //! until the steward confirms. Draft-1 / unfrozen — not a format freeze.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -116,7 +119,7 @@ pub fn is_handshake_server(local_peer: &[u8; 32], remote_peer: &[u8; 32]) -> boo
 /// A populated (or otherwise bound) store of A MUST fail closed when the
 /// other side offers B — one named error before OPS mix graphs. An empty
 /// store (`bound == None`) may adopt `offered`. Optional `HELLO.datastore`
-/// is **not** in [`AuthTranscript`].
+/// is in [`AuthTranscript`] when present (omit when absent).
 pub fn admit_datastore(bound: Option<&[u8]>, offered: Option<&[u8]>) -> Result<(), &'static str> {
     match (bound, offered) {
         (Some(a), Some(b)) if a != b => Err("AUTH_WRONG_DATASTORE"),
@@ -136,13 +139,15 @@ pub fn check_welcome_protocol_version(version: Option<u64>) -> Result<(), u16> {
 /// Deterministic handshake transcript (HELLO + nonce + intended WELCOME).
 ///
 /// AUTH is sent before WELCOME, so both sides reconstruct the WELCOME the
-/// relay is about to send (negotiated caps + advertised limits).
+/// relay is about to send (negotiated caps + advertised limits). Optional
+/// `HELLO.datastore` is in the hello map only when present.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthTranscript {
     pub peer_id: [u8; 32],
     pub public_key: [u8; 32],
     pub hello_protocol_version: u8,
     pub hello_capabilities: Vec<String>,
+    pub hello_datastore: Option<[u8; 32]>,
     pub nonce: [u8; 32],
     pub welcome_protocol_version: u8,
     pub relay_level: u8,
@@ -169,12 +174,19 @@ impl AuthTranscript {
             public_key,
             hello_protocol_version,
             hello_capabilities,
+            hello_datastore: None,
             nonce,
             welcome_protocol_version: DEFAULT_PROTOCOL_VERSION,
             relay_level: DEFAULT_RELAY_LEVEL,
             welcome_capabilities,
             limits: WelcomeLimits::advertised(),
         }
+    }
+
+    /// Bind optional `HELLO.datastore` (32-byte id). `None` omits the field.
+    pub fn with_hello_datastore(mut self, datastore: Option<[u8; 32]>) -> Self {
+        self.hello_datastore = datastore;
+        self
     }
 
     pub fn to_cbor(&self) -> Cbor {
@@ -188,19 +200,20 @@ impl AuthTranscript {
             .iter()
             .map(|c| Cbor::Text(c.clone()))
             .collect();
-        Cbor::Map(vec![
+        let mut hello = vec![
+            ("capabilities".into(), Cbor::Array(hello_caps)),
+            ("peer_id".into(), Cbor::Bytes(self.peer_id.to_vec())),
             (
-                "hello".into(),
-                Cbor::Map(vec![
-                    ("capabilities".into(), Cbor::Array(hello_caps)),
-                    ("peer_id".into(), Cbor::Bytes(self.peer_id.to_vec())),
-                    (
-                        "protocol_version".into(),
-                        Cbor::Uint(self.hello_protocol_version as u64),
-                    ),
-                    ("public_key".into(), Cbor::Bytes(self.public_key.to_vec())),
-                ]),
+                "protocol_version".into(),
+                Cbor::Uint(self.hello_protocol_version as u64),
             ),
+            ("public_key".into(), Cbor::Bytes(self.public_key.to_vec())),
+        ];
+        if let Some(ds) = self.hello_datastore {
+            hello.push(("datastore".into(), Cbor::Bytes(ds.to_vec())));
+        }
+        Cbor::Map(vec![
+            ("hello".into(), Cbor::Map(hello)),
             ("nonce".into(), Cbor::Bytes(self.nonce.to_vec())),
             (
                 "welcome".into(),
@@ -390,5 +403,47 @@ mod tests {
         let t = AuthTranscript::for_relay_hello(peer, PK, 1, &hello, nonce);
         let sig = sign_auth(&SEED, &t);
         assert!(authenticate(&peer, &PK, &t, &sig).is_ok());
+    }
+
+    #[test]
+    fn omitted_hello_datastore_keeps_no_ds_preimage() {
+        let nonce = [7u8; 32];
+        let peer = peer_id_from_pk(&PK);
+        let none = AuthTranscript::for_relay_hello(peer, PK, 1, &["dual-root"], nonce);
+        let explicit_none = none.clone().with_hello_datastore(None);
+        assert_eq!(
+            auth_transcript_preimage(&none),
+            auth_transcript_preimage(&explicit_none)
+        );
+        assert!(auth_transcript_preimage(&none).starts_with(DOMAIN_RELAY_AUTH));
+        let with_ds = none.clone().with_hello_datastore(Some([0xaa; 32]));
+        assert_ne!(
+            auth_transcript_preimage(&none),
+            auth_transcript_preimage(&with_ds)
+        );
+        assert!(authenticate(&peer, &PK, &none, &sign_auth(&SEED, &none)).is_ok());
+        assert!(authenticate(&peer, &PK, &with_ds, &sign_auth(&SEED, &with_ds)).is_ok());
+    }
+
+    #[test]
+    fn swapped_hello_datastore_is_auth_failed() {
+        let nonce = [7u8; 32];
+        let peer = peer_id_from_pk(&PK);
+        let honest = AuthTranscript::for_relay_hello(peer, PK, 1, &["dual-root"], nonce)
+            .with_hello_datastore(Some([0xaa; 32]));
+        let sig = sign_auth(&SEED, &honest);
+        assert!(authenticate(&peer, &PK, &honest, &sig).is_ok());
+
+        let swapped = honest.clone().with_hello_datastore(Some([0xbb; 32]));
+        assert_eq!(
+            authenticate(&peer, &PK, &swapped, &sig),
+            Err(ERR_AUTH_FAILED)
+        );
+
+        let omitted = AuthTranscript::for_relay_hello(peer, PK, 1, &["dual-root"], nonce);
+        assert_eq!(
+            authenticate(&peer, &PK, &omitted, &sig),
+            Err(ERR_AUTH_FAILED)
+        );
     }
 }
