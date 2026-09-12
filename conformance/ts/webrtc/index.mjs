@@ -11,8 +11,10 @@ export {
   ERR_VERSION_MISMATCH,
   admitDatastore,
   connectDirect,
+  resolveChannelBinding,
   runNegotiated,
   serveDirect,
   signAuthV1NonceOnly,
 } from './peer.mjs'
 export { negotiateViaSignal } from './negotiate.mjs'
+export { channelBindingFor, channelBindingFromDescriptions, dtlsFingerprintFromSdp, formatFingerprint } from './binding.mjs'

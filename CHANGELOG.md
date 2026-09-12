@@ -17,6 +17,10 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
+### H5 slice — DTLS channel binding on the DataChannel (this PR)
+
+`HELLO.channel_binding` (BLAKE3 `zerodb-dc-binding-v1` over both SHA-256 DTLS certificate fingerprints, order-independent) is in the existing `AuthTranscript` / `zerodb-relay-auth-v2` hello map when present and omitted when absent (relay WebSocket vectors unchanged). The DataChannel handshake server derives the value from its own SDP, requires the HELLO claim to match before CHALLENGE, and binds its own derivation; missing / foreign / malformed → `0x201`. A signaling MITM that terminates DTLS on both legs and forwards AUTH unchanged now fails before OPS (`webrtc.test.mjs` keeps the pre-fix leak as a control case). The DataChannel entrypoints require the binding (`opts.pc` or `opts.channelBinding`; `allowUnboundChannel: true` is an explicit test-only opt-out, never the default). `conformance/ts/webrtc/binding.mjs` parses real `a=fingerprint` lines; the fake `RTCPeerConnection` emits one per connection. Fixture `H6-AUTH-004` in both runners; registry `domain_separation.dc_channel_binding`; `zerodb-relay` binds a sent `channel_binding` on the WS path too. **H5 not closed** (handshake-server identity, signed CHALLENGE/WELCOME, TLS remain). **Not** M4a complete. Crates/npm stay `0.1.0-alpha` unpublished.
+
 ### O4 pinned — WASM size budget leaves the M4a gate (this PR)
 
 ISSUES O4 (WASM gzip vs Automerge ~250 KB) is **pinned** — not closed, not scrapped. The size-oriented artifact stays 262.6 KiB gzip. The CI regression ceiling in `zerodb-wasm/scripts/measure-size.mjs` tightens from 400 KiB to 300 KiB gzip and is the only size gate. "Optional modules for RGA/Richtext" rides M2-crdts. M4a stays open on its own platform criteria (real-browser DataChannel path, direct/relay parity, browser restart/offline tests); E10 remains M4b. **Not** M4a complete. Crates/npm stay `0.1.0-alpha` unpublished.

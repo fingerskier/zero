@@ -1,0 +1,19 @@
+{
+  "id": "H6-AUTH-004",
+  "type": "h6-profile",
+  "kind": "auth-swapped-binding",
+  "invariants": ["I-9"],
+  "description": "H5 slice: HELLO.channel_binding = BLAKE3('zerodb-dc-binding-v1' || min(fp) || max(fp)) over the two SHA-256 DTLS fingerprints is in AuthTranscript / zerodb-relay-auth-v2 when present. The handshake server binds its own derivation; a MITM bridging two DTLS legs (swapped_channel_binding) or a stripped field fails AUTH. Same helper as H6-AUTH-001; no second preimage.",
+  "peer_id": "3ba80a828fdcc32ee1ef6a0bc939cc247493604e800f7ba2d6cc9af334248dfe",
+  "public_key": "26b7072d6b2b0e9927be59f47b3b9ab7d17c796725c25f8269882af86a1306e1",
+  "secret_key": "560295411cb3771a4892c53fab032abaa0dc96b7a6ed7be6c64865551d062dfa",
+  "nonce": "0707070707070707070707070707070707070707070707070707070707070707",
+  "hello_capabilities": ["dual-root"],
+  "dtls_fingerprints": [
+    "2222222222222222222222222222222222222222222222222222222222222222",
+    "1111111111111111111111111111111111111111111111111111111111111111"
+  ],
+  "hello_channel_binding": "729bd5c9cd57a0c817b9bb26c1125c41ad93bbcc1c5e625a7229d48b70b4cf39",
+  "mitm_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+  "swapped_channel_binding": "e133d67a4d825cc8dbf395ef2429142877428bd90d4f7a3825aa8c4161e333cd"
+}

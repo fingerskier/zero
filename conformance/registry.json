@@ -60,6 +60,7 @@
     "value_slot":   "zerodb-value-slot-v1",
     "relay_auth":   "zerodb-relay-auth-v1",
     "relay_handshake": "zerodb-relay-auth-v2",
+    "dc_channel_binding": "zerodb-dc-binding-v1",
     "merkle_leaf":  "zerodb-merkle-leaf-v1",
     "merkle_node":  "zerodb-merkle-node-v1",
     "merkle_empty": "zerodb-merkle-empty-v1",
@@ -146,7 +147,7 @@
   },
 
   "h6_profile": {
-    "comment": "H6 protocol closed (Decision Log 2026-09-12). Named fixtures in vectors/required/h6/. Live WS fanout stays in signal_ws / signal-ws tests. TURN/NAT is infra, not this profile. Not M4a complete.",
+    "comment": "H6 protocol closed (Decision Log 2026-09-12). Named fixtures in vectors/required/h6/. Live WS fanout stays in signal_ws / signal-ws tests. TURN/NAT is infra, not this profile. H6-AUTH-004 is the H5 DTLS channel-binding slice (HELLO.channel_binding in the same transcript). Not M4a complete.",
     "authority": "doc/RELAY-SPEC.md, zerodb-core/src/handshake.rs, conformance/ts/webrtc/",
     "status": "closed (protocol); not M4a complete",
     "admission_error": "AUTH_WRONG_DATASTORE",
@@ -158,6 +159,7 @@
       "H6-AUTH-001",
       "H6-AUTH-002",
       "H6-AUTH-003",
+      "H6-AUTH-004",
       "H6-WELCOME-001",
       "H6-ADMIT-001",
       "H6-ADMIT-002",

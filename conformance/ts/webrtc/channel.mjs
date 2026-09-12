@@ -1,5 +1,12 @@
 // In-process ordered/reliable DataChannel double (RELAY-SPEC §14.2).
 // Not libwebrtc / wrtc. CI must not need public STUN/TURN.
+//
+// Each FakeRTCPeerConnection owns a random DTLS certificate fingerprint
+// and puts it in its fake SDP as `a=fingerprint:sha-256 AA:BB:...` — the
+// same line a real RTCPeerConnection emits — so channel binding
+// (`binding.mjs`) is exercised without libwebrtc.
+
+import { formatFingerprint } from './binding.mjs'
 
 export const CHANNEL_LABEL = 'zerodb-relay'
 
@@ -55,13 +62,21 @@ export function pairDataChannels(a, b) {
  * `connectFakeRtc` wires the `zerodb-relay` DataChannel.
  */
 export class FakeRTCPeerConnection {
-  constructor() {
+  constructor(opts = {}) {
     this.localDescription = null
     this.remoteDescription = null
     this.onicecandidate = null
     this.ondatachannel = null
     this._channel = null
     this._iceSeq = 0
+    // Fake DTLS certificate fingerprint (SHA-256, 32 bytes). Random per
+    // connection like a real self-signed WebRTC cert; injectable for tests.
+    this.fingerprint =
+      opts.fingerprint instanceof Uint8Array ? opts.fingerprint : crypto.getRandomValues(new Uint8Array(32))
+  }
+
+  _sdp(kind) {
+    return `v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=zerodb-fake-sdp-${kind}\r\n${formatFingerprint(this.fingerprint)}\r\n`
   }
 
   createDataChannel(label, opts = {}) {
@@ -74,11 +89,11 @@ export class FakeRTCPeerConnection {
   }
 
   async createOffer() {
-    return { type: 'offer', sdp: 'zerodb-fake-sdp-offer' }
+    return { type: 'offer', sdp: this._sdp('offer') }
   }
 
   async createAnswer() {
-    return { type: 'answer', sdp: 'zerodb-fake-sdp-answer' }
+    return { type: 'answer', sdp: this._sdp('answer') }
   }
 
   async setLocalDescription(desc) {
