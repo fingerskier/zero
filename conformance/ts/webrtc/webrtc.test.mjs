@@ -40,6 +40,7 @@ import {
   encodeSignal,
   negotiateViaSignal,
   pairDataChannels,
+  resolveChannelBinding,
   runNegotiated,
   serveDirect,
   signAuthV1NonceOnly,
@@ -162,12 +163,12 @@ test('SIGNAL → DataChannel → negotiated roles → v2 AUTH → WELCOME → OP
     runNegotiated(a, b.author, channelFor(neg, a.authorHex, a.authorHex), {
       joinDs: client.dsHex,
       expectedDs: client.dsHex,
-      channelBinding: neg.initiatorBinding,
+      pc: neg.pcFor(a.authorHex),
     }),
     runNegotiated(b, a.author, channelFor(neg, b.authorHex, a.authorHex), {
       joinDs: client.dsHex,
       expectedDs: client.dsHex,
-      channelBinding: neg.answererBinding,
+      pc: neg.pcFor(b.authorHex),
     }),
   ])
   const served = left.role === 'server' ? left : right
@@ -201,9 +202,11 @@ test('handshake role is PeerId order, not RTC initiator, and either peer can ser
     const [s, c] = await Promise.all([
       runNegotiated(server, client.author, channelFor(neg, server.authorHex, offerId), {
         expectedDs: client.dsHex,
+        pc: neg.pcFor(server.authorHex),
       }),
       runNegotiated(client, server.author, channelFor(neg, client.authorHex, offerId), {
         joinDs: client.dsHex,
+        pc: neg.pcFor(client.authorHex),
       }),
     ])
     assert.equal(s.role, 'server')
@@ -242,9 +245,10 @@ test('negotiated-role AUTH is still v2; v1 nonce-only fails closed', async () =>
   const serverCh = server === a ? left : right
   const clientCh = client === a ? left : right
 
-  const served = runNegotiated(server, client.author, serverCh)
+  const served = runNegotiated(server, client.author, serverCh, { allowUnboundChannel: true })
   let thrown = null
   const started = runNegotiated(client, server.author, clientCh, {
+    allowUnboundChannel: true,
     signAuthFn: (seedBytes, transcript) => signAuthV1NonceOnly(seedBytes, transcript.nonce),
   }).catch((e) => {
     thrown = e
@@ -270,9 +274,10 @@ test('v1 nonce-only AUTH fails closed (no WELCOME, no OPS)', async () => {
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right)
+  const served = serveDirect(b, right, { allowUnboundChannel: true })
   let thrown = null
   const client = connectDirect(a, left, {
+    allowUnboundChannel: true,
     signAuthFn: (seedBytes, transcript) => signAuthV1NonceOnly(seedBytes, transcript.nonce),
   }).catch((e) => {
     thrown = e
@@ -293,8 +298,9 @@ test('flipped intended WELCOME limits fail closed on AUTH', async () => {
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right)
+  const served = serveDirect(b, right, { allowUnboundChannel: true })
   const client = connectDirect(a, left, {
+    allowUnboundChannel: true,
     signAuthFn: (seedBytes, transcript) => {
       const bad = {
         ...transcript,
@@ -317,6 +323,7 @@ test('client WELCOME protocol_version reject still applies on DataChannel', asyn
   pairDataChannels(left, right)
 
   const served = serveDirect(b, right, {
+    allowUnboundChannel: true,
     stopAfterWelcome: true,
     welcomeOverride: {
       protocol_version: 2,
@@ -332,7 +339,7 @@ test('client WELCOME protocol_version reject still applies on DataChannel', asyn
       },
     },
   })
-  const client = connectDirect(a, left).catch((e) => e)
+  const client = connectDirect(a, left, { allowUnboundChannel: true }).catch((e) => e)
   const err = await client
   await served
   assert.match(String(err && err.message), /0x102 VERSION_MISMATCH/)
@@ -345,8 +352,8 @@ test('HELLO protocol_version other than 1 is 0x102 before CHALLENGE', async () =
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right)
-  const client = connectDirect(a, left, { helloProtocolVersion: 2 }).catch((e) => e)
+  const served = serveDirect(b, right, { allowUnboundChannel: true })
+  const client = connectDirect(a, left, { allowUnboundChannel: true, helloProtocolVersion: 2 }).catch((e) => e)
   const [answer, err] = await Promise.all([served, client])
   assert.equal(answer.phase, 'version-mismatch')
   assert.equal(answer.code, ERR_VERSION_MISMATCH)
@@ -369,8 +376,8 @@ test('populated answerer binds its own datastore when expectedDs is omitted', as
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right)
-  const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+  const served = serveDirect(b, right, { allowUnboundChannel: true })
+  const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: a.dsHex }).catch((e) => e)
   const [answer, err] = await Promise.all([served, client])
 
   assert.equal(answer.phase, 'wrong-datastore')
@@ -398,8 +405,8 @@ test('OPS honors advertised WELCOME max_batch_ops', async () => {
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right, { expectedDs: a.dsHex })
-  const client = connectDirect(a, left, { joinDs: a.dsHex })
+  const served = serveDirect(b, right, { allowUnboundChannel: true, expectedDs: a.dsHex })
+  const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: a.dsHex })
   const [answer, init] = await Promise.all([served, client])
 
   assert.equal(answer.phase, 'ops')
@@ -425,8 +432,8 @@ test('wrong datastore OPS fail closed', async () => {
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right, { expectedDs: b.dsHex })
-  const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+  const served = serveDirect(b, right, { allowUnboundChannel: true, expectedDs: b.dsHex })
+  const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: a.dsHex }).catch((e) => e)
   const [answer, err] = await Promise.all([served, client])
 
   assert.equal(answer.phase, 'wrong-datastore')
@@ -461,8 +468,8 @@ test('joinDs not-a-datastore is rejected; empty answerer does not adopt', async 
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right)
-  const client = connectDirect(a, left, { joinDs: 'not-a-datastore' }).catch((e) => e)
+  const served = serveDirect(b, right, { allowUnboundChannel: true })
+  const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: 'not-a-datastore' }).catch((e) => e)
   const [answer, err] = await Promise.all([served, client])
 
   assert.equal(answer.phase, 'auth-failed')
@@ -486,8 +493,8 @@ test('joinDs null omits HELLO.datastore but OPS still carries the store ds', asy
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right)
-  const client = connectDirect(a, left, { joinDs: null })
+  const served = serveDirect(b, right, { allowUnboundChannel: true })
+  const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: null })
   const [answer] = await Promise.all([served, client])
 
   assert.equal(answer.phase, 'ops')
@@ -526,8 +533,8 @@ test('MITM-swapped HELLO.datastore fails AUTH before OPS mix graphs', async () =
     return origSend(data)
   }
 
-  const served = serveDirect(b, right)
-  const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+  const served = serveDirect(b, right, { allowUnboundChannel: true })
+  const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: a.dsHex }).catch((e) => e)
   const [answer, err] = await Promise.all([served, client])
 
   assert.equal(answer.phase, 'auth-failed')
@@ -551,8 +558,8 @@ test('empty answerer adopts HELLO.datastore A', async () => {
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
-  const served = serveDirect(b, right)
-  const client = connectDirect(a, left, { joinDs: a.dsHex })
+  const served = serveDirect(b, right, { allowUnboundChannel: true })
+  const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: a.dsHex })
   const [answer] = await Promise.all([served, client])
 
   assert.equal(answer.phase, 'ops')
@@ -576,10 +583,12 @@ test('reconnect resume: post-drop mutation converges; pre-drop ops omitted not d
   const neg1 = await negotiateViaSignal(relay1, a.authorHex, b.authorHex)
   const [left1, right1] = await Promise.all([
     runNegotiated(a, b.author, channelFor(neg1, a.authorHex, a.authorHex), {
+      pc: neg1.pcFor(a.authorHex),
       joinDs: client.dsHex,
       expectedDs: client.dsHex,
     }),
     runNegotiated(b, a.author, channelFor(neg1, b.authorHex, a.authorHex), {
+      pc: neg1.pcFor(b.authorHex),
       joinDs: client.dsHex,
       expectedDs: client.dsHex,
     }),
@@ -601,11 +610,13 @@ test('reconnect resume: post-drop mutation converges; pre-drop ops omitted not d
   const neg2 = await negotiateViaSignal(relay2, a.authorHex, b.authorHex)
   const [left2, right2] = await Promise.all([
     runNegotiated(a, b.author, channelFor(neg2, a.authorHex, a.authorHex), {
+      pc: neg2.pcFor(a.authorHex),
       joinDs: client.dsHex,
       expectedDs: client.dsHex,
       remoteCursor,
     }),
     runNegotiated(b, a.author, channelFor(neg2, b.authorHex, a.authorHex), {
+      pc: neg2.pcFor(b.authorHex),
       joinDs: client.dsHex,
       expectedDs: client.dsHex,
       remoteCursor,
@@ -644,8 +655,8 @@ test('reconnect without cursor re-sends pre-drop ops as DUPLICATE', async () => 
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
   await Promise.all([
-    runNegotiated(server, client.author, server === a ? left : right, { expectedDs: client.dsHex }),
-    runNegotiated(client, server.author, client === a ? left : right, { joinDs: client.dsHex }),
+    runNegotiated(server, client.author, server === a ? left : right, { allowUnboundChannel: true, expectedDs: client.dsHex }),
+    runNegotiated(client, server.author, client === a ? left : right, { allowUnboundChannel: true, joinDs: client.dsHex }),
   ])
   left.close()
   right.close()
@@ -658,8 +669,8 @@ test('reconnect without cursor re-sends pre-drop ops as DUPLICATE', async () => 
   const right2 = new FakeDataChannel()
   pairDataChannels(left2, right2)
   const [served, init] = await Promise.all([
-    runNegotiated(server, client.author, server === a ? left2 : right2, { expectedDs: client.dsHex }),
-    runNegotiated(client, server.author, client === a ? left2 : right2, { joinDs: client.dsHex }),
+    runNegotiated(server, client.author, server === a ? left2 : right2, { allowUnboundChannel: true, expectedDs: client.dsHex }),
+    runNegotiated(client, server.author, client === a ? left2 : right2, { allowUnboundChannel: true, joinDs: client.dsHex }),
   ])
   assert.equal(served.phase, 'ops')
   assert.equal(server.getLww(node, 'title'), 'second')
@@ -715,8 +726,9 @@ async function bridgedTopology() {
 }
 
 test('signaling MITM bridging two DTLS legs fails AUTH before OPS with channel binding (and would succeed without)', async () => {
-  // Control: without binding the bridged handshake completes and OPS land —
-  // this is the hole the H5 slice closes.
+  // Control: with the explicit `allowUnboundChannel` opt-out (never the
+  // default) the bridged handshake completes and OPS land — this is the
+  // hole the H5 slice closes.
   {
     const a = new PeerStore({ seed: seed(41) })
     const b = new PeerStore({ seed: seed(42) })
@@ -728,8 +740,8 @@ test('signaling MITM bridging two DTLS legs fails AUTH before OPS with channel b
     const topo = await bridgedTopology()
     assert.notDeepEqual(topo.bindingA, topo.bindingB)
     const [left, right] = await Promise.all([
-      runNegotiated(a, b.author, topo.channelA, { joinDs: client.dsHex }),
-      runNegotiated(b, a.author, topo.channelB, { joinDs: client.dsHex }),
+      runNegotiated(a, b.author, topo.channelA, { allowUnboundChannel: true, joinDs: client.dsHex }),
+      runNegotiated(b, a.author, topo.channelB, { allowUnboundChannel: true, joinDs: client.dsHex }),
     ])
     const served = left.role === 'server' ? left : right
     assert.equal(served.phase, 'ops')
@@ -769,6 +781,28 @@ test('signaling MITM bridging two DTLS legs fails AUTH before OPS with channel b
   }
 })
 
+test('DataChannel entrypoints require a channel binding unless explicitly opted out', async () => {
+  const a = new PeerStore({ seed: seed(49) })
+  const b = new PeerStore({ seed: seed(50) })
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+  await assert.rejects(() => serveDirect(b, right), /requires DTLS channel binding/)
+  await assert.rejects(() => connectDirect(a, left), /requires DTLS channel binding/)
+  await assert.rejects(() => runNegotiated(a, b.author, left, { joinDs: a.dsHex }), /requires DTLS channel binding/)
+  assert.throws(() => resolveChannelBinding({}), /requires DTLS channel binding/)
+  assert.equal(resolveChannelBinding({ allowUnboundChannel: true }), null)
+  const pc = new FakeRTCPeerConnection()
+  assert.throws(() => resolveChannelBinding({ pc }), /no local\+remote/)
+  const cb = channelBinding(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2))
+  assert.deepEqual(resolveChannelBinding({ channelBinding: cb }), cb)
+  // A negotiated pc is enough on its own — no manual threading.
+  const relay = new SignalRelay()
+  const neg = await negotiateViaSignal(relay, a.authorHex, b.authorHex)
+  assert.deepEqual(resolveChannelBinding({ pc: neg.pcFor(a.authorHex) }), neg.initiatorBinding)
+  assert.deepEqual(resolveChannelBinding({ pc: neg.pcFor(b.authorHex) }), neg.answererBinding)
+})
+
 test('server that derived a channel binding rejects a HELLO that omits it', async () => {
   const a = new PeerStore({ seed: seed(45) })
   const b = new PeerStore({ seed: seed(46) })
@@ -780,7 +814,7 @@ test('server that derived a channel binding rejects a HELLO that omits it', asyn
   pairDataChannels(left, right)
   const ownBinding = channelBinding(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2))
   const served = serveDirect(b, right, { channelBinding: ownBinding })
-  const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+  const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: a.dsHex }).catch((e) => e)
   const [answer, err] = await Promise.all([served, client])
   assert.equal(answer.phase, 'auth-failed')
   assert.equal(answer.code, ERR_AUTH_FAILED)
@@ -809,8 +843,8 @@ test('HELLO.channel_binding present-but-invalid fails closed; MITM-rewritten val
       }
       return origSend(data)
     }
-    const served = serveDirect(b, right)
-    const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+    const served = serveDirect(b, right, { allowUnboundChannel: true })
+    const client = connectDirect(a, left, { allowUnboundChannel: true, joinDs: a.dsHex }).catch((e) => e)
     const [answer, err] = await Promise.all([served, client])
     assert.equal(answer.phase, 'auth-failed')
     assert.equal(err && err.code, ERR_AUTH_FAILED)
@@ -834,7 +868,7 @@ test('HELLO.channel_binding present-but-invalid fails closed; MITM-rewritten val
       }
       return origSend(data)
     }
-    const served = serveDirect(b, right)
+    const served = serveDirect(b, right, { allowUnboundChannel: true })
     const client = connectDirect(a, left, { joinDs: a.dsHex, channelBinding: honest }).catch((e) => e)
     const [answer, err] = await Promise.all([served, client])
     assert.equal(answer.phase, 'auth-failed')

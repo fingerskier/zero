@@ -78,6 +78,8 @@ export async function negotiateViaSignal(relay, initiatorId, answererId) {
     answererChannel: pair.answerer,
     initiatorBinding: channelBindingFor(offerer),
     answererBinding: channelBindingFor(answerer),
+    /** `opts.pc` for runNegotiated, by peer id (hex). */
+    pcFor: (peerId) => (String(peerId).toLowerCase() === String(initiatorId).toLowerCase() ? offerer : answerer),
     offerSession: offerSess,
     answerSession: answerSess,
   }

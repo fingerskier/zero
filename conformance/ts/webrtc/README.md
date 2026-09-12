@@ -87,8 +87,11 @@ CI job: `WebRTC first-cut (H6)` (extended, not replaced).
   by the relay.
 - **DTLS channel binding (H5 slice).** `binding.mjs` derives
   `HELLO.channel_binding` from the local + remote SDP `a=fingerprint`
-  lines (`channelBindingFor(pc)`); pass it as `opts.channelBinding` on
-  both sides of `runNegotiated`. The server derives its own value and
+  lines (`channelBindingFor(pc)`). It is **required** at the DataChannel
+  entrypoints: pass `opts.pc` (or a precomputed `opts.channelBinding`) on
+  both sides of `runNegotiated`; omitting both throws. The only unbound
+  mode is the explicit `allowUnboundChannel: true` opt-out for raw
+  in-process channel tests. The server derives its own value and
   fails `0x201` before CHALLENGE on a mismatch, so a relay that
   terminates DTLS on both legs cannot bridge the handshake. The fake
   `RTCPeerConnection` emits a real-shaped fingerprint line. H5 is not

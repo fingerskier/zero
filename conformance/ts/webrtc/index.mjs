@@ -11,6 +11,7 @@ export {
   ERR_VERSION_MISMATCH,
   admitDatastore,
   connectDirect,
+  resolveChannelBinding,
   runNegotiated,
   serveDirect,
   signAuthV1NonceOnly,
