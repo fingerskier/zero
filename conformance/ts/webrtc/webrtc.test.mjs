@@ -1,7 +1,8 @@
 /**
  * H6 closed (protocol): SIGNAL → fake DataChannel → v2 transcript
  * AUTH → WELCOME → OPS, plus admission + reconnect/resume + HELLO.datastore
- * bind. Not M4a complete.
+ * bind, plus the H5 DTLS channel-binding slice (HELLO.channel_binding).
+ * Not M4a complete.
  *
  * The DataChannel is an in-process ordered/reliable double (not wrtc).
  */
@@ -13,9 +14,11 @@ import {
   MSG_HELLO,
   authTranscript,
   authTranscriptPreimage,
+  channelBinding,
   decodeEnvelope,
   encodeEnvelope,
   isHandshakeServer,
+  optHelloChannelBinding,
   optHelloDatastore,
   signAuth,
 } from '../models/relay.mjs'
@@ -27,9 +30,13 @@ import {
   ERR_TARGET_NOT_CONNECTED,
   ERR_VERSION_MISMATCH,
   FakeDataChannel,
+  FakeRTCPeerConnection,
   SignalRelay,
   admitDatastore,
+  channelBindingFor,
   connectDirect,
+  connectFakeRtc,
+  dtlsFingerprintFromSdp,
   encodeSignal,
   negotiateViaSignal,
   pairDataChannels,
@@ -94,6 +101,38 @@ test('AuthTranscript preimage is zerodb-relay-auth-v2 (no second domain)', () =>
     () => authTranscript(t.peer_id, t.public_key, 1, t.hello_capabilities, t.nonce, undefined, 'not-a-datastore'),
     /HELLO\.datastore/,
   )
+  // H5 channel binding rides the same hello map; omitted keeps the preimage.
+  const cb = channelBinding(new Uint8Array(32).fill(0x11), new Uint8Array(32).fill(0x22))
+  const withCb = authTranscript(t.peer_id, t.public_key, 1, t.hello_capabilities, t.nonce, undefined, undefined, cb)
+  assert.notDeepEqual(authTranscriptPreimage(withCb), pre)
+  assert.deepEqual(authTranscriptPreimage(withCb).subarray(0, DOMAIN.length), DOMAIN)
+  assert.deepEqual(
+    authTranscriptPreimage(authTranscript(t.peer_id, t.public_key, 1, t.hello_capabilities, t.nonce, undefined, null, null)),
+    pre,
+  )
+  assert.equal(optHelloChannelBinding(null), undefined)
+  assert.throws(() => optHelloChannelBinding('nope'), /HELLO\.channel_binding/)
+  assert.throws(() => optHelloChannelBinding(new Uint8Array(31)), /HELLO\.channel_binding/)
+})
+
+test('channelBinding is order-independent, per-association, and parses real SDP fingerprint lines', () => {
+  const a = new Uint8Array(32).fill(0x11)
+  const b = new Uint8Array(32).fill(0x22)
+  const c = new Uint8Array(32).fill(0x33)
+  assert.deepEqual(channelBinding(a, b), channelBinding(b, a))
+  assert.notDeepEqual(channelBinding(a, b), channelBinding(a, c))
+  assert.equal(channelBinding(a, b).length, 32)
+
+  const sdp = 'v=0\r\na=ice-ufrag:x\r\na=fingerprint:sha-256 ' +
+    Array.from(a, (x) => x.toString(16).padStart(2, '0').toUpperCase()).join(':') + '\r\na=setup:actpass\r\n'
+  assert.deepEqual(dtlsFingerprintFromSdp(sdp), a)
+  assert.deepEqual(dtlsFingerprintFromSdp({ type: 'offer', sdp }), a)
+  assert.throws(() => dtlsFingerprintFromSdp('v=0\r\n'), /no a=fingerprint/)
+  assert.throws(() => dtlsFingerprintFromSdp('a=fingerprint:sha-1 AA:BB\r\n'), /unsupported/)
+  assert.throws(() => dtlsFingerprintFromSdp('a=fingerprint:sha-256 AA:BB\r\n'), /malformed/)
+
+  const pc = new FakeRTCPeerConnection()
+  assert.throws(() => channelBindingFor(pc), /no local\+remote/)
 })
 
 function channelFor(neg, peerHex, initiatorHex) {
@@ -115,15 +154,20 @@ test('SIGNAL → DataChannel → negotiated roles → v2 AUTH → WELCOME → OP
   assert.equal(neg.initiatorChannel.label, 'zerodb-relay')
   assert.equal(neg.initiatorChannel.ordered, true)
   assert.equal(neg.answererChannel.label, 'zerodb-relay')
+  // Honest signaling: both ends of one DTLS association derive one binding.
+  assert.deepEqual(neg.initiatorBinding, neg.answererBinding)
+  assert.deepEqual(neg.initiatorBinding, channelBinding(neg.offerer.fingerprint, neg.answerer.fingerprint))
 
   const [left, right] = await Promise.all([
     runNegotiated(a, b.author, channelFor(neg, a.authorHex, a.authorHex), {
       joinDs: client.dsHex,
       expectedDs: client.dsHex,
+      channelBinding: neg.initiatorBinding,
     }),
     runNegotiated(b, a.author, channelFor(neg, b.authorHex, a.authorHex), {
       joinDs: client.dsHex,
       expectedDs: client.dsHex,
+      channelBinding: neg.answererBinding,
     }),
   ])
   const served = left.role === 'server' ? left : right
@@ -625,6 +669,179 @@ test('reconnect without cursor re-sends pre-drop ops as DUPLICATE', async () => 
   assert.ok(served.outcomes.some((o) => o.op_id === newId && o.outcome === 'ACCEPT'))
   assert.equal(server.ops.length, serverCount + 1)
   assert.equal(init.sent, client.exportOps(client.dsHex).length)
+})
+
+/**
+ * Signaling MITM that terminates DTLS on both legs: A ↔ M1 and M2 ↔ B are
+ * two separate fake associations; M bridges the channels byte-for-byte.
+ */
+async function bridgedTopology() {
+  const pcA = new FakeRTCPeerConnection()
+  const pcM1 = new FakeRTCPeerConnection()
+  const pcM2 = new FakeRTCPeerConnection()
+  const pcB = new FakeRTCPeerConnection()
+
+  pcA.createDataChannel('zerodb-relay', { ordered: true })
+  await pcA.setLocalDescription(await pcA.createOffer())
+  await pcM1.setRemoteDescription(pcA.localDescription)
+  await pcM1.setLocalDescription(await pcM1.createAnswer())
+  await pcA.setRemoteDescription(pcM1.localDescription)
+  const legA = connectFakeRtc(pcA, pcM1)
+
+  pcM2.createDataChannel('zerodb-relay', { ordered: true })
+  await pcM2.setLocalDescription(await pcM2.createOffer())
+  await pcB.setRemoteDescription(pcM2.localDescription)
+  await pcB.setLocalDescription(await pcB.createAnswer())
+  await pcM2.setRemoteDescription(pcB.localDescription)
+  const legB = connectFakeRtc(pcM2, pcB)
+
+  // M owns legA.answerer (facing A) and legB.initiator (facing B).
+  const seen = []
+  legA.answerer.onmessage = (ev) => {
+    seen.push(ev.data)
+    legB.initiator.send(ev.data)
+  }
+  legB.initiator.onmessage = (ev) => {
+    seen.push(ev.data)
+    legA.answerer.send(ev.data)
+  }
+  return {
+    channelA: legA.initiator,
+    channelB: legB.answerer,
+    bindingA: channelBindingFor(pcA),
+    bindingB: channelBindingFor(pcB),
+    seen,
+  }
+}
+
+test('signaling MITM bridging two DTLS legs fails AUTH before OPS with channel binding (and would succeed without)', async () => {
+  // Control: without binding the bridged handshake completes and OPS land —
+  // this is the hole the H5 slice closes.
+  {
+    const a = new PeerStore({ seed: seed(41) })
+    const b = new PeerStore({ seed: seed(42) })
+    const client = isHandshakeServer(a.author, b.author) ? b : a
+    const server = client === a ? b : a
+    client.applySchemaEpoch(schemaPin())
+    const { node } = client.createNode('Todo')
+    client.setLww(node, 'title', 'leaked-via-mitm')
+    const topo = await bridgedTopology()
+    assert.notDeepEqual(topo.bindingA, topo.bindingB)
+    const [left, right] = await Promise.all([
+      runNegotiated(a, b.author, topo.channelA, { joinDs: client.dsHex }),
+      runNegotiated(b, a.author, topo.channelB, { joinDs: client.dsHex }),
+    ])
+    const served = left.role === 'server' ? left : right
+    assert.equal(served.phase, 'ops')
+    assert.ok(served.applied >= 2)
+    assert.equal(server.getLww(node, 'title'), 'leaked-via-mitm')
+    assert.ok(topo.seen.length >= 6, 'MITM observed the whole exchange')
+  }
+
+  // With binding: each side derives its own leg's value; the server's view
+  // differs from the client's HELLO claim ⇒ 0x201 before CHALLENGE / OPS.
+  {
+    const a = new PeerStore({ seed: seed(43) })
+    const b = new PeerStore({ seed: seed(44) })
+    const client = isHandshakeServer(a.author, b.author) ? b : a
+    const server = client === a ? b : a
+    client.applySchemaEpoch(schemaPin())
+    const { node } = client.createNode('Todo')
+    client.setLww(node, 'title', 'must-not-land')
+    const serverOps = server.ops.length
+    const topo = await bridgedTopology()
+    const bindingFor = (store) => (store === a ? topo.bindingA : topo.bindingB)
+    const [left, right] = await Promise.all([
+      runNegotiated(a, b.author, topo.channelA, { joinDs: client.dsHex, channelBinding: bindingFor(a) }).catch((e) => e),
+      runNegotiated(b, a.author, topo.channelB, { joinDs: client.dsHex, channelBinding: bindingFor(b) }).catch((e) => e),
+    ])
+    const results = [left, right]
+    const served = results.find((r) => r && r.role === 'server')
+    const clientErr = results.find((r) => r instanceof Error)
+    assert.equal(served.phase, 'auth-failed')
+    assert.equal(served.code, ERR_AUTH_FAILED)
+    assert.equal(served.reason, 'CHANNEL_BINDING')
+    assert.equal(clientErr && clientErr.code, ERR_AUTH_FAILED)
+    assert.equal(server.getLww(node, 'title'), null)
+    assert.equal(server.ops.length, serverOps)
+    // No CHALLENGE was issued: HELLO then ERROR only crossed the bridge.
+    assert.equal(topo.seen.length, 2)
+  }
+})
+
+test('server that derived a channel binding rejects a HELLO that omits it', async () => {
+  const a = new PeerStore({ seed: seed(45) })
+  const b = new PeerStore({ seed: seed(46) })
+  a.applySchemaEpoch(schemaPin())
+  const { node } = a.createNode('Todo')
+  a.setLww(node, 'title', 'unbound')
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+  const ownBinding = channelBinding(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2))
+  const served = serveDirect(b, right, { channelBinding: ownBinding })
+  const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+  const [answer, err] = await Promise.all([served, client])
+  assert.equal(answer.phase, 'auth-failed')
+  assert.equal(answer.code, ERR_AUTH_FAILED)
+  assert.equal(answer.reason, 'CHANNEL_BINDING')
+  assert.equal(err && err.code, ERR_AUTH_FAILED)
+  assert.equal(b.getLww(node, 'title'), null)
+})
+
+test('HELLO.channel_binding present-but-invalid fails closed; MITM-rewritten value fails AUTH signature', async () => {
+  const a = new PeerStore({ seed: seed(47) })
+  const b = new PeerStore({ seed: seed(48) })
+  a.applySchemaEpoch(schemaPin())
+  const { node } = a.createNode('Todo')
+  a.setLww(node, 'title', 'nope')
+
+  // Present-but-invalid (not 32-byte hex) is AUTH_FAILED, not "omitted".
+  {
+    const left = new FakeDataChannel()
+    const right = new FakeDataChannel()
+    pairDataChannels(left, right)
+    const origSend = left.send.bind(left)
+    left.send = (data) => {
+      const env = decodeEnvelope(data)
+      if (env.type === MSG_HELLO) {
+        return origSend(encodeEnvelope(MSG_HELLO, env.request_id, { ...env.payload, channel_binding: 'not-a-binding' }))
+      }
+      return origSend(data)
+    }
+    const served = serveDirect(b, right)
+    const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+    const [answer, err] = await Promise.all([served, client])
+    assert.equal(answer.phase, 'auth-failed')
+    assert.equal(err && err.code, ERR_AUTH_FAILED)
+    assert.equal(b.getLww(node, 'title'), null)
+  }
+
+  // Server without its own view (raw channel) still binds the claimed value:
+  // a rewritten claim no longer matches what the client signed.
+  {
+    const left = new FakeDataChannel()
+    const right = new FakeDataChannel()
+    pairDataChannels(left, right)
+    const honest = channelBinding(new Uint8Array(32).fill(5), new Uint8Array(32).fill(6))
+    const forged = bytesToHex(channelBinding(new Uint8Array(32).fill(5), new Uint8Array(32).fill(7)))
+    const origSend = left.send.bind(left)
+    left.send = (data) => {
+      const env = decodeEnvelope(data)
+      if (env.type === MSG_HELLO) {
+        assert.notEqual(env.payload.channel_binding, forged)
+        return origSend(encodeEnvelope(MSG_HELLO, env.request_id, { ...env.payload, channel_binding: forged }))
+      }
+      return origSend(data)
+    }
+    const served = serveDirect(b, right)
+    const client = connectDirect(a, left, { joinDs: a.dsHex, channelBinding: honest }).catch((e) => e)
+    const [answer, err] = await Promise.all([served, client])
+    assert.equal(answer.phase, 'auth-failed')
+    assert.equal(answer.code, ERR_AUTH_FAILED)
+    assert.equal(err && err.code, ERR_AUTH_FAILED)
+    assert.equal(b.getLww(node, 'title'), null)
+  }
 })
 
 test('SIGNAL to a disconnected target yields 0x307', () => {

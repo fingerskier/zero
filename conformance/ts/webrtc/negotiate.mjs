@@ -8,6 +8,7 @@ import {
   FakeRTCPeerConnection,
   connectFakeRtc,
 } from './channel.mjs'
+import { channelBindingFor } from './binding.mjs'
 import { encodeSignal, signalingBytes, signalingObject } from './signal.mjs'
 
 export async function negotiateViaSignal(relay, initiatorId, answererId) {
@@ -68,11 +69,15 @@ export async function negotiateViaSignal(relay, initiatorId, answererId) {
   }
 
   const pair = connectFakeRtc(offerer, answerer)
+  // Each side derives HELLO.channel_binding from its own local + remote
+  // SDP fingerprints. Honest signaling ⇒ equal; a bridging MITM ⇒ not.
   return {
     offerer,
     answerer,
     initiatorChannel: pair.initiator,
     answererChannel: pair.answerer,
+    initiatorBinding: channelBindingFor(offerer),
+    answererBinding: channelBindingFor(answerer),
     offerSession: offerSess,
     answerSession: answerSess,
   }

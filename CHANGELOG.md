@@ -17,6 +17,10 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
+### H5 slice — DTLS channel binding on the DataChannel (this PR)
+
+`HELLO.channel_binding` (BLAKE3 `zerodb-dc-binding-v1` over both SHA-256 DTLS certificate fingerprints, order-independent) is in the existing `AuthTranscript` / `zerodb-relay-auth-v2` hello map when present and omitted when absent (relay WebSocket vectors unchanged). The DataChannel handshake server derives the value from its own SDP, requires the HELLO claim to match before CHALLENGE, and binds its own derivation; missing / foreign / malformed → `0x201`. A signaling MITM that terminates DTLS on both legs and forwards AUTH unchanged now fails before OPS (`webrtc.test.mjs` keeps the pre-fix leak as a control case). `conformance/ts/webrtc/binding.mjs` parses real `a=fingerprint` lines; the fake `RTCPeerConnection` emits one per connection. Fixture `H6-AUTH-004` in both runners; registry `domain_separation.dc_channel_binding`; `zerodb-relay` binds a sent `channel_binding` on the WS path too. **H5 not closed** (handshake-server identity, signed CHALLENGE/WELCOME, TLS remain). **Not** M4a complete. Crates/npm stay `0.1.0-alpha` unpublished.
+
 ### H6 closed — shared peer protocol over DataChannel (this PR)
 
 H6 (Direct P2P sync has no protocol) is **closed**. Shared peer protocol over an ordered `zerodb-relay` DataChannel: HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS. Evidence on main: #25 @ `671adba`, #26 @ `45a88b5`, #27 @ `ef2fca9`, #28 @ `bfe69b9`. Same `AuthTranscript` helper; no second preimage. TURN/NAT is infra (no hosted TURN / `wrtc`). **Not** M4a complete. O4 still open. No E10. Crates/npm stay `0.1.0-alpha` unpublished.

@@ -92,7 +92,8 @@ This is the only live action list.
 9. **M4a-h6-fanout** — landed main #26 @ `45a88b5`: live `zerodb-relay` WebSocket SIGNAL fanout + PeerId-order role negotiation. Same `AuthTranscript` / `zerodb-relay-auth-v2`.
 10. **M4a-h6-close** — landed main #27 @ `ef2fca9`: reconnect/resume, session admission, named `h6-profile`.
 11. **M4a-h6-auth-ds** — landed main #28 @ `bfe69b9`: optional `HELLO.datastore` bound into `AuthTranscript` / `zerodb-relay-auth-v2` (omit when absent). A swapped or malformed offer fails AUTH before OPS. Evidence: `H6-AUTH-003`, handshake unit tests, `webrtc.test.mjs` MITM swap.
-12. **H6 Decision Log close (this PR)** — **H6 closed.** Shared peer protocol over DataChannel ([RELAY-SPEC](../doc/RELAY-SPEC.md) §14.2). DC AUTH proves the HELLO client; CHALLENGE/WELCOME stay unsigned (H5). Evidence #25–#28. TURN/NAT parked as infra (no hosted TURN / `wrtc`). **Not** M4a complete. O4 still open. No E10.
+12. **H6 Decision Log close** — landed main #29 @ `a4fc3b8`: **H6 closed.** Shared peer protocol over DataChannel ([RELAY-SPEC](../doc/RELAY-SPEC.md) §14.2). DC AUTH proves the HELLO client; CHALLENGE/WELCOME stay unsigned (H5). Evidence #25–#28. TURN/NAT parked as infra (no hosted TURN / `wrtc`). **Not** M4a complete. No E10.
+14. **H5 slice — DTLS channel binding (this PR)** — `HELLO.channel_binding` over both DTLS fingerprints in the same `AuthTranscript`; DC server verifies its own derivation before CHALLENGE. Closes the bridged-DTLS MITM found in the 2026-09-12 review. Evidence: `H6-AUTH-004`, `webrtc.test.mjs` bridged-MITM, handshake unit tests. **H5 not closed** (server identity, signed CHALLENGE/WELCOME, TLS).
 
 **Pinned (do not start):**
 - **perf Stage 2** — trigger: Stage 0 still scan-dominated

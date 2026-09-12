@@ -10,8 +10,16 @@
 //! (omitted when absent so no-ds goldens stay byte-identical). A
 //! signaling MITM that swaps the claim fails AUTH. Reconnect repeats
 //! this handshake; already-acked ops resume via `resume-cursor` /
-//! DELIVERY §4, not a second AUTH preimage. H6 is a close *candidate*
-//! until the steward confirms. Draft-1 / unfrozen — not a format freeze.
+//! DELIVERY §4, not a second AUTH preimage. H6 closed 2026-09-12.
+//!
+//! H5 slice — DTLS channel binding: on a WebRTC DataChannel the client
+//! also binds `HELLO.channel_binding` = [`channel_binding`] of the two
+//! DTLS certificate fingerprints (local + remote SDP `a=fingerprint`).
+//! The handshake server verifies against its *own* view of both
+//! fingerprints, so a signaling MITM that terminates DTLS on each leg
+//! and forwards AUTH unchanged fails `0x201` before OPS. Omitted when
+//! absent (relay WebSocket profile; no-binding goldens stay
+//! byte-identical). Draft-1 / unfrozen — not a format freeze.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
@@ -40,6 +48,25 @@ fn negotiate_welcome_caps(hello: &[impl AsRef<str>]) -> Vec<String> {
 pub const DOMAIN_RELAY_AUTH: &[u8] = b"zerodb-relay-auth-v2";
 /// Legacy nonce-only domain. Verifiers MUST reject it for AUTH.
 pub const DOMAIN_RELAY_AUTH_V1: &[u8] = b"zerodb-relay-auth-v1";
+/// DTLS channel-binding domain (registry `domain_separation.dc_channel_binding`).
+pub const DOMAIN_DC_CHANNEL_BINDING: &[u8] = b"zerodb-dc-binding-v1";
+
+/// `HELLO.channel_binding` for a DataChannel: BLAKE3(domain ‖ min(fp) ‖ max(fp))
+/// over the two SHA-256 DTLS certificate fingerprints. Order-independent, so
+/// both ends of one DTLS association derive the same value; two different
+/// associations (a MITM bridging two legs) derive different values.
+pub fn channel_binding(fp_a: &[u8; 32], fp_b: &[u8; 32]) -> [u8; 32] {
+    let (lo, hi) = if fp_a <= fp_b {
+        (fp_a, fp_b)
+    } else {
+        (fp_b, fp_a)
+    };
+    let mut h = blake3::Hasher::new();
+    h.update(DOMAIN_DC_CHANNEL_BINDING);
+    h.update(lo);
+    h.update(hi);
+    *h.finalize().as_bytes()
+}
 
 /// Advertised experimental WELCOME defaults (RELAY-SPEC §8.1).
 pub const DEFAULT_PROTOCOL_VERSION: u8 = 1;
@@ -140,7 +167,8 @@ pub fn check_welcome_protocol_version(version: Option<u64>) -> Result<(), u16> {
 ///
 /// AUTH is sent before WELCOME, so both sides reconstruct the WELCOME the
 /// relay is about to send (negotiated caps + advertised limits). Optional
-/// `HELLO.datastore` is in the hello map only when present.
+/// `HELLO.datastore` and `HELLO.channel_binding` are in the hello map only
+/// when present.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthTranscript {
     pub peer_id: [u8; 32],
@@ -148,6 +176,8 @@ pub struct AuthTranscript {
     pub hello_protocol_version: u8,
     pub hello_capabilities: Vec<String>,
     pub hello_datastore: Option<[u8; 32]>,
+    /// DTLS channel binding ([`channel_binding`]); DataChannel profile only.
+    pub hello_channel_binding: Option<[u8; 32]>,
     pub nonce: [u8; 32],
     pub welcome_protocol_version: u8,
     pub relay_level: u8,
@@ -175,6 +205,7 @@ impl AuthTranscript {
             hello_protocol_version,
             hello_capabilities,
             hello_datastore: None,
+            hello_channel_binding: None,
             nonce,
             welcome_protocol_version: DEFAULT_PROTOCOL_VERSION,
             relay_level: DEFAULT_RELAY_LEVEL,
@@ -186,6 +217,12 @@ impl AuthTranscript {
     /// Bind optional `HELLO.datastore` (32-byte id). `None` omits the field.
     pub fn with_hello_datastore(mut self, datastore: Option<[u8; 32]>) -> Self {
         self.hello_datastore = datastore;
+        self
+    }
+
+    /// Bind optional `HELLO.channel_binding` (32 bytes). `None` omits the field.
+    pub fn with_channel_binding(mut self, binding: Option<[u8; 32]>) -> Self {
+        self.hello_channel_binding = binding;
         self
     }
 
@@ -211,6 +248,9 @@ impl AuthTranscript {
         ];
         if let Some(ds) = self.hello_datastore {
             hello.push(("datastore".into(), Cbor::Bytes(ds.to_vec())));
+        }
+        if let Some(cb) = self.hello_channel_binding {
+            hello.push(("channel_binding".into(), Cbor::Bytes(cb.to_vec())));
         }
         Cbor::Map(vec![
             ("hello".into(), Cbor::Map(hello)),
@@ -423,6 +463,58 @@ mod tests {
         );
         assert!(authenticate(&peer, &PK, &none, &sign_auth(&SEED, &none)).is_ok());
         assert!(authenticate(&peer, &PK, &with_ds, &sign_auth(&SEED, &with_ds)).is_ok());
+    }
+
+    #[test]
+    fn channel_binding_is_order_independent_and_distinct() {
+        let a = [0x11u8; 32];
+        let b = [0x22u8; 32];
+        let c = [0x33u8; 32];
+        assert_eq!(channel_binding(&a, &b), channel_binding(&b, &a));
+        assert_ne!(channel_binding(&a, &b), channel_binding(&a, &c));
+        assert_ne!(channel_binding(&a, &b), channel_binding(&a, &a));
+        let mut h = blake3::Hasher::new();
+        h.update(DOMAIN_DC_CHANNEL_BINDING);
+        h.update(&a);
+        h.update(&b);
+        assert_eq!(channel_binding(&b, &a), *h.finalize().as_bytes());
+    }
+
+    #[test]
+    fn omitted_channel_binding_keeps_preimage_swapped_is_auth_failed() {
+        let nonce = [7u8; 32];
+        let peer = peer_id_from_pk(&PK);
+        let none = AuthTranscript::for_relay_hello(peer, PK, 1, &["dual-root"], nonce);
+        assert_eq!(
+            auth_transcript_preimage(&none),
+            auth_transcript_preimage(&none.clone().with_channel_binding(None))
+        );
+        let honest_cb = channel_binding(&[0x11; 32], &[0x22; 32]);
+        let honest = none.clone().with_channel_binding(Some(honest_cb));
+        assert_ne!(
+            auth_transcript_preimage(&none),
+            auth_transcript_preimage(&honest)
+        );
+        let sig = sign_auth(&SEED, &honest);
+        assert!(authenticate(&peer, &PK, &honest, &sig).is_ok());
+
+        // MITM bridging two DTLS legs: the server's own view differs.
+        let mitm_cb = channel_binding(&[0x11; 32], &[0x99; 32]);
+        let swapped = none.clone().with_channel_binding(Some(mitm_cb));
+        assert_eq!(
+            authenticate(&peer, &PK, &swapped, &sig),
+            Err(ERR_AUTH_FAILED)
+        );
+        // Stripping the field is not an escape either.
+        assert_eq!(authenticate(&peer, &PK, &none, &sig), Err(ERR_AUTH_FAILED));
+        // Datastore + binding compose in one hello map.
+        let both = honest.clone().with_hello_datastore(Some([0xaa; 32]));
+        let sig2 = sign_auth(&SEED, &both);
+        assert!(authenticate(&peer, &PK, &both, &sig2).is_ok());
+        assert_eq!(
+            authenticate(&peer, &PK, &honest, &sig2),
+            Err(ERR_AUTH_FAILED)
+        );
     }
 
     #[test]

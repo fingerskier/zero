@@ -205,6 +205,7 @@ enum Phase {
         protocol_version: u8,
         hello_caps: Vec<String>,
         hello_datastore: Option<[u8; 32]>,
+        hello_channel_binding: Option<[u8; 32]>,
     },
     Authed {
         caps: Vec<String>,
@@ -363,12 +364,19 @@ impl RelaySession {
         let pk = take32(map_get(&env.payload, "public_key"))?;
         let hello_caps = text_array(map_get(&env.payload, "capabilities"));
         let hello_datastore = opt_hello_datastore(map_get(&env.payload, "datastore"))?;
+        // DataChannel profile only; a WebSocket client that sends it is still
+        // bound to what it signed. Present-but-invalid fails closed.
+        let hello_channel_binding = opt_hello_bytes32(
+            map_get(&env.payload, "channel_binding"),
+            "hello.channel_binding",
+        )?;
         self.phase = Phase::Hello {
             claimed,
             pk,
             protocol_version: version as u8,
             hello_caps,
             hello_datastore,
+            hello_channel_binding,
         };
         Ok(vec![encode_env(
             MSG_CHALLENGE,
@@ -384,6 +392,7 @@ impl RelaySession {
             protocol_version,
             hello_caps,
             hello_datastore,
+            hello_channel_binding,
         } = &self.phase
         else {
             self.close();
@@ -399,11 +408,13 @@ impl RelaySession {
         let protocol_version = *protocol_version;
         let hello_caps = hello_caps.clone();
         let hello_datastore = *hello_datastore;
+        let hello_channel_binding = *hello_channel_binding;
         let request_id = env.request_id;
         let sig = take64(map_get(&env.payload, "signature"))?;
         let transcript =
             AuthTranscript::for_relay_hello(claimed, pk, protocol_version, &hello_caps, self.nonce)
-                .with_hello_datastore(hello_datastore);
+                .with_hello_datastore(hello_datastore)
+                .with_channel_binding(hello_channel_binding);
         if authenticate(&claimed, &pk, &transcript, &sig).is_err() {
             self.close();
             return Ok(vec![error_frame(
@@ -1197,6 +1208,12 @@ fn take32(c: &Cbor) -> Result<[u8; 32], RelayError> {
 
 /// Optional HELLO.datastore: omit when absent; 32-byte id as CBOR bytes or hex text.
 fn opt_hello_datastore(c: &Cbor) -> Result<Option<[u8; 32]>, RelayError> {
+    opt_hello_bytes32(c, "hello.datastore")
+}
+
+/// Optional 32-byte HELLO field: `Null`/absent omits; bytes or hex text;
+/// present-but-invalid is a protocol error (fail closed, not "omitted").
+fn opt_hello_bytes32(c: &Cbor, what: &str) -> Result<Option<[u8; 32]>, RelayError> {
     match c {
         Cbor::Null => Ok(None),
         Cbor::Bytes(b) if b.len() == 32 => Ok(Some(b.as_slice().try_into().unwrap())),
@@ -1204,11 +1221,11 @@ fn opt_hello_datastore(c: &Cbor) -> Result<Option<[u8; 32]>, RelayError> {
             let mut out = [0u8; 32];
             for i in 0..32 {
                 out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
-                    .map_err(|_| RelayError::Protocol("hello.datastore".into()))?;
+                    .map_err(|_| RelayError::Protocol(what.into()))?;
             }
             Ok(Some(out))
         }
-        _ => Err(RelayError::Protocol("hello.datastore".into())),
+        _ => Err(RelayError::Protocol(what.into())),
     }
 }
 

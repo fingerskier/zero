@@ -16,3 +16,4 @@ export {
   signAuthV1NonceOnly,
 } from './peer.mjs'
 export { negotiateViaSignal } from './negotiate.mjs'
+export { channelBindingFor, channelBindingFromDescriptions, dtlsFingerprintFromSdp, formatFingerprint } from './binding.mjs'

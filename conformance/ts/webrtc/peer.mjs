@@ -4,6 +4,13 @@
 // same AuthTranscript / zerodb-relay-auth-v2 preimage as the relay
 // (conformance/ts/models/relay.mjs ≡ zerodb-core handshake.rs).
 // Do not invent a second AUTH domain. RTC offerer ≠ handshake server.
+//
+// H5 slice — DTLS channel binding: pass `opts.channelBinding` (from
+// `channelBindingFor(pc)`) on both sides. The client puts it in
+// HELLO.channel_binding and the transcript; the server verifies against
+// its OWN derivation and binds that into the transcript, so a signaling
+// MITM that terminates DTLS on each leg fails AUTH (0x201) before OPS.
+// Omitted when neither side has a pc (relay WS profile / raw channel tests).
 
 import { bytesToHex } from '../models/cbor.mjs'
 import {
@@ -25,6 +32,7 @@ import {
   encodeEnvelope,
   isHandshakeServer,
   negotiateWelcomeCaps,
+  optHelloChannelBinding,
   optHelloDatastore,
   signAuth,
 } from '../models/relay.mjs'
@@ -134,6 +142,9 @@ export async function serveDirect(store, channel, opts = {}) {
   const nonce = opts.nonce instanceof Uint8Array ? opts.nonce : crypto.getRandomValues(new Uint8Array(32))
   const expectedDs = opts.expectedDs || null
   const welcomeOverride = opts.welcomeOverride || null
+  // Server's own DTLS view. When set, HELLO.channel_binding is REQUIRED and
+  // must equal it; the transcript binds the server's value, not the claim.
+  const ownBinding = opts.channelBinding == null ? null : asBytes32(opts.channelBinding)
 
   const hello = decodeEnvelope(await t.recv())
   expectType(hello, MSG_HELLO, 'HELLO')
@@ -153,9 +164,11 @@ export async function serveDirect(store, channel, opts = {}) {
   }
 
   let offered
+  let claimedBinding
   try {
     const parsed = optHelloDatastore(hello.payload && hello.payload.datastore)
     offered = parsed ? bytesToHex(parsed) : undefined
+    claimedBinding = optHelloChannelBinding(hello.payload && hello.payload.channel_binding)
   } catch {
     t.send(
       encodeEnvelope(MSG_ERROR, hello.request_id, {
@@ -166,6 +179,19 @@ export async function serveDirect(store, channel, opts = {}) {
     )
     return { phase: 'auth-failed', code: ERR_AUTH_FAILED }
   }
+  if (ownBinding && (!claimedBinding || bytesToHex(claimedBinding) !== bytesToHex(ownBinding))) {
+    // Missing or foreign binding: a bridged DTLS leg or a client that did
+    // not bind. Fail closed before CHALLENGE — no nonce, no OPS.
+    t.send(
+      encodeEnvelope(MSG_ERROR, hello.request_id, {
+        code: ERR_AUTH_FAILED,
+        message: 'AUTH_FAILED',
+        fatal: true,
+      }),
+    )
+    return { phase: 'auth-failed', code: ERR_AUTH_FAILED, reason: 'CHANNEL_BINDING' }
+  }
+  const transcriptBinding = ownBinding || claimedBinding
 
   t.send(
     encodeEnvelope(MSG_CHALLENGE, hello.request_id, {
@@ -179,7 +205,7 @@ export async function serveDirect(store, channel, opts = {}) {
   }
   expectType(auth, MSG_AUTH, 'AUTH')
   const sig = asBytes64(auth.payload.signature)
-  const transcript = authTranscript(claimed, pk, helloVersion, helloCaps, nonce, undefined, offered)
+  const transcript = authTranscript(claimed, pk, helloVersion, helloCaps, nonce, undefined, offered, transcriptBinding)
   const claimedHex = bytesToHex(claimed)
   const pkHex = bytesToHex(pk)
   const transcriptPeer = bytesToHex(transcript.peer_id)
@@ -298,6 +324,7 @@ export async function connectDirect(store, channel, opts = {}) {
   const helloDs = opts.joinDs === undefined ? store.datastoreIdHex() : opts.joinDs
   const opsDs = helloDs || store.datastoreIdHex()
   const signFn = opts.signAuthFn || ((seed, transcript) => signAuth(seed, transcript))
+  const binding = opts.channelBinding == null ? null : asBytes32(opts.channelBinding)
 
   const helloPayload = {
     peer_id: store.authorHex,
@@ -306,11 +333,12 @@ export async function connectDirect(store, channel, opts = {}) {
     capabilities: helloCaps,
   }
   if (helloDs) helloPayload.datastore = helloDs
+  if (binding) helloPayload.channel_binding = bytesToHex(binding)
   if (opts.remoteCursor) helloPayload.cursor = opts.remoteCursor
   t.send(encodeEnvelope(MSG_HELLO, 1, helloPayload))
   const challenge = expectType(decodeEnvelope(await t.recv()), MSG_CHALLENGE, 'CHALLENGE')
   const nonce = asBytes32(challenge.payload.nonce)
-  const transcript = authTranscript(store.author, store.pk, 1, helloCaps, nonce, undefined, helloDs)
+  const transcript = authTranscript(store.author, store.pk, 1, helloCaps, nonce, undefined, helloDs, binding)
   const sig = signFn(store.seed, transcript)
   t.send(encodeEnvelope(MSG_AUTH, 2, { signature: bytesToHex(sig) }))
 

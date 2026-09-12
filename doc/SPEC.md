@@ -1049,7 +1049,7 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 #### M3b — Security (internal)
 
 - [ ] Mandatory signing policy, author-key resolution, datastore-membership admission (ISSUES C4, C5)
-- [ ] Handshake hardening: fixed encoding through auth, transcript signature binding version/limits/transport (ISSUES H5; session resumption was removed in relay 0.2); signed peer handshake shared by direct P2P and relay participation (ISSUES H6)
+- [ ] Handshake hardening: fixed encoding through auth, transcript signature binding version/limits/transport (ISSUES H5; session resumption was removed in relay 0.2; DTLS channel binding on the DataChannel landed 2026-09-12, server identity still open); signed peer handshake shared by direct P2P and relay participation (ISSUES H6)
 - [ ] E2E encrypted-property envelope (M0-frozen bytes); recipient/group key distribution, rotation, revocation (ISSUES H10)
 - [ ] Future-clock acceptance/quarantine rule (ISSUES H1); resource limits enforced pre-auth
 

@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value as Json;
 use zerodb_core::cbor::{self, Cbor, encode};
 use zerodb_core::handshake::{
-    AuthTranscript, ERR_VERSION_MISMATCH, admit_datastore, auth_transcript_preimage, authenticate,
-    check_welcome_protocol_version, is_handshake_server, sign_auth, sign_auth_v1_nonce_only,
+    AuthTranscript, DOMAIN_DC_CHANNEL_BINDING, ERR_VERSION_MISMATCH, admit_datastore,
+    auth_transcript_preimage, authenticate, channel_binding, check_welcome_protocol_version,
+    is_handshake_server, sign_auth, sign_auth_v1_nonce_only,
 };
 use zerodb_core::relay::{
     ERR_AUTH_FAILED, ERR_TARGET_NOT_CONNECTED, FrontierTip, HeldOp, MSG_ERROR, MSG_SIGNAL,
@@ -230,6 +231,55 @@ fn run_auth(v: &Json, path: &Path) {
         );
         return;
     }
+    if v["kind"] == "auth-swapped-binding" {
+        assert_eq!(DOMAIN_DC_CHANNEL_BINDING, b"zerodb-dc-binding-v1");
+        let fps = v["dtls_fingerprints"].as_array().unwrap();
+        let fp_a = arr32(fps[0].as_str().unwrap());
+        let fp_b = arr32(fps[1].as_str().unwrap());
+        let want = arr32(v["hello_channel_binding"].as_str().unwrap());
+        assert_eq!(
+            channel_binding(&fp_a, &fp_b),
+            want,
+            "{} derivation",
+            path.display()
+        );
+        assert_eq!(
+            channel_binding(&fp_b, &fp_a),
+            want,
+            "{} order",
+            path.display()
+        );
+        let mitm = arr32(v["mitm_fingerprint"].as_str().unwrap());
+        let swapped_cb = arr32(v["swapped_channel_binding"].as_str().unwrap());
+        assert_eq!(
+            channel_binding(&fp_a, &mitm),
+            swapped_cb,
+            "{} mitm",
+            path.display()
+        );
+
+        let bound = t.clone().with_channel_binding(Some(want));
+        let sig = sign_auth(&seed, &bound);
+        assert!(
+            authenticate(&peer, &pk, &bound, &sig).is_ok(),
+            "{} honest channel_binding AUTH",
+            path.display()
+        );
+        let swapped = t.clone().with_channel_binding(Some(swapped_cb));
+        assert_eq!(
+            authenticate(&peer, &pk, &swapped, &sig),
+            Err(ERR_AUTH_FAILED),
+            "{} swapped",
+            path.display()
+        );
+        assert_eq!(
+            authenticate(&peer, &pk, &t, &sig),
+            Err(ERR_AUTH_FAILED),
+            "{} stripped",
+            path.display()
+        );
+        return;
+    }
     if v["kind"] == "auth-swapped-ds" {
         let sig = sign_auth(&seed, &t);
         assert!(
@@ -338,7 +388,9 @@ fn run_vector(v: &Json, path: &Path) {
         "signal-forward" => run_signal_forward(v, path),
         "signal-missing" => run_signal_missing(v, path),
         "peer-role" => run_peer_role(v, path),
-        "auth-v2" | "auth-v1-reject" | "auth-swapped-ds" => run_auth(v, path),
+        "auth-v2" | "auth-v1-reject" | "auth-swapped-ds" | "auth-swapped-binding" => {
+            run_auth(v, path)
+        }
         "welcome-version" => run_welcome_version(v, path),
         "admit" => run_admit(v, path),
         "resume-cursor" => run_resume(v, path),
@@ -361,7 +413,7 @@ fn h6_profile_vectors() {
         run_vector(&vector, &path);
         ran += 1;
     }
-    assert_eq!(ran, 10, "H6 profile is ten named fixtures under {dir:?}");
+    assert_eq!(ran, 11, "H6 profile is eleven named fixtures under {dir:?}");
 }
 
 #[test]
@@ -369,7 +421,7 @@ fn registry_names_h6_fixtures() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../conformance/registry.json");
     let reg: Json = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     let fixtures = reg["h6_profile"]["fixtures"].as_array().unwrap();
-    assert_eq!(fixtures.len(), 10);
+    assert_eq!(fixtures.len(), 11);
     assert_eq!(reg["h6_profile"]["admission_error"], AUTH_WRONG_DATASTORE);
     assert_eq!(reg["h6_profile"]["auth_domain"], "zerodb-relay-auth-v2");
 }

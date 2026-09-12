@@ -1,14 +1,16 @@
 // H6 closed (protocol): SIGNAL, PeerId roles, v2 AUTH, WELCOME
 // version reject, datastore admission, resume-cursor. Optional
-// HELLO.datastore is in AuthTranscript when present. Same rules as
-// handshake.rs / webrtc/peer.mjs. Not M4a complete.
+// HELLO.datastore and HELLO.channel_binding (H5 DTLS slice) are in
+// AuthTranscript when present. Same rules as handshake.rs /
+// webrtc/peer.mjs. Not M4a complete.
 
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
 import { checkWelcomeProtocol } from '../peer/client.mjs'
 import { admitDatastore, signAuthV1NonceOnly } from '../webrtc/peer.mjs'
 import { encodeSignal } from '../webrtc/signal.mjs'
-import { decode } from './cbor.mjs'
+import { bytesToHex, decode } from './cbor.mjs'
 import {
+  DOMAIN_DC_CHANNEL_BINDING,
   DOMAIN_RELAY_AUTH,
   DOMAIN_RELAY_AUTH_V1,
   ERR_AUTH_FAILED,
@@ -17,6 +19,7 @@ import {
   authenticate,
   authTranscript,
   authTranscriptPreimage,
+  channelBinding,
   decodeEnvelope,
   encodeEnvelope,
   isHandshakeServer,
@@ -125,6 +128,33 @@ function runAuth(v) {
     if (err !== ERR_AUTH_FAILED) throw new Error(`v1 must be AUTH_FAILED, got ${err}`)
     return
   }
+  if (v.kind === 'auth-swapped-binding') {
+    if (new TextDecoder().decode(DOMAIN_DC_CHANNEL_BINDING) !== 'zerodb-dc-binding-v1') {
+      throw new Error('dc binding domain')
+    }
+    const [fpA, fpB] = v.dtls_fingerprints
+    const derived = channelBinding(hex32(fpA), hex32(fpB))
+    if (bytesToHex(derived) !== v.hello_channel_binding) {
+      throw new Error(`channel_binding derivation ${bytesToHex(derived)} != ${v.hello_channel_binding}`)
+    }
+    if (bytesToHex(channelBinding(hex32(fpB), hex32(fpA))) !== v.hello_channel_binding) {
+      throw new Error('channel_binding must be order-independent')
+    }
+    const mitm = channelBinding(hex32(fpA), hex32(v.mitm_fingerprint))
+    if (bytesToHex(mitm) !== v.swapped_channel_binding) {
+      throw new Error(`mitm binding ${bytesToHex(mitm)} != ${v.swapped_channel_binding}`)
+    }
+    const bound = authTranscript(peer, pk, 1, v.hello_capabilities, nonce, undefined, undefined, v.hello_channel_binding)
+    const sig = signAuth(seed, bound)
+    const honest = authenticate(peer, pk, bound, sig)
+    if (honest !== null) throw new Error(`honest channel_binding must AUTH, got ${honest}`)
+    const swapped = authTranscript(peer, pk, 1, v.hello_capabilities, nonce, undefined, undefined, v.swapped_channel_binding)
+    const err = authenticate(peer, pk, swapped, sig)
+    if (err !== ERR_AUTH_FAILED) throw new Error(`swapped channel_binding must be AUTH_FAILED, got ${err}`)
+    const stripped = authenticate(peer, pk, t, sig)
+    if (stripped !== ERR_AUTH_FAILED) throw new Error(`stripped channel_binding must be AUTH_FAILED, got ${stripped}`)
+    return
+  }
   if (v.kind === 'auth-swapped-ds') {
     const sig = signAuth(seed, t)
     const honest = authenticate(peer, pk, t, sig)
@@ -188,6 +218,7 @@ const kinds = {
   'auth-v2': runAuth,
   'auth-v1-reject': runAuth,
   'auth-swapped-ds': runAuth,
+  'auth-swapped-binding': runAuth,
   'welcome-version': runWelcomeVersion,
   admit: runAdmit,
   'resume-cursor': runResume,
