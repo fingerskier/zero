@@ -17,7 +17,11 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
-### H6 closed — shared peer protocol over DataChannel (this PR)
+### O4 pinned — WASM size budget leaves the M4a gate (this PR)
+
+ISSUES O4 (WASM gzip vs Automerge ~250 KB) is **pinned** — not closed, not scrapped. The size-oriented artifact stays 262.6 KiB gzip. The CI regression ceiling in `zerodb-wasm/scripts/measure-size.mjs` tightens from 400 KiB to 300 KiB gzip and is the only size gate. "Optional modules for RGA/Richtext" rides M2-crdts. M4a stays open on its own platform criteria (real-browser DataChannel path, direct/relay parity, browser restart/offline tests); E10 remains M4b. **Not** M4a complete. Crates/npm stay `0.1.0-alpha` unpublished.
+
+### H6 closed — shared peer protocol over DataChannel (landed main #29 @ `a4fc3b8`)
 
 H6 (Direct P2P sync has no protocol) is **closed**. Shared peer protocol over an ordered `zerodb-relay` DataChannel: HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS. Evidence on main: #25 @ `671adba`, #26 @ `45a88b5`, #27 @ `ef2fca9`, #28 @ `bfe69b9`. Same `AuthTranscript` helper; no second preimage. TURN/NAT is infra (no hosted TURN / `wrtc`). **Not** M4a complete. O4 still open. No E10. Crates/npm stay `0.1.0-alpha` unpublished.
 

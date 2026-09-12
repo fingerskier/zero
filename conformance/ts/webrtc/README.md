@@ -85,8 +85,8 @@ CI job: `WebRTC first-cut (H6)` (extended, not replaced).
 - **Signaling identity is relay-asserted** until the signed peer
   handshake (`HELLO`/`AUTH`) on the DataChannel. `SIGNAL.sender` is set
   by the relay.
-- **Not stuffed into wasm.** O4 stays open (262.6 KiB gzip vs ~250 KB;
-  CI ceiling 400 KiB).
+- **Not stuffed into wasm.** O4 is pinned (262.6 KiB gzip vs ~250 KB;
+  CI ceiling 300 KiB).
 
 ## Layout
 
