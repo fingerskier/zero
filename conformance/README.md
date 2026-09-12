@@ -20,8 +20,8 @@ conformance/
     │                #   semantic models; NOT the SDK, never NAPI-backed)
     ├── peer/        # M3c-b independent RELAY 0.2 wire peer (same invariant:
     │                #   reuses models/; NOT the SDK, never NAPI-backed)
-    └── webrtc/      # H6 first-cut: SIGNAL + DataChannel over the shared peer
-                     #   protocol. Not H6 closed. Not M4a complete.
+    └── webrtc/      # H6: live WS SIGNAL fanout + PeerId roles + DataChannel
+                     #   over the shared peer protocol. Not H6 closed. Not M4a complete.
 ```
 
 The Rust side runs the same vectors via `cargo test` harnesses in the workspace crates (added per package as contracts land). `relay-transcript` and `peer-ingest` are `zerodb-core` tests `conformance_relay` / `conformance_peer`; both load `registry.json` (`conformance_registry`). Those two suites iterate `vectors/required/` only so a demonstrated-red xfail fixture cannot fail `cargo test`. xfail demonstration is the TS `--lane xfail` job (exit 0).

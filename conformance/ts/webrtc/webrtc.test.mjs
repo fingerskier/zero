@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { bytesToHex } from '../models/cbor.mjs'
-import { authTranscriptPreimage, decodeEnvelope, signAuth } from '../models/relay.mjs'
+import { authTranscriptPreimage, decodeEnvelope, isHandshakeServer, signAuth } from '../models/relay.mjs'
 import { PeerStore } from '../peer/store.mjs'
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
 import {
@@ -21,6 +21,7 @@ import {
   encodeSignal,
   negotiateViaSignal,
   pairDataChannels,
+  runNegotiated,
   serveDirect,
   signAuthV1NonceOnly,
 } from './index.mjs'
@@ -61,12 +62,18 @@ test('AuthTranscript preimage is zerodb-relay-auth-v2 (no second domain)', () =>
   assert.notEqual(new TextDecoder().decode(pre.subarray(0, 20)), 'zerodb-relay-auth-v1')
 })
 
-test('SIGNAL → DataChannel → v2 AUTH → WELCOME → OPS converges', async () => {
+function channelFor(neg, peerHex, initiatorHex) {
+  return peerHex === initiatorHex ? neg.initiatorChannel : neg.answererChannel
+}
+
+test('SIGNAL → DataChannel → negotiated roles → v2 AUTH → WELCOME → OPS converges', async () => {
   const a = new PeerStore({ seed: seed(2) })
   const b = new PeerStore({ seed: seed(3) })
-  a.applySchemaEpoch(schemaPin())
-  const { node } = a.createNode('Todo')
-  a.setLww(node, 'title', 'milk')
+  const client = isHandshakeServer(a.author, b.author) ? b : a
+  const server = client === a ? b : a
+  client.applySchemaEpoch(schemaPin())
+  const { node } = client.createNode('Todo')
+  client.setLww(node, 'title', 'milk')
 
   const relay = new SignalRelay()
   const neg = await negotiateViaSignal(relay, a.authorHex, b.authorHex)
@@ -75,16 +82,103 @@ test('SIGNAL → DataChannel → v2 AUTH → WELCOME → OPS converges', async (
   assert.equal(neg.initiatorChannel.ordered, true)
   assert.equal(neg.answererChannel.label, 'zerodb-relay')
 
-  const served = serveDirect(b, neg.answererChannel, { expectedDs: a.dsHex })
-  const client = connectDirect(a, neg.initiatorChannel, { joinDs: a.dsHex })
-  const [answer, init] = await Promise.all([served, client])
+  const [left, right] = await Promise.all([
+    runNegotiated(a, b.author, channelFor(neg, a.authorHex, a.authorHex), {
+      joinDs: client.dsHex,
+      expectedDs: client.dsHex,
+    }),
+    runNegotiated(b, a.author, channelFor(neg, b.authorHex, a.authorHex), {
+      joinDs: client.dsHex,
+      expectedDs: client.dsHex,
+    }),
+  ])
+  const served = left.role === 'server' ? left : right
+  const init = left.role === 'client' ? left : right
+  assert.equal(served.role, 'server')
+  assert.equal(init.role, 'client')
+  assert.equal(served.phase, 'ops')
+  assert.ok(served.applied >= 2)
+  assert.equal(served.rejected, 0)
+  assert.equal(init.sent, client.exportOps(client.dsHex).length)
+  assert.equal(server.getLww(node, 'title'), 'milk')
+  assert.equal(server.dsHex, client.dsHex)
+})
 
-  assert.equal(answer.phase, 'ops')
-  assert.ok(answer.applied >= 2)
-  assert.equal(answer.rejected, 0)
-  assert.equal(init.sent, a.exportOps(a.dsHex).length)
-  assert.equal(b.getLww(node, 'title'), 'milk')
-  assert.equal(b.dsHex, a.dsHex)
+test('handshake role is PeerId order, not RTC initiator, and either peer can serve', async () => {
+  async function once(serverSeed, clientSeed, serverOffersRtc) {
+    const server = new PeerStore({ seed: seed(serverSeed) })
+    const client = new PeerStore({ seed: seed(clientSeed) })
+    assert.equal(isHandshakeServer(server.author, client.author), true)
+    assert.equal(isHandshakeServer(client.author, server.author), false)
+    client.applySchemaEpoch(schemaPin())
+    const { node } = client.createNode('Todo')
+    client.setLww(node, 'title', 'tea')
+
+    const relay = new SignalRelay()
+    const offerId = serverOffersRtc ? server.authorHex : client.authorHex
+    const answerId = serverOffersRtc ? client.authorHex : server.authorHex
+    const neg = await negotiateViaSignal(relay, offerId, answerId)
+    assert.equal(neg.error, undefined)
+
+    const [s, c] = await Promise.all([
+      runNegotiated(server, client.author, channelFor(neg, server.authorHex, offerId), {
+        expectedDs: client.dsHex,
+      }),
+      runNegotiated(client, server.author, channelFor(neg, client.authorHex, offerId), {
+        joinDs: client.dsHex,
+      }),
+    ])
+    assert.equal(s.role, 'server')
+    assert.equal(c.role, 'client')
+    assert.equal(s.phase, 'ops')
+    assert.ok(s.applied >= 2)
+    assert.equal(server.getLww(node, 'title'), 'tea')
+  }
+
+  const pairs = []
+  for (let i = 2; i < 24 && pairs.length < 2; i++) {
+    for (let j = i + 1; j < 24 && pairs.length < 2; j++) {
+      const p = new PeerStore({ seed: seed(i) })
+      const q = new PeerStore({ seed: seed(j) })
+      if (isHandshakeServer(p.author, q.author)) pairs.push([i, j])
+      else pairs.push([j, i])
+    }
+  }
+  assert.ok(pairs.length >= 2)
+  await once(pairs[0][0], pairs[0][1], true)
+  await once(pairs[1][0], pairs[1][1], false)
+})
+
+test('negotiated-role AUTH is still v2; v1 nonce-only fails closed', async () => {
+  const a = new PeerStore({ seed: seed(25) })
+  const b = new PeerStore({ seed: seed(26) })
+  const client = isHandshakeServer(a.author, b.author) ? b : a
+  const server = client === a ? b : a
+  client.applySchemaEpoch(schemaPin())
+  const { node } = client.createNode('Todo')
+  client.setLww(node, 'title', 'secret')
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+  const serverCh = server === a ? left : right
+  const clientCh = client === a ? left : right
+
+  const served = runNegotiated(server, client.author, serverCh)
+  let thrown = null
+  const started = runNegotiated(client, server.author, clientCh, {
+    signAuthFn: (seedBytes, transcript) => signAuthV1NonceOnly(seedBytes, transcript.nonce),
+  }).catch((e) => {
+    thrown = e
+    return null
+  })
+  const [answer] = await Promise.all([served, started])
+  assert.equal(answer.role, 'server')
+  assert.equal(answer.phase, 'auth-failed')
+  assert.equal(answer.code, ERR_AUTH_FAILED)
+  assert.equal(thrown && thrown.code, ERR_AUTH_FAILED)
+  assert.equal(server.getLww(node, 'title'), null)
+  assert.notEqual(server.dsHex, client.dsHex)
 })
 
 test('v1 nonce-only AUTH fails closed (no WELCOME, no OPS)', async () => {

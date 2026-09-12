@@ -1,9 +1,10 @@
 //! Deterministic handshake transcript (RELAY AUTH / future shared peer sync).
 //!
 //! H5: AUTH signs this transcript, not the nonce alone. H6 (direct P2P)
-//! first-cut MUST reuse this helper rather than inventing a second
-//! preimage (`conformance/ts/webrtc/`). H6 is not closed. Draft-1 /
-//! unfrozen — not a format freeze.
+//! MUST reuse this helper rather than inventing a second preimage
+//! (`conformance/ts/webrtc/`). Handshake *roles* (who issues
+//! CHALLENGE/WELCOME) use [`is_handshake_server`] — not a second AUTH
+//! domain. H6 is not closed. Draft-1 / unfrozen — not a format freeze.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
@@ -93,6 +94,15 @@ impl WelcomeLimits {
             ),
         ])
     }
+}
+
+/// Who issues CHALLENGE/WELCOME on a direct DataChannel.
+///
+/// Lexicographically smaller PeerId is the handshake server; the other
+/// peer sends HELLO/AUTH. Same rule as the TS twin (`isHandshakeServer`).
+/// Not a second AUTH preimage — AUTH is still [`AuthTranscript`].
+pub fn is_handshake_server(local_peer: &[u8; 32], remote_peer: &[u8; 32]) -> bool {
+    local_peer < remote_peer
 }
 
 /// Deterministic handshake transcript (HELLO + nonce + intended WELCOME).
@@ -305,6 +315,16 @@ mod tests {
             authenticate(&peer, &PK, &flipped_ver, &sig),
             Err(ERR_AUTH_FAILED)
         );
+    }
+
+    #[test]
+    fn smaller_peer_id_is_handshake_server() {
+        let a = [0u8; 32];
+        let mut b = [0u8; 32];
+        b[31] = 1;
+        assert!(is_handshake_server(&a, &b));
+        assert!(!is_handshake_server(&b, &a));
+        assert!(!is_handshake_server(&a, &a));
     }
 
     #[test]

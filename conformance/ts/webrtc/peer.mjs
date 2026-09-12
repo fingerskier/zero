@@ -1,8 +1,9 @@
 // Shared RELAY 0.2 peer protocol over a DataChannel.
-// Initiator = client (HELLO/AUTH). Answerer = server (CHALLENGE/WELCOME)
-// using the same AuthTranscript / zerodb-relay-auth-v2 preimage as the
-// relay (conformance/ts/models/relay.mjs ≡ zerodb-core handshake.rs).
-// Do not invent a second AUTH domain.
+// Handshake roles come from `isHandshakeServer` (smaller PeerId issues
+// CHALLENGE/WELCOME; the other sends HELLO/AUTH). AUTH still uses the
+// same AuthTranscript / zerodb-relay-auth-v2 preimage as the relay
+// (conformance/ts/models/relay.mjs ≡ zerodb-core handshake.rs).
+// Do not invent a second AUTH domain. RTC offerer ≠ handshake server.
 
 import { bytesToHex } from '../models/cbor.mjs'
 import {
@@ -22,6 +23,7 @@ import {
   authenticate,
   decodeEnvelope,
   encodeEnvelope,
+  isHandshakeServer,
   negotiateWelcomeCaps,
   signAuth,
 } from '../models/relay.mjs'
@@ -284,4 +286,17 @@ export async function connectDirect(store, channel, opts = {}) {
     batches: batches.length,
     outcomes,
   }
+}
+
+/**
+ * Pick CHALLENGE/WELCOME vs HELLO/AUTH from PeerId order.
+ * Same `isHandshakeServer` / `AuthTranscript` helper — no second domain.
+ */
+export async function runNegotiated(store, remotePeerId, channel, opts = {}) {
+  if (isHandshakeServer(store.author, remotePeerId)) {
+    const result = await serveDirect(store, channel, opts)
+    return { role: 'server', ...result }
+  }
+  const result = await connectDirect(store, channel, opts)
+  return { role: 'client', ...result }
 }
