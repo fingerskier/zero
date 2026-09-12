@@ -12,7 +12,7 @@
 
 **Stage 3** is pinned (bounded reconciliation): replace full OpId manifests, missing-only relay upload protocol, compact Merkle snapshot cache (beyond the free one-export win in Stage 1).
 
-**H10 leftovers** stay pinned (offline revoke, two-key wrap, wrap-body freeze). Handshake/TLS/resource hardening beyond advertised-limit enforcement, connection quotas, datastore-creation policy, and two-key principal/device split stay pinned.
+**H10 leftovers** stay pinned (offline revoke, two-key wrap, wrap-body freeze). Transport hardening (message ceiling, handshake/idle timeouts, global connection cap, in-process TLS) landed 2026-09-12. Datastore-creation policy, op/byte quotas, walk/response limits, and two-key principal/device split stay pinned.
 
 No Stage 2 derived-column rewrite. No Stage 3 new sync protocol. **Not claimed:** M3b exit, format freeze, H10 closed. Do not invent benchmark numbers here.
 
@@ -189,7 +189,7 @@ This is both a performance and availability issue: any self-authenticated peer c
 - define datastore creation/admission and per-principal, per-datastore, and global op/byte quotas;
 - return overload/quota errors before acquiring the database lock where possible.
 
-Stage 1 enforces advertised payload/batch limits (`0x303 PAYLOAD_TOO_LARGE`) before full decode / before insert. Connection quotas, TLS, rate-limit accounting, subscription caps, and datastore-creation policy stay pinned.
+Stage 1 enforces advertised payload/batch limits (`0x303 PAYLOAD_TOO_LARGE`) before full decode / before insert. Rate-limit accounting, subscription caps, and per-PeerId connection caps landed with the M3b leftovers (2026-08-28). Transport hardening landed 2026-09-12 (`zerodb-relay/tests/hardening.rs`): WebSocket-layer message ceiling before buffering, handshake deadline, idle timeout with PING/PONG keepalive, global connection cap, GOODBYE, and in-process TLS. Still pinned: datastore-creation policy, per-principal / per-datastore / global op-byte quotas, delta-ID / active-walk / response limits, overload errors before the database lock.
 
 ### P1 — Relay admission serializes all clients and autocommits each op
 

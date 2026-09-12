@@ -17,6 +17,10 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
+### Relay transport hardening + in-process TLS (this PR)
+
+`zerodb-relay` before network exposure: WebSocket-layer message ceiling (`MAX_FRAME_BYTES`, refused before buffering → `0x303` fatal), handshake deadline (`--handshake-timeout-secs`, default 10 → `0x100 HANDSHAKE_TIMEOUT`; raw TCP idlers dropped too), idle timeout (`--idle-timeout-secs`, default 300, `0` disables → `GOODBYE IDLE_TIMEOUT`; `PING`/`PONG` and WS pings keep a session alive), global `--max-connections` (1024 → `0x304 TOO_MANY_CONNECTIONS`, slot never held), RELAY §4.6 `PING`/`PONG` in any phase, `GOODBYE` releases state immediately. `--tls-cert`/`--tls-key` (PEM) terminate TLS in-process (rustls/ring) and serve `wss://` on any bind; plaintext non-loopback still needs `--allow-insecure`. New deps: `rustls` (ring), `rustls-pki-types`; dev `rcgen`. Evidence: `zerodb-relay/tests/hardening.rs`. Still pinned: datastore-creation policy, op/byte quotas, walk/response limits, CA / rotation / hosted relay. **Not** M3b exit, **not** H5 closed. Crates/npm stay `0.1.0-alpha` unpublished.
+
 ### H6 closed — shared peer protocol over DataChannel (this PR)
 
 H6 (Direct P2P sync has no protocol) is **closed**. Shared peer protocol over an ordered `zerodb-relay` DataChannel: HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS. Evidence on main: #25 @ `671adba`, #26 @ `45a88b5`, #27 @ `ef2fca9`, #28 @ `bfe69b9`. Same `AuthTranscript` helper; no second preimage. TURN/NAT is infra (no hosted TURN / `wrtc`). **Not** M4a complete. O4 still open. No E10. Crates/npm stay `0.1.0-alpha` unpublished.

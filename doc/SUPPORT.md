@@ -27,7 +27,7 @@ The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M
 | Browser / WASM (`zerodb-wasm`, Pages) | `wasm` job + `pages` workflow | M4a-a IDB/OPFS adapters + persist/reopen; **not** M4a complete; **not** this support profile's product platforms. |
 | `@zerodb/react` optional hooks | `react-hooks` job | M4a slice over wasm + `openDurable`; **not** M4a complete; **not** a product platform. |
 
-**Not in CI / not supported as product platforms:** macOS, iOS/Android, musl-only hosts, a hosted public relay, production TLS termination in-process.
+**Not in CI / not supported as product platforms:** macOS, iOS/Android, musl-only hosts, a hosted public relay. In-process TLS (`--tls-cert`/`--tls-key`, rustls/ring) is exercised in CI with a self-signed test certificate; certificate provisioning, rotation, and a public CA story are the operator's.
 
 Node engines stated by `@zerodb/node`: `>=18`. Conformance and the TS peer are exercised at Node 20/22.
 
@@ -57,7 +57,8 @@ Workspace version is `0.1.0-alpha` in the root `Cargo.toml`. Do not bump it to `
 - Durable SQLite validated oplog; publishes `validated_root` only (not peer `accepted_root` equality).
 - Frozen-snapshot `merkle-walk-v1` catch-up; cursor compatibility; per-op `OP_ACK`.
 - Advertised WELCOME limits (registry `relay_wire.welcome_limits`) plus 3 connections per PeerId.
-- Loopback plaintext is the default bind (`127.0.0.1:7700`). Non-loopback requires `--allow-insecure`. **This binary does not terminate TLS and does not mint certificates.**
+- Loopback plaintext is the default bind (`127.0.0.1:7700`). Non-loopback plaintext requires `--allow-insecure`. `--tls-cert <pem> --tls-key <pem>` terminates TLS in-process (`wss://`, rustls) and may bind anywhere. **This binary does not mint certificates.**
+- Listener hardening: global `--max-connections` (1024), `--handshake-timeout-secs` (10), `--idle-timeout-secs` (300; `0` disables; PING/PONG and WebSocket pings keep a session alive), pre-decode WebSocket message ceiling, GOODBYE handled. Per-PeerId cap 3, subscription cap, and ops/bytes rate windows as before.
 
 LocalStore / NAPI `connectRelay` and the TS peer speak the same envelopes.
 
@@ -122,7 +123,7 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 
 - **M4a-a WASM size (O4 still open).** Size-oriented `scripts/build.sh` artifact `zerodb_wasm_bg.wasm`: **738317 bytes raw (721.0 KiB), 268908 bytes gzip -9 (262.6 KiB)**. ISSUES O4 target vs Automerge ~250 KB gz is **not** met and is **not** closed. CI records size and fails only if gzip exceeds 400 KiB (regression vs the pre-optimization ~393 KiB artifact). Not a format freeze.
 - **M4a complete.** H6 protocol is **closed** (Decision Log 2026-09-12; [RELAY-SPEC](RELAY-SPEC.md) §14.2; #25–#28). Fake ordered DataChannel; no hosted TURN / public STUN / `wrtc` (TURN is infra). Signaling identity is relay-asserted until DC AUTH. Do not claim M4a complete (O4 open, no E10).
-- **Full TLS production story** — no in-process TLS, no CA, no minted certs; `--allow-insecure` is a LAN escape hatch only.
+- **Full TLS production story** — in-process TLS exists (`--tls-cert`/`--tls-key`), but there is no CA, no minted or rotated certs, no OCSP/ALPN story, and no hosted relay; `--allow-insecure` is a LAN escape hatch only.
 - **Format freeze** — no versioned frozen profile; wrap-body unfrozen.
 - **C5 on-wire complete** — AUTH contract exists; do not claim C5 closed as a product/PKI story.
 - **H9 closed** — two-language harness landed (PR #19); issue stays open until an approved-resolution removal.

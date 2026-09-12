@@ -4,10 +4,13 @@ Experimental **L2** relay process (RELAY-SPEC **0.2.2-draft**). Not a format fre
 
 ```
 zerodb-relay --path ./relay.sqlite --bind 127.0.0.1:7700
-zerodb-relay --path ./relay.sqlite --bind 0.0.0.0:7700 --allow-insecure
+zerodb-relay --path ./relay.sqlite --bind 0.0.0.0:7700 --tls-cert cert.pem --tls-key key.pem   # wss://
+zerodb-relay --path ./relay.sqlite --bind 0.0.0.0:7700 --allow-insecure                       # LAN tests only
 ```
 
-WebSocket, binary frames, one CBOR envelope per message. Handshake AUTH is a draft transcript (`zerodb-relay-auth-v2`). Durable validated oplog, dual-root SYNC (relay publishes `validated_root` only), frozen-snapshot `merkle-walk-v1` subtree/leaf traversal, OpId delta batches, cursor compatibility, and per-op `OP_ACK`. Session `max_subscriptions` / rate / 3 connections per PeerId are enforced. Authenticated `SIGNAL` (0x42) is forwarded onto the target live socket (`0x307` if missing). Non-loopback plaintext listen requires `--allow-insecure` (this binary does not terminate TLS and does not mint certificates).
+Hardening flags: `--max-connections` (1024), `--handshake-timeout-secs` (10), `--idle-timeout-secs` (300; `0` disables). Oversized WebSocket messages are refused before decode; RELAY §4.6 `PING`/`PONG` and `GOODBYE` are handled. Evidence: `zerodb-relay/tests/hardening.rs`.
+
+WebSocket, binary frames, one CBOR envelope per message. Handshake AUTH is a draft transcript (`zerodb-relay-auth-v2`). Durable validated oplog, dual-root SYNC (relay publishes `validated_root` only), frozen-snapshot `merkle-walk-v1` subtree/leaf traversal, OpId delta batches, cursor compatibility, and per-op `OP_ACK`. Session `max_subscriptions` / rate / 3 connections per PeerId are enforced. Authenticated `SIGNAL` (0x42) is forwarded onto the target live socket (`0x307` if missing). Non-loopback plaintext listen requires `--allow-insecure`; with `--tls-cert`/`--tls-key` the binary terminates TLS in-process (rustls) and serves `wss://` on any bind (it does not mint certificates).
 
 A LocalStore / NAPI client speaks the same envelopes (`zerodb_storage::relay_client`, `Database.connectRelay`).
 
