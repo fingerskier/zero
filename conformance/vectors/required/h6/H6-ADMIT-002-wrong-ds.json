@@ -1,0 +1,14 @@
+{
+  "id": "H6-ADMIT-002",
+  "type": "h6-profile",
+  "kind": "admit",
+  "invariants": ["I-9"],
+  "description": "Populated/bound datastore A vs offered B is AUTH_WRONG_DATASTORE before OPS (one named error; graphs do not mix).",
+  "populated": true,
+  "bound_ds": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "offered_ds": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "expect": {
+    "ok": false,
+    "reason": "AUTH_WRONG_DATASTORE"
+  }
+}

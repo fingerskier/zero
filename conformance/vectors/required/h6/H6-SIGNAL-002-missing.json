@@ -1,0 +1,13 @@
+{
+  "id": "H6-SIGNAL-002",
+  "type": "h6-profile",
+  "kind": "signal-missing",
+  "invariants": ["I-9"],
+  "description": "SIGNAL to a disconnected target is ERROR 0x307 TARGET_NOT_CONNECTED (non-fatal).",
+  "request_id": 1,
+  "expect": {
+    "code": 775,
+    "message": "TARGET_NOT_CONNECTED",
+    "fatal": false
+  }
+}

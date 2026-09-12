@@ -1,0 +1,12 @@
+{
+  "id": "H6-WELCOME-001",
+  "type": "h6-profile",
+  "kind": "welcome-version",
+  "invariants": ["I-9"],
+  "description": "Client WELCOME.protocol_version other than 1 is 0x102 VERSION_MISMATCH (PR #21) on the DataChannel path.",
+  "protocol_version": 2,
+  "expect": {
+    "code": 258,
+    "name": "VERSION_MISMATCH"
+  }
+}

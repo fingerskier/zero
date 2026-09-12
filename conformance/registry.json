@@ -145,6 +145,25 @@
     "op_ack_reject_reasons": ["DECODE", "SIG", "AUTHZ"]
   },
 
+  "h6_profile": {
+    "comment": "H6 protocol close-candidate contract. Named fixtures in vectors/required/h6/. Live WS fanout stays in signal_ws / signal-ws tests. TURN/NAT is infra, not this profile. H6 is not closed; steward confirms. Not M4a complete.",
+    "authority": "doc/RELAY-SPEC.md, zerodb-core/src/handshake.rs, conformance/ts/webrtc/",
+    "status": "draft (H6 close candidate; not H6 closed; not M4a complete)",
+    "admission_error": "AUTH_WRONG_DATASTORE",
+    "auth_domain": "zerodb-relay-auth-v2",
+    "fixtures": [
+      "H6-SIGNAL-001",
+      "H6-SIGNAL-002",
+      "H6-ROLE-001",
+      "H6-AUTH-001",
+      "H6-AUTH-002",
+      "H6-WELCOME-001",
+      "H6-ADMIT-001",
+      "H6-ADMIT-002",
+      "H6-RESUME-001"
+    ]
+  },
+
   "peer_rejects": {
     "comment": "Named peer-side ingest outcomes (AUTH.md §4 / KERNEL §5 / SCHEMA.md §3). Distinct from relay OP_ACK reasons and ERROR codes.",
     "authority": "doc/AUTH.md, doc/KERNEL.md, doc/SCHEMA.md",

@@ -17,8 +17,9 @@ pub use crate::handshake::{
     AuthTranscript, DEFAULT_BYTES_PER_SECOND, DEFAULT_MAX_BATCH_BYTES, DEFAULT_MAX_BATCH_OPS,
     DEFAULT_MAX_CONNECTIONS_PER_PEER, DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_MAX_SUBSCRIPTIONS,
     DEFAULT_OPS_PER_SECOND, DEFAULT_PROTOCOL_VERSION, DEFAULT_RELAY_LEVEL, DOMAIN_RELAY_AUTH,
-    DOMAIN_RELAY_AUTH_V1, WelcomeLimits, auth_preimage_v1, auth_transcript_preimage, authenticate,
-    is_handshake_server, sign_auth, sign_auth_for_hello, sign_auth_v1_nonce_only, verify_auth,
+    DOMAIN_RELAY_AUTH_V1, WelcomeLimits, admit_datastore, auth_preimage_v1,
+    auth_transcript_preimage, authenticate, is_handshake_server, sign_auth, sign_auth_for_hello,
+    sign_auth_v1_nonce_only, verify_auth,
 };
 
 /// Negotiable session capabilities (sorted).

@@ -271,9 +271,16 @@ export class PeerStore {
     return this.commit(KIND_SET_PROPERTY, { node, path, crdt: 'lww', value })
   }
 
-  exportOps(dsHex) {
+  /**
+   * Ops belonging to `dsHex`. When `opts.cursor` is a DELIVERY `{frontier, epoch}`
+   * (`resume-cursor`), already-covered tips are omitted — not a second resume
+   * protocol.
+   */
+  exportOps(dsHex, opts = {}) {
     const ds = dsHex || this.dsHex
-    return this.ops.filter((w) => w.ds === ds || (w.kind === KIND_GENESIS && w.ds === ZERO_DS))
+    const all = this.ops.filter((w) => w.ds === ds || (w.kind === KIND_GENESIS && w.ds === ZERO_DS))
+    if (!opts.cursor) return all
+    return all.filter((w) => !wireCoveredByCursor(w, opts.cursor))
   }
 
   getLww(node, path) {
@@ -378,6 +385,28 @@ export class PeerStore {
     }
     return 'applied'
   }
+}
+
+function cmpHeld(a, tip) {
+  if (a.physical_ms !== tip.physical_ms) return a.physical_ms < tip.physical_ms ? -1 : 1
+  if (a.logical !== tip.logical) return a.logical < tip.logical ? -1 : 1
+  if (a.author !== tip.author) return a.author < tip.author ? -1 : 1
+  if (a.op_id !== tip.op_id) return a.op_id < tip.op_id ? -1 : 1
+  return 0
+}
+
+/** DELIVERY §4: covered iff Frontier[author] exists and order(op) ≤ tip. */
+export function wireCoveredByCursor(wire, cursor) {
+  const frontier = cursor && cursor.frontier
+  if (!frontier) return false
+  const tip = frontier[wire.author]
+  if (!tip) return false
+  return (
+    cmpHeld(
+      { op_id: wire.id, author: wire.author, physical_ms: wire.ts.p, logical: wire.ts.l },
+      { ...tip, author: tip.author || wire.author },
+    ) <= 0
+  )
 }
 
 export function bundleDatastoreId(ops) {

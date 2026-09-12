@@ -20,13 +20,14 @@ conformance/
     │                #   semantic models; NOT the SDK, never NAPI-backed)
     ├── peer/        # M3c-b independent RELAY 0.2 wire peer (same invariant:
     │                #   reuses models/; NOT the SDK, never NAPI-backed)
-    └── webrtc/      # H6: live WS SIGNAL fanout + PeerId roles + DataChannel
-                     #   over the shared peer protocol. Not H6 closed. Not M4a complete.
+    └── webrtc/      # H6 close candidate: SIGNAL fanout + PeerId roles +
+                     #   DataChannel peer protocol + reconnect/admission.
+                     #   Named fixtures: vectors/required/h6/. Not H6 closed.
 ```
 
 The Rust side runs the same vectors via `cargo test` harnesses in the workspace crates (added per package as contracts land). `relay-transcript` and `peer-ingest` are `zerodb-core` tests `conformance_relay` / `conformance_peer`; both load `registry.json` (`conformance_registry`). Those two suites iterate `vectors/required/` only so a demonstrated-red xfail fixture cannot fail `cargo test`. xfail demonstration is the TS `--lane xfail` job (exit 0).
 
-H9 M3c-c wire vectors (RELAY 0.2.2-draft, unfrozen): HELLO/AUTH/WELCOME (existing `RELAY-HELLO-*`), OPS push+ack (`RELAY-OPS-001`), merkle-walk catch-up (`RELAY-WALK-001`), advertised-limit reject (`RELAY-LIMIT-001`), named peer rejects (`PEER-REJECT-001..004`), SchemaEpoch n=1 ingest (`PEER-EPOCH-001`). A vector without a runner is not evidence.
+H9 M3c-c wire vectors (RELAY 0.2.2-draft, unfrozen): HELLO/AUTH/WELCOME (existing `RELAY-HELLO-*`), OPS push+ack (`RELAY-OPS-001`), merkle-walk catch-up (`RELAY-WALK-001`), advertised-limit reject (`RELAY-LIMIT-001`), named peer rejects (`PEER-REJECT-001..004`), SchemaEpoch n=1 ingest (`PEER-EPOCH-001`). H6 close-candidate profile: `h6-profile` fixtures `H6-SIGNAL-001/002`, `H6-ROLE-001`, `H6-AUTH-001/002`, `H6-WELCOME-001`, `H6-ADMIT-001/002`, `H6-RESUME-001` (required lane; TS runner + `conformance_h6`). A vector without a runner is not evidence. H6 is not closed.
 
 ## Vector format
 

@@ -17,9 +17,13 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
-### M4a-h6-fanout — live WS SIGNAL fanout + role negotiation (this PR)
+### M4a-h6-close — H6 protocol close candidate (this PR)
 
-Live `zerodb-relay` WebSocket SIGNAL (0x42) fanout: a forwarded `{sender, payload}` is written to the target socket (mailbox drain in `serve_connection`). Target missing → `0x307`. Handshake roles are PeerId order (`is_handshake_server` / `isHandshakeServer`); AUTH is still `zerodb-relay-auth-v2` (no second preimage). Tests: `zerodb-relay/tests/signal_ws.rs`, `conformance/ts/webrtc/signal-ws.test.mjs`, role cases in `webrtc.test.mjs`. **H6 not closed.** Reconnect, TURN/NAT, datastore admission tokens, and a conformance profile remain. **Not** M4a complete. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
+Reconnect/resume after dropping the ordered DataChannel: re-SIGNAL, repeat HELLO / `zerodb-relay-auth-v2` / WELCOME (same `AuthTranscript`; no second preimage), then `resume-cursor` / DELIVERY frontier so already-acked ops are omitted or `DUPLICATE`. Session datastore admission: optional `HELLO.datastore` (not in the AUTH transcript); populated A vs offered B is `AUTH_WRONG_DATASTORE` before OPS; empty store may adopt. Named `h6-profile` fixtures in the required lane (`H6-SIGNAL-001/002`, `H6-ROLE-001`, `H6-AUTH-001/002`, `H6-WELCOME-001`, `H6-ADMIT-001/002`, `H6-RESUME-001`) green in the TS runner and `zerodb-core` `conformance_h6`. TURN/NAT is infra — no coturn, public STUN, or `wrtc`. Tests keep the in-process ordered channel. Signaling identity is still relay-asserted until DC AUTH. **H6 not closed** (steward confirm). **Not** M4a complete. O4 stays open. Crates/npm stay `0.1.0-alpha` unpublished.
+
+### M4a-h6-fanout — live WS SIGNAL fanout + role negotiation (landed main #26 @ `45a88b5`)
+
+Live `zerodb-relay` WebSocket SIGNAL (0x42) fanout: a forwarded `{sender, payload}` is written to the target socket (mailbox drain in `serve_connection`). Target missing → `0x307`. Handshake roles are PeerId order (`is_handshake_server` / `isHandshakeServer`); AUTH is still `zerodb-relay-auth-v2` (no second preimage). Tests: `zerodb-relay/tests/signal_ws.rs`, `conformance/ts/webrtc/signal-ws.test.mjs`, role cases in `webrtc.test.mjs`. **H6 not closed.** **Not** M4a complete. O4 stays open (262.6 KiB gzip vs ~250 KB). Crates/npm stay `0.1.0-alpha` unpublished.
 
 ### M4a-webrtc — H6 first-cut (landed main #25 @ `671adba`)
 

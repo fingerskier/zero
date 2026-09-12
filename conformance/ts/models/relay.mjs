@@ -407,7 +407,7 @@ function covered(frontier, op) {
   return cmpOp(op, { ...tip, author: op.author }) <= 0;
 }
 
-function retransmit(held, cursor, rejected) {
+export function retransmit(held, cursor, rejected) {
   const frontier = cursor.frontier || {};
   const skip = new Set(rejected || []);
   return held

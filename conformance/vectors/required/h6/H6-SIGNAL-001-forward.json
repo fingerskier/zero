@@ -1,0 +1,16 @@
+{
+  "id": "H6-SIGNAL-001",
+  "type": "h6-profile",
+  "kind": "signal-forward",
+  "invariants": ["I-9"],
+  "description": "SIGNAL (0x42) inbound carries target; forwarded form asserts sender and omits target. Payload is opaque.",
+  "request_id": 4,
+  "sender": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "target": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "payload_hex": "6e6f742d696e73706563746564",
+  "expect": {
+    "message_type": 66,
+    "forward_has_sender": true,
+    "forward_omits_target": true
+  }
+}
