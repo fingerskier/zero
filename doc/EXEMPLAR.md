@@ -82,7 +82,7 @@ The Exemplar is ZeroDB's end-to-end acceptance target: a distributed ToDo applic
 ### E11 — Performance smoke (provisional M2 / binding M5)
 **Given** one list with 10 000 operations across 1 000 todos.
 **When** cold-open materialization, a 100-op incremental sync, and the O3 minimal query (`MATCH … WHERE done = false ORDER BY priority LIMIT 50`) run on the reference desktop profile.
-**Then** provisional budgets (to be ratified in the delivery ledger, DQ-12): cold materialize < 1 s; incremental sync round < 250 ms; query < 50 ms; WASM bundle within the O4 budget once M4 lands. Budgets are **provisional** until M5 makes them binding.
+**Then** provisional budgets (to be ratified in the delivery ledger, DQ-12): cold materialize < 1 s; incremental sync round < 250 ms; query < 50 ms; WASM bundle under the O4 CI regression ceiling (O4 pinned 2026-09-12; 300 KiB gzip). Budgets are **provisional** until M5 makes them binding.
 
 ## Explicitly out of scope (v0.1)
 

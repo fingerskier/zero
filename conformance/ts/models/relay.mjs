@@ -12,6 +12,8 @@ import { assertRelayConstants, relayWire } from './registry.mjs';
 
 export const DOMAIN_RELAY_AUTH = new TextEncoder().encode('zerodb-relay-auth-v2');
 export const DOMAIN_RELAY_AUTH_V1 = new TextEncoder().encode('zerodb-relay-auth-v1');
+/** DTLS channel-binding domain (registry `domain_separation.dc_channel_binding`). */
+export const DOMAIN_DC_CHANNEL_BINDING = new TextEncoder().encode('zerodb-dc-binding-v1');
 export const RELAY_CAPS = ['dual-root', 'merkle-walk-v1', 'reject-ack', 'resume-cursor'];
 export const ERR_AUTH_FAILED = 0x201;
 export const ERR_SIG_INVALID = 0x301;
@@ -145,7 +147,47 @@ export function optHelloDatastore(v) {
   return hex32(s);
 }
 
-export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce, limits, helloDatastore) {
+/**
+ * Optional HELLO.channel_binding (DataChannel profile): same rules as
+ * `optHelloDatastore` — absent omits, present-but-invalid throws.
+ */
+export function optHelloChannelBinding(v) {
+  if (v == null) return undefined;
+  if (v instanceof Uint8Array) {
+    if (v.length !== 32) throw new Error('HELLO.channel_binding');
+    return v;
+  }
+  const s = String(v);
+  if (!/^[0-9a-f]{64}$/i.test(s)) throw new Error('HELLO.channel_binding');
+  return hex32(s);
+}
+
+function compareBytes32(a, b) {
+  for (let i = 0; i < 32; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * `HELLO.channel_binding` = BLAKE3(domain ‖ min(fp) ‖ max(fp)) over the two
+ * SHA-256 DTLS certificate fingerprints of one association. Same as Rust
+ * `handshake::channel_binding`. Order-independent; a MITM bridging two DTLS
+ * legs derives a different value on each leg.
+ */
+export function channelBinding(fpA, fpB) {
+  const a = fpA instanceof Uint8Array ? fpA : hex32(fpA);
+  const b = fpB instanceof Uint8Array ? fpB : hex32(fpB);
+  if (a.length !== 32 || b.length !== 32) throw new Error('DTLS fingerprint must be 32 bytes');
+  const [lo, hi] = compareBytes32(a, b) <= 0 ? [a, b] : [b, a];
+  const input = new Uint8Array(DOMAIN_DC_CHANNEL_BINDING.length + 64);
+  input.set(DOMAIN_DC_CHANNEL_BINDING, 0);
+  input.set(lo, DOMAIN_DC_CHANNEL_BINDING.length);
+  input.set(hi, DOMAIN_DC_CHANNEL_BINDING.length + 32);
+  return blake3(input);
+}
+
+export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce, limits, helloDatastore, helloChannelBinding) {
   const hello = helloCaps instanceof Array ? helloCaps : [];
   const t = {
     peer_id: peerId instanceof Uint8Array ? peerId : hex32(peerId),
@@ -160,6 +202,8 @@ export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce
   };
   const ds = optHelloDatastore(helloDatastore);
   if (ds) t.hello_datastore = ds;
+  const cb = optHelloChannelBinding(helloChannelBinding);
+  if (cb) t.hello_channel_binding = cb;
   return t;
 }
 
@@ -172,6 +216,8 @@ export function authTranscriptPreimage(t) {
   };
   const ds = optHelloDatastore(t.hello_datastore);
   if (ds) hello.datastore = ds;
+  const cb = optHelloChannelBinding(t.hello_channel_binding);
+  if (cb) hello.channel_binding = cb;
   const body = encode(
     tagged({
       hello,

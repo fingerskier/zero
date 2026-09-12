@@ -85,8 +85,19 @@ CI job: `WebRTC first-cut (H6)` (extended, not replaced).
 - **Signaling identity is relay-asserted** until the signed peer
   handshake (`HELLO`/`AUTH`) on the DataChannel. `SIGNAL.sender` is set
   by the relay.
-- **Not stuffed into wasm.** O4 stays open (262.6 KiB gzip vs ~250 KB;
-  CI ceiling 400 KiB).
+- **DTLS channel binding (H5 slice).** `binding.mjs` derives
+  `HELLO.channel_binding` from the local + remote SDP `a=fingerprint`
+  lines (`channelBindingFor(pc)`). It is **required** at the DataChannel
+  entrypoints: pass `opts.pc` (or a precomputed `opts.channelBinding`) on
+  both sides of `runNegotiated`; omitting both throws. The only unbound
+  mode is the explicit `allowUnboundChannel: true` opt-out for raw
+  in-process channel tests. The server derives its own value and
+  fails `0x201` before CHALLENGE on a mismatch, so a relay that
+  terminates DTLS on both legs cannot bridge the handshake. The fake
+  `RTCPeerConnection` emits a real-shaped fingerprint line. H5 is not
+  closed (no handshake-server identity).
+- **Not stuffed into wasm.** O4 is pinned (262.6 KiB gzip vs ~250 KB;
+  CI ceiling 300 KiB).
 
 ## Layout
 
