@@ -17,9 +17,13 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
-### M4a-h6-auth-ds — bind HELLO.datastore into AuthTranscript (this PR)
+### H6 closed — shared peer protocol over DataChannel (this PR)
 
-Optional `HELLO.datastore` is in the existing `AuthTranscript` / `zerodb-relay-auth-v2` hello map when present and omitted when absent (RELAY-HELLO-001 / H6-AUTH-001 stay byte-identical). A signaling MITM that swaps the offered id fails AUTH before OPS. Present-but-invalid claims (non-32-byte / non-hex) fail closed — they are not treated as omitted. Same helper; no v3 domain. Fixture `H6-AUTH-003` plus live webrtc MITM and `joinDs: 'not-a-datastore'` tests. **H6 not closed** (steward confirm). **Not** M4a complete. O4 stays open. No TURN/NAT. Crates/npm stay `0.1.0-alpha` unpublished.
+H6 (Direct P2P sync has no protocol) is **closed**. Shared peer protocol over an ordered `zerodb-relay` DataChannel: HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS. Evidence on main: #25 @ `671adba`, #26 @ `45a88b5`, #27 @ `ef2fca9`, #28 @ `bfe69b9`. Same `AuthTranscript` helper; no second preimage. TURN/NAT is infra (no hosted TURN / `wrtc`). **Not** M4a complete. O4 still open. No E10. Crates/npm stay `0.1.0-alpha` unpublished.
+
+### M4a-h6-auth-ds — bind HELLO.datastore into AuthTranscript (landed main #28 @ `bfe69b9`)
+
+Optional `HELLO.datastore` is in the existing `AuthTranscript` / `zerodb-relay-auth-v2` hello map when present and omitted when absent (RELAY-HELLO-001 / H6-AUTH-001 stay byte-identical). A signaling MITM that swaps the offered id fails AUTH before OPS. Present-but-invalid claims (non-32-byte / non-hex) fail closed — they are not treated as omitted. Same helper; no v3 domain. Fixture `H6-AUTH-003` plus live webrtc MITM and `joinDs: 'not-a-datastore'` tests. **H6 not closed** on that PR. **Not** M4a complete. O4 stays open. No TURN/NAT. Crates/npm stay `0.1.0-alpha` unpublished.
 
 ### M4a-h6-close — H6 protocol close candidate (landed main #27 @ `ef2fca9`)
 

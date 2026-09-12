@@ -6,13 +6,11 @@ run the **existing** RELAY 0.2 peer protocol on that channel: HELLO /
 the handshake client appears on the handshake server.
 
 First-cut landed main #25 @ `671adba`. Live WS SIGNAL fanout + PeerId
-roles landed main #26 @ `45a88b5`. Close candidate landed main #27 @
-`ef2fca9`. This remainder binds optional `HELLO.datastore` into
-`AuthTranscript` / `zerodb-relay-auth-v2`.
-
-**This is not H6 closed and not M4a complete.** Steward/Matt confirm
-before the issue is removed. O4 (WASM gzip) is untouched — this slice
-is JS beside `conformance/ts/peer`, not inside `zerodb-wasm`.
+roles landed main #26 @ `45a88b5`. Reconnect/admission/profile landed
+main #27 @ `ef2fca9`. Optional `HELLO.datastore` in `AuthTranscript`
+landed main #28 @ `bfe69b9`. **H6 is closed** (Decision Log 2026-09-12).
+**Not M4a complete.** O4 (WASM gzip) is untouched — this slice is JS
+beside `conformance/ts/peer`, not inside `zerodb-wasm`.
 
 Formats stay draft-1 / unfrozen. No crate or npm publish. SPEC’s
 `zerodb-webrtc` crate sketch is not how this repo ships; the TS peer

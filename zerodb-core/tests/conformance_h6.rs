@@ -1,5 +1,5 @@
-//! Rust side of `h6-profile` vectors (H6 close candidate).
-//! Same contract as `conformance/ts/models/h6.mjs`. Not H6 closed.
+//! Rust side of `h6-profile` vectors (H6 closed — protocol).
+//! Same contract as `conformance/ts/models/h6.mjs`. Not M4a complete.
 
 use std::fs;
 use std::path::{Path, PathBuf};

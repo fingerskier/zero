@@ -1,7 +1,7 @@
 /**
- * H6 close-candidate remainder: SIGNAL → fake DataChannel → v2 transcript
+ * H6 closed (protocol): SIGNAL → fake DataChannel → v2 transcript
  * AUTH → WELCOME → OPS, plus admission + reconnect/resume + HELLO.datastore
- * bind. Not H6 closed. Not M4a complete.
+ * bind. Not M4a complete.
  *
  * The DataChannel is an in-process ordered/reliable double (not wrtc).
  */

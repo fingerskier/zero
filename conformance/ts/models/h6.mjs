@@ -1,7 +1,7 @@
-// H6 close-candidate contract: SIGNAL, PeerId roles, v2 AUTH, WELCOME
+// H6 closed (protocol): SIGNAL, PeerId roles, v2 AUTH, WELCOME
 // version reject, datastore admission, resume-cursor. Optional
 // HELLO.datastore is in AuthTranscript when present. Same rules as
-// handshake.rs / webrtc/peer.mjs. Not H6 closed. Not M4a complete.
+// handshake.rs / webrtc/peer.mjs. Not M4a complete.
 
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
 import { checkWelcomeProtocol } from '../peer/client.mjs'

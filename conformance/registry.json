@@ -146,9 +146,9 @@
   },
 
   "h6_profile": {
-    "comment": "H6 protocol close-candidate contract. Named fixtures in vectors/required/h6/. Live WS fanout stays in signal_ws / signal-ws tests. TURN/NAT is infra, not this profile. H6 is not closed; steward confirms. Not M4a complete.",
+    "comment": "H6 protocol closed (Decision Log 2026-09-12). Named fixtures in vectors/required/h6/. Live WS fanout stays in signal_ws / signal-ws tests. TURN/NAT is infra, not this profile. Not M4a complete.",
     "authority": "doc/RELAY-SPEC.md, zerodb-core/src/handshake.rs, conformance/ts/webrtc/",
-    "status": "draft (H6 close candidate; not H6 closed; not M4a complete)",
+    "status": "closed (protocol); not M4a complete",
     "admission_error": "AUTH_WRONG_DATASTORE",
     "auth_domain": "zerodb-relay-auth-v2",
     "fixtures": [
