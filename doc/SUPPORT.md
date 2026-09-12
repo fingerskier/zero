@@ -121,7 +121,7 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 ## 7. Not supported (do not claim)
 
 - **M4a-a WASM size (O4 pinned 2026-09-12).** Size-oriented `scripts/build.sh` artifact `zerodb_wasm_bg.wasm`: **738317 bytes raw (721.0 KiB), 268908 bytes gzip -9 (262.6 KiB)**. ISSUES O4 target vs Automerge ~250 KB gz is **not** met; O4 is pinned (out of the M4a gate), **not** closed. CI records size and fails only if gzip exceeds 300 KiB. Not a format freeze.
-- **M4a complete.** H6 protocol is **closed** (Decision Log 2026-09-12; [RELAY-SPEC](RELAY-SPEC.md) §14.2; #25–#28). Fake ordered DataChannel; no hosted TURN / public STUN / `wrtc` (TURN is infra). Signaling identity is relay-asserted until DC AUTH. Do not claim M4a complete (no E10; O4 pinned).
+- **M4a complete.** H6 protocol is **closed** (Decision Log 2026-09-12; [RELAY-SPEC](RELAY-SPEC.md) §14.2; #25–#28). Fake ordered DataChannel; no hosted TURN / public STUN / `wrtc` (TURN is infra). Signaling identity is relay-asserted until DC AUTH. Do not claim M4a complete (O4 pinned; M4a stays open on its own platform criteria (real-browser WebRTC DataChannel path — tests use a fake channel; direct/relay parity; browser restart/offline tests); E10 is M4b).
 - **Full TLS production story** — no in-process TLS, no CA, no minted certs; `--allow-insecure` is a LAN escape hatch only.
 - **Format freeze** — no versioned frozen profile; wrap-body unfrozen.
 - **C5 on-wire complete** — AUTH contract exists; do not claim C5 closed as a product/PKI story.

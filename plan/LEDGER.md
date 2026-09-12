@@ -73,7 +73,7 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 
 ### M4a — Browser / WASM / React (H6 protocol closed this act; M4a still open)
 
-Depends: M3c done. **H6 closed** 2026-09-12. **O4 pinned** 2026-09-12 (out of the M4a gate). **Not** M4a complete (no E10).
+Depends: M3c done. **H6 closed** 2026-09-12. **O4 pinned** 2026-09-12 (out of the M4a gate). **Not** M4a complete — M4a stays open on its own platform criteria (real-browser WebRTC DataChannel path — tests use a fake channel; direct/relay parity; browser restart/offline tests); E10 is M4b.
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
@@ -85,7 +85,7 @@ Depends: M3c done. **H6 closed** 2026-09-12. **O4 pinned** 2026-09-12 (out of th
 | M4a-h6-auth-ds | Bind HELLO.datastore into AuthTranscript | done(landed main #28 @ `bfe69b9`) | Optional `HELLO.datastore` in the existing `zerodb-relay-auth-v2` hello map; omit when absent. Swapped offer is AUTH_FAILED. Evidence: `H6-AUTH-003`, handshake tests, MITM webrtc test. No TURN. Not M4a complete. |
 | H6 | Direct P2P protocol | done(Decision Log this PR) | Closed 2026-09-12. Shared peer protocol over DataChannel (RELAY-SPEC §14.2). Evidence #25–#28. TURN parked. **Not** M4a complete. |
 | O4 | WASM size budget | pinned | Pinned 2026-09-12 (Decision Log): out of the M4a gate. CI regression ceiling 300 KiB gzip (`zerodb-wasm/scripts/measure-size.mjs`); artifact 262.6 KiB. Optional RGA/Richtext modules ride M2-crdts. Not closed. |
-| M4a | Browser/WASM/WebRTC/React | open | H6 closed 2026-09-12; O4 pinned. Do not mark M4a complete (no E10). |
+| M4a | Browser/WASM/WebRTC/React | open | H6 closed 2026-09-12; O4 pinned. Do not mark M4a complete: M4a stays open on its own platform criteria (real-browser WebRTC DataChannel path — tests use a fake channel; direct/relay parity; browser restart/offline tests); E10 is M4b. |
 
 ### Later gates
 
