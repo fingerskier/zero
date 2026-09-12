@@ -8,7 +8,7 @@ This is the M4a-a slice (WASM + IDB/OPFS). **Not** M4a complete: optional
 React hooks live in [`@zerodb/react`](../zerodb-react/); WebRTC/H6 stay
 pinned. Formats stay draft-1 / unfrozen. Crate version stays
 `0.1.0-alpha` unpublished. Hooks are JS beside this crate and must not
-bloat the wasm gzip artifact (O4 still open).
+bloat the wasm gzip artifact (O4 pinned 2026-09-12; CI ceiling 300 KiB gzip).
 
 ## Why JS adapters, not a Rust `StoreBackend`
 
@@ -53,9 +53,8 @@ node scripts/measure-size.mjs
 ```
 
 Size-oriented artifact (this slice): **721.0 KiB raw / 262.6 KiB gzip -9**.
-O4 Automerge-comparable ~250 KB gz target is not met; O4 stays open.
-CI fails only if gzip exceeds 400 KiB (regression vs the ~393 KiB
-pre-optimization artifact).
+O4 Automerge-comparable ~250 KB gz target is not met; O4 is pinned
+(2026-09-12, out of the M4a gate). CI fails only if gzip exceeds 300 KiB.
 
 Identity seed is stored client-side — any script on the origin can sign
 as this peer. Acceptable for this experimental slice.

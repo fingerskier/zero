@@ -73,18 +73,19 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 
 ### M4a — Browser / WASM / React (H6 protocol closed this act; M4a still open)
 
-Depends: M3c done. **H6 closed** this act. **Not** M4a complete (O4 open, no E10).
+Depends: M3c done. **H6 closed** 2026-09-12. **O4 pinned** 2026-09-12 (out of the M4a gate). **Not** M4a complete (no E10).
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
-| M4a-a | WASM + IndexedDB + OPFS persist/reopen | done(landed main #23 @ `56a3bad`) | Product-surface adapters in `zerodb-wasm/js/storage.mjs`; live store remains `MemoryBackend`. Evidence: `zerodb-wasm/test/persist-reopen.test.mjs` (occupied-IDB auto, IDB v2 open, serialized persist, corrupt identity fail-closed). WASM gzip recorded in SUPPORT (O4 target still open). Not M4a complete. |
+| M4a-a | WASM + IndexedDB + OPFS persist/reopen | done(landed main #23 @ `56a3bad`) | Product-surface adapters in `zerodb-wasm/js/storage.mjs`; live store remains `MemoryBackend`. Evidence: `zerodb-wasm/test/persist-reopen.test.mjs` (occupied-IDB auto, IDB v2 open, serialized persist, corrupt identity fail-closed). WASM gzip recorded in SUPPORT (O4 pinned 2026-09-12). Not M4a complete. |
 | M4a-hooks | Optional React hooks over wasm + `openDurable` | done(landed main #24 @ `3f81d62`) | `@zerodb/react`: `ZeroDbProvider` + `useQuery` / `useNode` / `useMutation` / `useSyncStatus` wrapping live WASM (`onChange`, O3 string query, `listNodes`, `setLww`, `createNode`) and `journal.persist`. Evidence: `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` is local ready/offline. Not M4a complete. |
 | M4a-webrtc | H6 first-cut WebRTC DataChannel | done(landed main #25 @ `671adba`) | SIGNAL 0x42 + ordered `zerodb-relay` DataChannel carrying shared peer protocol. Reuses `AuthTranscript` / `zerodb-relay-auth-v2` (no second preimage). Evidence: `conformance/ts/webrtc/webrtc.test.mjs` (fake ordered channel; not wrtc) + `zerodb-relay/tests/signal.rs` (0x307). |
 | M4a-h6-fanout | H6 live WS SIGNAL fanout + role negotiation | done(landed main #26 @ `45a88b5`) | Forwarded SIGNAL is written to the target live socket. Roles: smaller PeerId issues CHALLENGE/WELCOME. AUTH still `zerodb-relay-auth-v2`. Evidence: `zerodb-relay/tests/signal_ws.rs`, `conformance/ts/webrtc/signal-ws.test.mjs`. |
-| M4a-h6-close | H6 reconnect/admission/`h6-profile` | done(landed main #27 @ `ef2fca9`) | Reconnect/resume, session admission, named `h6-profile`. O4 still open. Not M4a complete. |
+| M4a-h6-close | H6 reconnect/admission/`h6-profile` | done(landed main #27 @ `ef2fca9`) | Reconnect/resume, session admission, named `h6-profile`. Not M4a complete. |
 | M4a-h6-auth-ds | Bind HELLO.datastore into AuthTranscript | done(landed main #28 @ `bfe69b9`) | Optional `HELLO.datastore` in the existing `zerodb-relay-auth-v2` hello map; omit when absent. Swapped offer is AUTH_FAILED. Evidence: `H6-AUTH-003`, handshake tests, MITM webrtc test. No TURN. Not M4a complete. |
 | H6 | Direct P2P protocol | done(Decision Log this PR) | Closed 2026-09-12. Shared peer protocol over DataChannel (RELAY-SPEC §14.2). Evidence #25–#28. TURN parked. **Not** M4a complete. |
-| M4a | Browser/WASM/WebRTC/React | open | H6 closed this act. Do not mark M4a complete (O4 open, no E10). |
+| O4 | WASM size budget | pinned | Pinned 2026-09-12 (Decision Log): out of the M4a gate. CI regression ceiling 300 KiB gzip (`zerodb-wasm/scripts/measure-size.mjs`); artifact 262.6 KiB. Optional RGA/Richtext modules ride M2-crdts. Not closed. |
+| M4a | Browser/WASM/WebRTC/React | open | H6 closed 2026-09-12; O4 pinned. Do not mark M4a complete (no E10). |
 
 ### Later gates
 

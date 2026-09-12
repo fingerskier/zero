@@ -15,7 +15,7 @@ is `0.1.0-alpha`, `"private": true` — do not `npm publish`.
 A sibling optional package (`@zerodb/node`, `@zerodb/ts-to-ir`), not
 inside the wasm crate and not a rewrite of `examples/browser-peer`.
 Hooks are JS sitting beside wasm so they cannot bloat the gzip artifact
-(O4 still open: 262.6 KiB vs ~250 KB; CI ceiling 400 KiB).
+(O4 pinned 2026-09-12: 262.6 KiB vs ~250 KB; CI ceiling 300 KiB).
 
 ## Open a durable store
 
