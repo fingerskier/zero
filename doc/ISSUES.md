@@ -57,7 +57,7 @@ Write-ACL evaluation at receipt time depends on arrival order (grant/revoke/crea
 ## High
 
 *H1 resolved 2026-08-27 (Decision Log below; peer-side `CLOCK_DRIFT` quarantine in KERNEL §5 / AUTH.md §6; evidence `e8_clock_quarantine`).*
-*H6 resolved 2026-09-12 (Decision Log below; shared peer protocol over DataChannel in [RELAY-SPEC](RELAY-SPEC.md) §14.2; evidence #25 @ `671adba`, #26 @ `45a88b5`, #27 @ `ef2fca9`, #28 @ `bfe69b9`).*
+*H6 resolved 2026-09-12 (Decision Log below; shared peer protocol over DataChannel in [RELAY-SPEC](RELAY-SPEC.md) §14.2; DC AUTH proves the HELLO client; CHALLENGE/WELCOME stay unsigned (H5); evidence #25 @ `671adba`, #26 @ `45a88b5`, #27 @ `ef2fca9`, #28 @ `bfe69b9`).*
 
 ### H2 — Offline unique indexes have no conflict semantics
 Two offline peers can create the same "unique" value; mapping `unique: true` to SQLite/IDB uniqueness makes remote materialization fail platform-dependently.  Define advisory/conflict-reporting uniqueness, an ownership CRDT, or required coordination — plus query/resolution behavior. → M5
