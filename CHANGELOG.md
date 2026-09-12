@@ -1,6 +1,6 @@
 # Changelog
 
-All notable tree changes for the product label. Git tag `v0.1.0` follows this Decision Log act (steward tags after merge). Workspace crates stay unpublished. Formats stay draft-1 / unfrozen.
+All notable tree changes for the product label. Git tag `v0.1.0` is on `177e247` (#22). Workspace crates stay unpublished. Formats stay draft-1 / unfrozen.
 
 Version story:
 
@@ -9,7 +9,7 @@ Version story:
 | Workspace / npm `0.1.0-alpha` | Crate and package semver (`Cargo.toml` `[workspace.package]`, `@zerodb/node`, `@zerodb/ts-to-ir`) | current; `publish = false` / `"private": true` |
 | Git `v0.1.0-local` | M1 experimental exit | tagged |
 | Git `v0.1.0-sdk` | M2 experimental exit (not SPEC-complete M2) | tagged |
-| Git `v0.1.0` | SPEC M3c exit + Decision Log act | tag follows this Decision Log act |
+| Git `v0.1.0` | SPEC M3c exit + Decision Log act | tagged @ `177e247` |
 
 Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publish`. Formats stay draft-1 / unfrozen; freeze is a separate Decision Log act.
 
@@ -17,15 +17,19 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ## Unreleased
 
-### Relay transport hardening + in-process TLS (this PR)
+### Docs sweep 2026-09-12
+
+Plans pruned to current state (PLAN §5 is now the M4a exit path only; LEDGER done rows moved to the Closed index; DQ-12 dropped). Decision Log: O6 resolved (rate limiting enforced), H5 kept open and narrowed to handshake-server identity, H8 left undecided by choice. SPEC §10 M3a/M3b checklists ticked against evidence with M3b exit still not claimed; explicit M4a exit gate added (E10 stays M4b). `v0.1.0` recorded as tagged. AGENTS.md now carries the working conventions. **Not claimed:** M3b exit, M4a complete, H5 closed, format freeze.
+
+### Relay transport hardening + in-process TLS (landed main #32 @ `175784f`)
 
 `zerodb-relay` before network exposure: WebSocket-layer message ceiling (`MAX_FRAME_BYTES`, refused before buffering → `0x303` fatal), handshake deadline (`--handshake-timeout-secs`, default 10 → `0x100 HANDSHAKE_TIMEOUT`; deadline starts at TCP accept, so raw TCP idlers and slow-loris upgrade tricklers are dropped too), idle timeout (`--idle-timeout-secs`, default 300, `0` disables → `GOODBYE IDLE_TIMEOUT`; `PING`/`PONG` and WS pings keep a session alive), global `--max-connections` (1024 → `0x304 TOO_MANY_CONNECTIONS`, slot never held), RELAY §4.6 `PING`/`PONG` in any phase, `GOODBYE` releases state immediately. `--tls-cert`/`--tls-key` (PEM) terminate TLS in-process (rustls/ring) and serve `wss://` on any bind; plaintext non-loopback still needs `--allow-insecure`. New deps: `rustls` (ring), `rustls-pki-types`; dev `rcgen`. Evidence: `zerodb-relay/tests/hardening.rs`. Still pinned: datastore-creation policy, op/byte quotas, walk/response limits, CA / rotation / hosted relay. **Not** M3b exit, **not** H5 closed. Crates/npm stay `0.1.0-alpha` unpublished.
 
-### H5 slice — DTLS channel binding on the DataChannel (this PR)
+### H5 slice — DTLS channel binding on the DataChannel (landed main #31 @ `a322c4d`)
 
 `HELLO.channel_binding` (BLAKE3 `zerodb-dc-binding-v1` over both SHA-256 DTLS certificate fingerprints, order-independent) is in the existing `AuthTranscript` / `zerodb-relay-auth-v2` hello map when present and omitted when absent (relay WebSocket vectors unchanged). The DataChannel handshake server derives the value from its own SDP, requires the HELLO claim to match before CHALLENGE, and binds its own derivation; missing / foreign / malformed → `0x201`. A signaling MITM that terminates DTLS on both legs and forwards AUTH unchanged now fails before OPS (`webrtc.test.mjs` keeps the pre-fix leak as a control case). The DataChannel entrypoints require the binding (`opts.pc` or `opts.channelBinding`; `allowUnboundChannel: true` is an explicit test-only opt-out, never the default). `conformance/ts/webrtc/binding.mjs` parses real `a=fingerprint` lines; the fake `RTCPeerConnection` emits one per connection. Fixture `H6-AUTH-004` in both runners; registry `domain_separation.dc_channel_binding`; `zerodb-relay` binds a sent `channel_binding` on the WS path too. **H5 not closed** (handshake-server identity, signed CHALLENGE/WELCOME, TLS remain). **Not** M4a complete. Crates/npm stay `0.1.0-alpha` unpublished.
 
-### O4 pinned — WASM size budget leaves the M4a gate (this PR)
+### O4 pinned — WASM size budget leaves the M4a gate (landed main #30 @ `0e90aef`)
 
 ISSUES O4 (WASM gzip vs Automerge ~250 KB) is **pinned** — not closed, not scrapped. The size-oriented artifact stays 262.6 KiB gzip. The CI regression ceiling in `zerodb-wasm/scripts/measure-size.mjs` tightens from 400 KiB to 300 KiB gzip and is the only size gate. "Optional modules for RGA/Richtext" rides M2-crdts. M4a stays open on its own platform criteria (real-browser DataChannel path, direct/relay parity, browser restart/offline tests); E10 remains M4b. **Not** M4a complete. Crates/npm stay `0.1.0-alpha` unpublished.
 
@@ -61,7 +65,7 @@ Review fixes (Codex P1/P2 on #23): `auto` keeps an occupied IndexedDB name inste
 
 ## v0.1.0
 
-Decision Log act for product git tag `v0.1.0` (steward tags after this merge). Crates remain `0.1.0-alpha` unpublished. Evidence is H9 two-language fixtures (#19), existing Rust E3, and TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze.
+Decision Log act for product git tag `v0.1.0` (tagged @ `177e247`). Crates remain `0.1.0-alpha` unpublished. Evidence is H9 two-language fixtures (#19), existing Rust E3, and TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze.
 
 ### Client WELCOME `protocol_version` reject — landed main #21 (`ca508d0`)
 

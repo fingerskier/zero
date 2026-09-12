@@ -2,7 +2,7 @@
 
 **Review date:** 2026-08-27  
 **Scope:** written against `bec091c`; Stage 0+1 landed on `9903280`. Local SQLite/materialization/query paths, direct peer sync, relay sync, and relay persistence.  
-**Status:** static code review, not a benchmark report. The repository has strong conformance and end-to-end coverage, but no repeatable performance benchmark suite yet. Claims below distinguish observed algorithmic work from hypotheses that still need measurement.
+**Status:** static code review, not a benchmark report. The repository has strong conformance and end-to-end coverage, but no repeatable performance benchmark suite yet (LEDGER `perf-bench`, pinned). Claims below distinguish observed algorithmic work from hypotheses that still need measurement. The four P0 findings are tracked for later benchmarking (Reqall PERF P0-1..P0-4).
 
 ## Disposition
 
@@ -31,13 +31,13 @@ Before major redesign, add deterministic scaling fixtures and phase counters. Se
 | Priority | Finding | Impact | Confidence |
 |---|---|---:|---:|
 | P0 | Targeted writes and replay repeatedly scan/parse broad oplog sets | Critical at scale | High |
-| P0 | Relay limits are advertised but not enforced; expensive work is globally serialized | Availability / scale blocker | High |
+| P0 | ~~Relay limits are advertised but not enforced~~ — **landed** (limits 2026-08-28; transport hardening + TLS 2026-09-12). Still open: expensive work globally serialized under one mutex; quotas / walk-response limits | Availability / scale blocker → reduced | High |
 | P0 | Direct and relay sync perform full-history upload/manifests for small or zero deltas | Critical at scale | High |
 | P0 | Relay Merkle walk rebuilds the whole tree per request and retains full-body snapshots | Critical at scale | High |
-| P1 | Push sync calls full `replay_all` after an import that already materialized accepted ops | High | High |
+| P1 | ~~Push sync calls full `replay_all` after import~~ — **landed** Stage 1 (`import_replay_equiv`) | — | High |
 | P1 | AUTH repeatedly reloads and transforms complete operation history | High | High |
 | P1 | Query graph construction is N+1 SQL and fully in-memory | High for reads | High |
-| P1 | Relay SQLite does one duplicate query and autocommit insert per op | High under concurrency | High |
+| P1 | ~~Relay SQLite autocommit insert per op~~ — **landed** Stage 1 (batched transaction, `ON CONFLICT DO NOTHING`); session mutex kept | — | High |
 | P2 | Batch sizing repeatedly clones and re-encodes growing CBOR vectors | Medium | High |
 | P2 | JSON/hex and duplicate `body_json` + `wire_json` amplify bytes and allocations | Medium; measure first | Medium |
 
@@ -215,7 +215,7 @@ Encode each op once, track exact encoded size plus envelope overhead, and append
 
 Performance changes should be accepted against deterministic fixtures, not intuition. Run both SQLite and memory backends where meaningful.
 
-Stage 0 in this PR is a *minimum* fixture (1k ops, phase counters/timings printed by `perf_s0`), not a 100k farm. Do not treat those prints as published numbers.
+Stage 0 (landed `9903280`) is a *minimum* fixture (1k ops, phase counters/timings printed by `perf_s0`), not a 100k farm. Do not treat those prints as published numbers.
 
 ### Local storage
 
