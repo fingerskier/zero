@@ -93,8 +93,8 @@ CI job: `WebRTC first-cut (H6)` (extended, not replaced).
   terminates DTLS on both legs cannot bridge the handshake. The fake
   `RTCPeerConnection` emits a real-shaped fingerprint line. H5 is not
   closed (no handshake-server identity).
-- **Not stuffed into wasm.** O4 stays open (262.6 KiB gzip vs ~250 KB;
-  CI ceiling 400 KiB).
+- **Not stuffed into wasm.** O4 is pinned (262.6 KiB gzip vs ~250 KB;
+  CI ceiling 300 KiB).
 
 ## Layout
 

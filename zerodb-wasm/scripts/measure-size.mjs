@@ -1,9 +1,9 @@
 // Measure the wasm-pack artifact against ISSUES O4.
 //
-// O4 writes a *target* vs Automerge ~250 KB / Loro ~200 KB gz — no prior
-// hard CI number. This slice records raw + gzip. The Automerge figure is
-// informational. Fail only if gzip exceeds the pre-optimization artifact
-// this crate already shipped (~393 KiB gz) so size cannot silently regress.
+// O4 is pinned (Decision Log 2026-09-12): the Automerge ~250 KB / Loro
+// ~200 KB gz figure is informational, not an M4a gate. This script records
+// raw + gzip and fails only above the regression ceiling (300 KiB gz; the
+// size-oriented artifact is ~262.6 KiB) so size cannot silently regress.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -21,16 +21,16 @@ if (!fs.existsSync(wasmPath)) {
 const raw = fs.readFileSync(wasmPath)
 const gz = zlib.gzipSync(raw, { level: 9 })
 const O4_TARGET_GZIP = 250 * 1024
-const REGRESSION_GZIP = 400 * 1024
+const REGRESSION_GZIP = 300 * 1024
 
 const fmt = n => `${n} bytes (${(n / 1024).toFixed(1)} KiB)`
 console.log(`zerodb_wasm_bg.wasm: ${fmt(raw.length)}`)
 console.log(`gzip -9:             ${fmt(gz.length)}`)
 console.log(`O4 target:           ${fmt(O4_TARGET_GZIP)} gzip (Automerge-comparable; informational)`)
-console.log(`regression ceiling:  ${fmt(REGRESSION_GZIP)} gzip (pre-optimization artifact ~393 KiB)`)
+console.log(`regression ceiling:  ${fmt(REGRESSION_GZIP)} gzip (CI gate; O4 pinned 2026-09-12)`)
 
 if (gz.length > O4_TARGET_GZIP) {
-  console.log('O4: above Automerge-comparable target (issue stays open)')
+  console.log('O4: above Automerge-comparable target (informational; O4 pinned)')
 } else {
   console.log('O4: within Automerge-comparable target')
 }

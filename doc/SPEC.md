@@ -1069,7 +1069,7 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 
 **M4a — platform:**
 
-- [ ] IndexedDB + OPFS adapters; WASM build within size budget (ISSUES O4); React hooks
+- [ ] IndexedDB + OPFS adapters; WASM gzip under the CI regression ceiling (ISSUES O4 pinned 2026-09-12 — not an M4a gate); React hooks
 - [ ] WebRTC direct sync using the shared peer protocol
 
 **M4b — evolution:**
@@ -1143,7 +1143,7 @@ All specification issues and open decisions are tracked by ID in **[ISSUES.md](I
 | ID | Question | Decide by |
 |----|----------|-----------|
 | O1 | Large operation payload **transfer/storage protocol** (encoding reserved in M0a: caps + `BlobRef`, KERNEL §8; blocks Richtext) | M4 |
-| O4 | WASM size budget; optional modules for RGA/Richtext | M4 |
+| O4 | WASM size budget; optional modules for RGA/Richtext | **pinned** 2026-09-12 (CI ceiling 300 KiB gz; modules ride M2-crdts) |
 | O6 | Protocol-level rate limiting (provisional size limits set in **M0a**, registry `limits`) | M3 |
 | O7 | Causal `deps` scale — compact causal frontier + checkpoint translation | **M0f** contract; scale tests M5 |
 
