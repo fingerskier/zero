@@ -307,6 +307,50 @@ fn raw_tcp_client_that_never_upgrades_does_not_hold_a_slot_forever() {
 }
 
 #[test]
+fn trickling_upgrade_bytes_cannot_outlive_the_handshake_deadline() {
+    use std::io::Write;
+    let relay = Arc::new(Relay::memory());
+    let cfg = ListenConfig {
+        handshake_timeout: Duration::from_millis(400),
+        max_connections: 1,
+        ..fast_cfg()
+    };
+    let addr = spawn_listener_with("127.0.0.1:0", relay.clone(), cfg).unwrap();
+    let mut loris = TcpStream::connect(addr).unwrap();
+    assert!(wait_until(Duration::from_secs(5), || relay
+        .live_connections()
+        == 1));
+    // Slow-loris: one byte of a plausible HTTP upgrade every 50 ms — each
+    // read succeeds, so the per-read socket timeout alone would never fire.
+    let request = b"GET /v1/relay HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+    let t0 = Instant::now();
+    let mut dropped_at = None;
+    for byte in request.iter() {
+        if loris.write_all(std::slice::from_ref(byte)).is_err() {
+            dropped_at = Some(t0.elapsed());
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        if relay.live_connections() == 0 {
+            dropped_at = Some(t0.elapsed());
+            break;
+        }
+    }
+    let dropped_at =
+        dropped_at.expect("relay must drop the trickling client before the request completes");
+    assert!(
+        dropped_at < Duration::from_secs(3),
+        "dropped after {dropped_at:?}"
+    );
+    assert!(wait_until(Duration::from_secs(5), || relay
+        .live_connections()
+        == 0));
+    // Slot is free again for an honest client.
+    let mut ws = connect(addr, Duration::from_secs(5));
+    handshake(&mut ws);
+}
+
+#[test]
 fn idle_session_gets_goodbye_and_close() {
     let relay = Arc::new(Relay::memory());
     let cfg = ListenConfig {

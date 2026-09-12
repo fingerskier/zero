@@ -7,7 +7,7 @@
 //! is told GOODBYE and closed, and at most `max_connections` sockets hold a
 //! [`ConnectionSlot`] at once. Optional in-process TLS via rustls.
 
-use std::io::{ErrorKind, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -26,6 +26,48 @@ const OUTBOUND_POLL: Duration = Duration::from_millis(10);
 
 /// RELAY §10.2 `PROTOCOL_ERROR` (fatal) — used for the handshake deadline.
 const ERR_PROTOCOL_ERROR: u16 = 0x100;
+
+/// Read/Write adapter that fails every read once `deadline` has passed.
+///
+/// The socket read timeout is per *read*, so a client that trickles one byte
+/// per timeout during the TLS / HTTP-upgrade phase would otherwise hold the
+/// thread and its connection slot indefinitely. The deadline is captured at
+/// TCP accept, applies through the whole upgrade, and is cleared once the
+/// session loop takes over (which enforces the same deadline itself).
+struct DeadlineStream<S> {
+    inner: S,
+    deadline: Option<Instant>,
+}
+
+impl<S> DeadlineStream<S> {
+    fn new(inner: S, deadline: Instant) -> Self {
+        Self {
+            inner,
+            deadline: Some(deadline),
+        }
+    }
+}
+
+impl<S: Read> Read for DeadlineStream<S> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(d) = self.deadline
+            && Instant::now() > d
+        {
+            return Err(io::Error::new(ErrorKind::TimedOut, "handshake deadline"));
+        }
+        self.inner.read(buf)
+    }
+}
+
+impl<S: Write> Write for DeadlineStream<S> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
 
 fn ws_config() -> WebSocketConfig {
     // Same ceiling `RelaySession::handle` enforces, applied before buffering.
@@ -76,28 +118,40 @@ pub fn serve_connection(stream: TcpStream, relay: &Relay) {
 /// Serve one accepted TCP stream as a RELAY 0.2 WebSocket session (plaintext
 /// or TLS per `cfg.tls`).
 pub fn serve_connection_with(stream: TcpStream, relay: &Relay, cfg: &ListenConfig) {
+    // The deadline starts at TCP accept and covers TLS, the HTTP upgrade,
+    // and HELLO/AUTH — not just the session phase.
+    let accepted = Instant::now();
+    let deadline = accepted + cfg.handshake_timeout;
     let _ = stream.set_nodelay(true);
-    // Bound the TLS + HTTP upgrade: a silent TCP client must not pin a thread.
+    // A fully silent client is bounded by the per-read timeout; a trickling
+    // one by `DeadlineStream`.
     let _ = stream.set_read_timeout(Some(cfg.handshake_timeout));
     let slot = relay.acquire_connection(cfg.max_connections);
+    let stream = DeadlineStream::new(stream, deadline);
     match cfg.tls.clone() {
         None => {
-            let Ok(ws) = accept_with_config(stream, Some(ws_config())) else {
+            let Ok(mut ws) = accept_with_config(stream, Some(ws_config())) else {
                 return;
             };
-            let _ = ws.get_ref().set_read_timeout(Some(OUTBOUND_POLL));
-            serve_ws(ws, relay, cfg, slot);
+            ws.get_mut().deadline = None;
+            let _ = ws.get_ref().inner.set_read_timeout(Some(OUTBOUND_POLL));
+            serve_ws(ws, relay, cfg, slot, accepted);
         }
         Some(tls) => {
             let Ok(conn) = rustls::ServerConnection::new(tls) else {
                 return;
             };
             let tls_stream = rustls::StreamOwned::new(conn, stream);
-            let Ok(ws) = accept_with_config(tls_stream, Some(ws_config())) else {
+            let Ok(mut ws) = accept_with_config(tls_stream, Some(ws_config())) else {
                 return;
             };
-            let _ = ws.get_ref().sock.set_read_timeout(Some(OUTBOUND_POLL));
-            serve_ws(ws, relay, cfg, slot);
+            ws.get_mut().sock.deadline = None;
+            let _ = ws
+                .get_ref()
+                .sock
+                .inner
+                .set_read_timeout(Some(OUTBOUND_POLL));
+            serve_ws(ws, relay, cfg, slot, accepted);
         }
     }
 }
@@ -113,6 +167,7 @@ fn serve_ws<S: Read + Write>(
     relay: &Relay,
     cfg: &ListenConfig,
     slot: Option<ConnectionSlot>,
+    accepted: Instant,
 ) {
     let Some(_slot) = slot else {
         // Over the global cap: say why, then go. The slot is never held.
@@ -123,8 +178,7 @@ fn serve_ws<S: Read + Write>(
         return;
     };
     let mut sess = relay.accept();
-    let accepted = Instant::now();
-    let mut last_inbound = accepted;
+    let mut last_inbound = Instant::now();
     loop {
         match ws.read() {
             Ok(Message::Binary(frame)) => {
