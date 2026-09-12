@@ -64,14 +64,14 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
-| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH, session limits/TLS-outside-dev, and H10 leftovers landed as `M3b-h5` / `M3b-limits` / `M3b-h10-remain` below. H6 first-cut is M4a-webrtc; fanout+roles are M4a-h6-fanout (not closed). **Not** M3b exit. |
+| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH, session limits/TLS-outside-dev, and H10 leftovers landed as `M3b-h5` / `M3b-limits` / `M3b-h10-remain` below. H6 first-cut is M4a-webrtc; fanout+roles are M4a-h6-fanout; protocol close candidate is M4a-h6-close (not closed). **Not** M3b exit. |
 | M3b-h5 | Transcript AUTH (draft) | done(handshake + RELAY-HELLO-001 + limits H5 negatives) | `zerodb-relay-auth-v2` ‖ HELLO+nonce+intended WELCOME. v1 nonce-only `AUTH_FAILED`. Not a format freeze. |
 | M3b-limits | Session rate/sub/conn + plaintext listen | done(`zerodb-relay/tests/limits.rs`) | `0x305 TOO_MANY_SUBS`, `0x304 RATE_EXCEEDED` / `TOO_MANY_CONNECTIONS`, `--allow-insecure`. No global quota. |
 | M3b-h10-remain | H10 leftovers | done(`e6_encrypted_notes` H10 cases) | Offline-revoke at open, key-before/after-data hold, principal+device wrap, wrap-shape draft. **H10 not closed.** |
 | perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
 | perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
 
-### M4a — Browser / WASM / React (H6 fanout + roles this PR)
+### M4a — Browser / WASM / React (H6 protocol close candidate this PR)
 
 Depends: M3c done. **Not** M4a complete (H6 not closed, O4 open, no E10).
 
@@ -80,8 +80,9 @@ Depends: M3c done. **Not** M4a complete (H6 not closed, O4 open, no E10).
 | M4a-a | WASM + IndexedDB + OPFS persist/reopen | done(landed main #23 @ `56a3bad`) | Product-surface adapters in `zerodb-wasm/js/storage.mjs`; live store remains `MemoryBackend`. Evidence: `zerodb-wasm/test/persist-reopen.test.mjs` (occupied-IDB auto, IDB v2 open, serialized persist, corrupt identity fail-closed). WASM gzip recorded in SUPPORT (O4 target still open). Not M4a complete. |
 | M4a-hooks | Optional React hooks over wasm + `openDurable` | done(landed main #24 @ `3f81d62`) | `@zerodb/react`: `ZeroDbProvider` + `useQuery` / `useNode` / `useMutation` / `useSyncStatus` wrapping live WASM (`onChange`, O3 string query, `listNodes`, `setLww`, `createNode`) and `journal.persist`. Evidence: `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` is local ready/offline. Not M4a complete. |
 | M4a-webrtc | H6 first-cut WebRTC DataChannel | done(landed main #25 @ `671adba`) | SIGNAL 0x42 + ordered `zerodb-relay` DataChannel carrying shared peer protocol. Reuses `AuthTranscript` / `zerodb-relay-auth-v2` (no second preimage). Evidence: `conformance/ts/webrtc/webrtc.test.mjs` (fake ordered channel; not wrtc) + `zerodb-relay/tests/signal.rs` (0x307). **H6 not closed.** |
-| M4a-h6-fanout | H6 live WS SIGNAL fanout + role negotiation | in-progress(this PR) | Forwarded SIGNAL is written to the target live socket (`serve_connection` drains the mailbox). Roles: smaller PeerId issues CHALLENGE/WELCOME (`is_handshake_server` / `isHandshakeServer`); AUTH still `zerodb-relay-auth-v2`. Evidence: `zerodb-relay/tests/signal_ws.rs`, `conformance/ts/webrtc/signal-ws.test.mjs`, role cases in `webrtc.test.mjs`. **H6 not closed.** Reconnect, TURN/NAT, datastore admission tokens, conformance profile remain. O4 still open. Not M4a complete. |
-| M4a | Browser/WASM/WebRTC/React | open | Fanout + roles this PR. Do not mark complete. |
+| M4a-h6-fanout | H6 live WS SIGNAL fanout + role negotiation | done(landed main #26 @ `45a88b5`) | Forwarded SIGNAL is written to the target live socket. Roles: smaller PeerId issues CHALLENGE/WELCOME. AUTH still `zerodb-relay-auth-v2`. Evidence: `zerodb-relay/tests/signal_ws.rs`, `conformance/ts/webrtc/signal-ws.test.mjs`. **H6 not closed.** |
+| M4a-h6-close | H6 protocol close candidate | in-progress(this PR) | Reconnect/resume (`resume-cursor` / DELIVERY frontier), session `AUTH_WRONG_DATASTORE` admission, named `h6-profile` required-lane fixtures. TURN/NAT parked as infra (Decision Log). Evidence: `webrtc.test.mjs` reconnect+admit, `conformance/vectors/required/h6/*`, `conformance_h6`. **H6 stays open** (steward confirm). O4 still open. Not M4a complete. |
+| M4a | Browser/WASM/WebRTC/React | open | Close candidate this PR. Do not mark complete. |
 
 ### Later gates
 

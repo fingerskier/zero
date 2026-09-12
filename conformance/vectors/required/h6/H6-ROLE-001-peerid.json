@@ -1,0 +1,24 @@
+{
+  "id": "H6-ROLE-001",
+  "type": "h6-profile",
+  "kind": "peer-role",
+  "invariants": ["I-9"],
+  "description": "Lexicographically smaller PeerId issues CHALLENGE/WELCOME. RTC offerer is not the handshake server.",
+  "cases": [
+    {
+      "local": "0000000000000000000000000000000000000000000000000000000000000000",
+      "remote": "0000000000000000000000000000000000000000000000000000000000000001",
+      "handshake_server": true
+    },
+    {
+      "local": "0000000000000000000000000000000000000000000000000000000000000001",
+      "remote": "0000000000000000000000000000000000000000000000000000000000000000",
+      "handshake_server": false
+    },
+    {
+      "local": "0000000000000000000000000000000000000000000000000000000000000000",
+      "remote": "0000000000000000000000000000000000000000000000000000000000000000",
+      "handshake_server": false
+    }
+  ]
+}

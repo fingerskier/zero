@@ -28,12 +28,35 @@ import {
   signAuth,
 } from '../models/relay.mjs'
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
-import { checkWelcomeProtocol, encodeRelayOp, splitOpsBatches, welcomeLimits } from '../peer/client.mjs'
+import { checkWelcomeProtocol, encodeRelayOp, frontierFromOps, splitOpsBatches, welcomeLimits } from '../peer/client.mjs'
 import { concatBytes, signBytes } from '../peer/crypto.mjs'
 import { ChannelTransport } from './channel.mjs'
 
 export const ERR_VERSION_MISMATCH = 0x102
+/** Session-level admission (populated A vs offered B). Named peer reject; not a second AUTH domain. */
+export const ERR_AUTH_WRONG_DATASTORE = 0x203
 export { AUTH_WRONG_DATASTORE, ERR_AUTH_FAILED }
+
+/**
+ * Bound/populated A vs offered B is AUTH_WRONG_DATASTORE before OPS.
+ * Empty (`boundDs` falsy) may adopt. HELLO.datastore is not in AuthTranscript.
+ */
+export function admitDatastore(boundDs, offeredDs) {
+  if (!boundDs || !offeredDs) return null
+  if (String(boundDs).toLowerCase() !== String(offeredDs).toLowerCase()) return AUTH_WRONG_DATASTORE
+  return null
+}
+
+function sendWrongDatastore(t, requestId) {
+  t.send(
+    encodeEnvelope(MSG_ERROR, requestId, {
+      code: ERR_AUTH_WRONG_DATASTORE,
+      message: AUTH_WRONG_DATASTORE,
+      fatal: true,
+    }),
+  )
+  return { phase: 'wrong-datastore', reason: AUTH_WRONG_DATASTORE, code: ERR_AUTH_WRONG_DATASTORE }
+}
 
 const RELAY_PROTOCOL_VERSION = 1
 const DEFAULT_RELAY_LEVEL = 2
@@ -165,15 +188,26 @@ export async function serveDirect(store, channel, opts = {}) {
     return { phase: 'auth-failed', code: authErr }
   }
 
+  const offered = hello.payload && hello.payload.datastore
+  const populated = store.ops.length > 0
+  const bound = expectedDs || (populated ? store.dsHex : null)
+  const admitErr = admitDatastore(bound, offered)
+  if (admitErr) {
+    return sendWrongDatastore(t, auth.request_id)
+  }
+
   const welcome = welcomeOverride || intendedWelcome(helloCaps)
   t.send(encodeEnvelope(MSG_WELCOME, auth.request_id, welcome))
   if (opts.stopAfterWelcome) {
     return { phase: 'welcomed', welcome }
   }
 
-  const populated = store.ops.length > 0
   const adopting = !populated
-  let joinDs = expectedDs || (populated ? store.dsHex : null)
+  let joinDs = bound
+  if (joinDs == null && offered) {
+    joinDs = offered
+    if (adopting) store.adoptDatastore(offered)
+  }
   const outcomes = []
   let applied = 0
   let rejected = 0
@@ -187,6 +221,11 @@ export async function serveDirect(store, channel, opts = {}) {
     }
     batches += 1
     const ds = opsFrame.payload.datastore
+    const opsAdmit = admitDatastore(joinDs, ds)
+    if (opsAdmit) {
+      const fail = sendWrongDatastore(t, opsFrame.request_id)
+      return { ...fail, applied, rejected, outcomes, datastore: joinDs, batches }
+    }
     if (joinDs == null) joinDs = ds
     const incoming = []
     for (const op of opsFrame.payload.operations || []) {
@@ -209,8 +248,16 @@ export async function serveDirect(store, channel, opts = {}) {
     outcomes.push(...batchOutcomes)
     t.send(encodeEnvelope(MSG_OP_ACK, opsFrame.request_id, { outcomes: batchOutcomes }))
   }
-  if (adopting && applied > 0 && joinDs) store.adoptDatastore(joinDs)
-  return { phase: 'ops', applied, rejected, outcomes, datastore: joinDs, batches }
+  if (adopting && applied > 0 && joinDs && store.dsHex !== joinDs) store.adoptDatastore(joinDs)
+  return {
+    phase: 'ops',
+    applied,
+    rejected,
+    outcomes,
+    datastore: joinDs,
+    batches,
+    frontier: frontierFromOps(store.ops, joinDs || store.dsHex),
+  }
 }
 
 function asBytes64(v) {
@@ -229,17 +276,18 @@ function asBytes64(v) {
 export async function connectDirect(store, channel, opts = {}) {
   const t = new ChannelTransport(channel)
   const helloCaps = opts.capabilities || RELAY_CAPS.slice()
-  const joinDs = opts.joinDs || store.datastoreIdHex()
+  const joinDs = opts.joinDs === undefined ? store.datastoreIdHex() : opts.joinDs
   const signFn = opts.signAuthFn || ((seed, transcript) => signAuth(seed, transcript))
 
-  t.send(
-    encodeEnvelope(MSG_HELLO, 1, {
-      peer_id: store.authorHex,
-      public_key: store.pkHex,
-      protocol_version: opts.helloProtocolVersion == null ? 1 : opts.helloProtocolVersion,
-      capabilities: helloCaps,
-    }),
-  )
+  const helloPayload = {
+    peer_id: store.authorHex,
+    public_key: store.pkHex,
+    protocol_version: opts.helloProtocolVersion == null ? 1 : opts.helloProtocolVersion,
+    capabilities: helloCaps,
+  }
+  if (joinDs) helloPayload.datastore = joinDs
+  if (opts.remoteCursor) helloPayload.cursor = opts.remoteCursor
+  t.send(encodeEnvelope(MSG_HELLO, 1, helloPayload))
   const challenge = expectType(decodeEnvelope(await t.recv()), MSG_CHALLENGE, 'CHALLENGE')
   const nonce = asBytes32(challenge.payload.nonce)
   const transcript = authTranscript(store.author, store.pk, 1, helloCaps, nonce)
@@ -256,7 +304,7 @@ export async function connectDirect(store, channel, opts = {}) {
   expectType(welcome, MSG_WELCOME, 'WELCOME')
   checkWelcomeProtocol(welcome.payload)
 
-  const toSend = store.exportOps(joinDs)
+  const toSend = store.exportOps(joinDs, { cursor: opts.remoteCursor })
   const limits = welcomeLimits(welcome.payload)
   const encoded = toSend.map(encodeRelayOp)
   const batches = toSend.length
@@ -283,8 +331,10 @@ export async function connectDirect(store, channel, opts = {}) {
   return {
     welcome: welcome.payload,
     sent: toSend.length,
+    sentIds: toSend.map((w) => w.id),
     batches: batches.length,
     outcomes,
+    frontier: frontierFromOps(store.ops, joinDs || store.dsHex),
   }
 }
 

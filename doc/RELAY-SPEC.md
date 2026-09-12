@@ -528,7 +528,7 @@ The handshake proves the peer controls the Ed25519 private key corresponding to 
 
 If either check fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
 
-> Draft AUTH preimage (unfrozen). H6 first-cut reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). H6 is not closed.
+> Draft AUTH preimage (unfrozen). H6 reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). Optional `HELLO.datastore` is not in the transcript. H6 is a close candidate — not closed until the steward confirms.
 
 ### 5.3 Relay Identity
 
@@ -811,6 +811,11 @@ For relay-facilitated P2P upgrade or environments without WebSocket.
 - **Ordered:** Yes
 - **Reliable:** Yes
 - Each DataChannel message is one protocol message
+- Handshake is the same HELLO / `zerodb-relay-auth-v2` / WELCOME as §4.1 (`AuthTranscript`). Optional `HELLO.datastore` (and `HELLO.cursor` when `resume-cursor` is on) is **not** in the AUTH transcript. A populated peer bound to datastore A MUST fail closed with `AUTH_WRONG_DATASTORE` when the other side offers B, before OPS mix graphs; an empty store may adopt.
+- There is no session resumption token: a reconnecting peer repeats the full handshake. Already-acked ops are omitted (or `DUPLICATE`) via `resume-cursor` / DELIVERY §4 — not a second resume protocol.
+- SIGNAL already carries opaque ICE. Hosted TURN / public STUN is a **deployment** choice, not a protocol requirement (Decision Log: H6 close does not require a TURN server).
+
+H6 is a protocol close *candidate* until the steward confirms; this section is draft-1 / unfrozen.
 
 ---
 

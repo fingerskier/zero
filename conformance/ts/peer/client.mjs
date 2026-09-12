@@ -153,7 +153,7 @@ function acceptedRoot(wires) {
   return merkleRootOnce(merkleOpsOf(wires))
 }
 
-function frontierFromOps(ops, ds) {
+export function frontierFromOps(ops, ds) {
   const tips = new Map()
   for (const w of ops) {
     if (w.ds !== ds) continue
@@ -165,7 +165,7 @@ function frontierFromOps(ops, ds) {
   }
   const frontier = {}
   for (const [author, tip] of tips) {
-    frontier[author] = { op_id: tip.id, physical_ms: tip.p, logical: tip.l }
+    frontier[author] = { op_id: tip.id, physical_ms: tip.p, logical: tip.l, author }
   }
   return { frontier, epoch: 0 }
 }

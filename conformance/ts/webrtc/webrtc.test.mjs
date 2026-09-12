@@ -1,6 +1,7 @@
 /**
- * H6 first-cut evidence: SIGNAL → fake DataChannel → v2 transcript AUTH →
- * WELCOME → OPS convergence. Not H6 closed. Not M4a complete.
+ * H6 close-candidate evidence: SIGNAL → fake DataChannel → v2 transcript
+ * AUTH → WELCOME → OPS, plus admission + reconnect/resume. Not H6 closed.
+ * Not M4a complete.
  *
  * The DataChannel is an in-process ordered/reliable double (not wrtc).
  */
@@ -13,10 +14,12 @@ import { PeerStore } from '../peer/store.mjs'
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
 import {
   ERR_AUTH_FAILED,
+  ERR_AUTH_WRONG_DATASTORE,
   ERR_TARGET_NOT_CONNECTED,
   ERR_VERSION_MISMATCH,
   FakeDataChannel,
   SignalRelay,
+  admitDatastore,
   connectDirect,
   encodeSignal,
   negotiateViaSignal,
@@ -285,21 +288,24 @@ test('populated answerer binds its own datastore when expectedDs is omitted', as
   const other = b.createNode('Todo')
   b.setLww(other.node, 'title', 'keep-b')
   const bDs = b.dsHex
+  const bOps = b.ops.length
 
   const left = new FakeDataChannel()
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
   const served = serveDirect(b, right)
-  const client = connectDirect(a, left, { joinDs: a.dsHex })
-  const [answer] = await Promise.all([served, client])
+  const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+  const [answer, err] = await Promise.all([served, client])
 
-  assert.equal(answer.phase, 'ops')
-  assert.equal(answer.applied, 0)
-  assert.ok(answer.outcomes.some((o) => o.reason === AUTH_WRONG_DATASTORE))
+  assert.equal(answer.phase, 'wrong-datastore')
+  assert.equal(answer.reason, AUTH_WRONG_DATASTORE)
+  assert.equal(answer.code, ERR_AUTH_WRONG_DATASTORE)
+  assert.equal(err && err.code, ERR_AUTH_WRONG_DATASTORE)
   assert.equal(b.getLww(created.node, 'title'), null)
   assert.equal(b.getLww(other.node, 'title'), 'keep-b')
   assert.equal(b.dsHex, bDs)
+  assert.equal(b.ops.length, bOps)
 })
 
 test('OPS honors advertised WELCOME max_batch_ops', async () => {
@@ -338,22 +344,164 @@ test('wrong datastore OPS fail closed', async () => {
   b.applySchemaEpoch(schemaPin())
   const other = b.createNode('Todo')
   b.setLww(other.node, 'title', 'keep-b')
+  const bOps = b.ops.length
 
   const left = new FakeDataChannel()
   const right = new FakeDataChannel()
   pairDataChannels(left, right)
 
   const served = serveDirect(b, right, { expectedDs: b.dsHex })
+  const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+  const [answer, err] = await Promise.all([served, client])
+
+  assert.equal(answer.phase, 'wrong-datastore')
+  assert.equal(answer.reason, AUTH_WRONG_DATASTORE)
+  assert.equal(err && err.code, ERR_AUTH_WRONG_DATASTORE)
+  assert.equal(b.getLww(created.node, 'title'), null)
+  assert.equal(b.getLww(other.node, 'title'), 'keep-b')
+  assert.notEqual(b.dsHex, a.dsHex)
+  assert.equal(b.ops.length, bOps)
+})
+
+test('admitDatastore: empty adopts, populated A vs B is AUTH_WRONG_DATASTORE', () => {
+  const a = 'aa'.repeat(32)
+  const b = 'bb'.repeat(32)
+  assert.equal(admitDatastore(null, a), null)
+  assert.equal(admitDatastore(undefined, a), null)
+  assert.equal(admitDatastore(a, a), null)
+  assert.equal(admitDatastore(a, a.toUpperCase()), null)
+  assert.equal(admitDatastore(a, b), AUTH_WRONG_DATASTORE)
+})
+
+test('empty answerer adopts HELLO.datastore A', async () => {
+  const a = new PeerStore({ seed: seed(21) })
+  const b = new PeerStore({ seed: seed(22) })
+  a.applySchemaEpoch(schemaPin())
+  const { node } = a.createNode('Todo')
+  a.setLww(node, 'title', 'adopt-me')
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+
+  const served = serveDirect(b, right)
   const client = connectDirect(a, left, { joinDs: a.dsHex })
   const [answer] = await Promise.all([served, client])
 
   assert.equal(answer.phase, 'ops')
-  assert.equal(answer.applied, 0)
-  assert.ok(answer.rejected >= 1)
-  assert.ok(answer.outcomes.some((o) => o.reason === AUTH_WRONG_DATASTORE))
-  assert.equal(b.getLww(created.node, 'title'), null)
-  assert.equal(b.getLww(other.node, 'title'), 'keep-b')
-  assert.notEqual(b.dsHex, a.dsHex)
+  assert.ok(answer.applied >= 2)
+  assert.equal(answer.rejected, 0)
+  assert.equal(b.dsHex, a.dsHex)
+  assert.equal(b.getLww(node, 'title'), 'adopt-me')
+})
+
+test('reconnect resume: post-drop mutation converges; pre-drop ops omitted not double-applied', async () => {
+  const a = new PeerStore({ seed: seed(27) })
+  const b = new PeerStore({ seed: seed(28) })
+  const client = isHandshakeServer(a.author, b.author) ? b : a
+  const server = client === a ? b : a
+  client.applySchemaEpoch(schemaPin())
+  const { node } = client.createNode('Todo')
+  client.setLww(node, 'title', 'before-drop')
+  const preDropIds = client.exportOps(client.dsHex).map((w) => w.id)
+
+  const relay1 = new SignalRelay()
+  const neg1 = await negotiateViaSignal(relay1, a.authorHex, b.authorHex)
+  const [left1, right1] = await Promise.all([
+    runNegotiated(a, b.author, channelFor(neg1, a.authorHex, a.authorHex), {
+      joinDs: client.dsHex,
+      expectedDs: client.dsHex,
+    }),
+    runNegotiated(b, a.author, channelFor(neg1, b.authorHex, a.authorHex), {
+      joinDs: client.dsHex,
+      expectedDs: client.dsHex,
+    }),
+  ])
+  const served1 = left1.role === 'server' ? left1 : right1
+  assert.equal(served1.phase, 'ops')
+  assert.equal(server.getLww(node, 'title'), 'before-drop')
+  const remoteCursor = served1.frontier
+  assert.ok(remoteCursor && remoteCursor.frontier)
+  const serverCountAfterFirst = server.ops.length
+
+  neg1.initiatorChannel.close()
+  neg1.answererChannel.close()
+
+  client.setLww(node, 'title', 'after-reconnect')
+  const newId = client.ops[client.ops.length - 1].id
+
+  const relay2 = new SignalRelay()
+  const neg2 = await negotiateViaSignal(relay2, a.authorHex, b.authorHex)
+  const [left2, right2] = await Promise.all([
+    runNegotiated(a, b.author, channelFor(neg2, a.authorHex, a.authorHex), {
+      joinDs: client.dsHex,
+      expectedDs: client.dsHex,
+      remoteCursor,
+    }),
+    runNegotiated(b, a.author, channelFor(neg2, b.authorHex, a.authorHex), {
+      joinDs: client.dsHex,
+      expectedDs: client.dsHex,
+      remoteCursor,
+    }),
+  ])
+  const served2 = left2.role === 'server' ? left2 : right2
+  const init2 = left2.role === 'client' ? left2 : right2
+  assert.equal(served2.phase, 'ops')
+  assert.equal(server.getLww(node, 'title'), 'after-reconnect')
+  assert.equal(init2.sent, 1)
+  assert.deepEqual(init2.sentIds, [newId])
+  assert.ok(!init2.sentIds.some((id) => preDropIds.includes(id)))
+  assert.equal(
+    served2.outcomes.filter((o) => o.outcome === 'DUPLICATE').length,
+    0,
+  )
+  assert.equal(served2.applied, 1)
+  assert.equal(server.ops.length, serverCountAfterFirst + 1)
+  assert.equal(server.ops.filter((w) => w.id === newId).length, 1)
+  for (const id of preDropIds) {
+    assert.equal(server.ops.filter((w) => w.id === id).length, 1)
+  }
+})
+
+test('reconnect without cursor re-sends pre-drop ops as DUPLICATE', async () => {
+  const a = new PeerStore({ seed: seed(29) })
+  const b = new PeerStore({ seed: seed(30) })
+  const client = isHandshakeServer(a.author, b.author) ? b : a
+  const server = client === a ? b : a
+  client.applySchemaEpoch(schemaPin())
+  const { node } = client.createNode('Todo')
+  client.setLww(node, 'title', 'first')
+  const preDropIds = new Set(client.exportOps(client.dsHex).map((w) => w.id))
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+  await Promise.all([
+    runNegotiated(server, client.author, server === a ? left : right, { expectedDs: client.dsHex }),
+    runNegotiated(client, server.author, client === a ? left : right, { joinDs: client.dsHex }),
+  ])
+  left.close()
+  right.close()
+
+  client.setLww(node, 'title', 'second')
+  const newId = client.ops[client.ops.length - 1].id
+  const serverCount = server.ops.length
+
+  const left2 = new FakeDataChannel()
+  const right2 = new FakeDataChannel()
+  pairDataChannels(left2, right2)
+  const [served, init] = await Promise.all([
+    runNegotiated(server, client.author, server === a ? left2 : right2, { expectedDs: client.dsHex }),
+    runNegotiated(client, server.author, client === a ? left2 : right2, { joinDs: client.dsHex }),
+  ])
+  assert.equal(served.phase, 'ops')
+  assert.equal(server.getLww(node, 'title'), 'second')
+  const dupes = served.outcomes.filter((o) => o.outcome === 'DUPLICATE')
+  assert.ok(dupes.length >= preDropIds.size)
+  assert.ok(dupes.every((o) => preDropIds.has(o.op_id)))
+  assert.ok(served.outcomes.some((o) => o.op_id === newId && o.outcome === 'ACCEPT'))
+  assert.equal(server.ops.length, serverCount + 1)
+  assert.equal(init.sent, client.exportOps(client.dsHex).length)
 })
 
 test('SIGNAL to a disconnected target yields 0x307', () => {

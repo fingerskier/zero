@@ -126,6 +126,8 @@ jobs:
           node-version: 22
       - name: Live WS SIGNAL fanout (Rust)
         run: cargo test -p zerodb-relay --test signal --test signal_ws --locked
+      - name: H6 named fixtures (Rust required lane)
+        run: cargo test -p zerodb-core --test conformance_h6 --locked
       - name: SIGNAL + roles + live WS + DataChannel peer protocol
         run: node --test conformance/ts/webrtc/*.test.mjs
 

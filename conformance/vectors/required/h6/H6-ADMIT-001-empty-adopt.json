@@ -1,0 +1,14 @@
+{
+  "id": "H6-ADMIT-001",
+  "type": "h6-profile",
+  "kind": "admit",
+  "invariants": ["I-9"],
+  "description": "Empty store (no bound ds) may adopt the offered HELLO/OPS datastore.",
+  "populated": false,
+  "bound_ds": null,
+  "offered_ds": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expect": {
+    "ok": true,
+    "adopt": true
+  }
+}

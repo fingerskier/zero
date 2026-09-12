@@ -11,6 +11,6 @@ export {
   encodeSchemaIr,
   validateSchemaEpochBody,
 } from './store.mjs'
-export { sync, splitOpsBatches, welcomeLimits, checkWelcomeProtocol, encodeRelayOp } from './client.mjs'
+export { sync, splitOpsBatches, welcomeLimits, checkWelcomeProtocol, encodeRelayOp, frontierFromOps } from './client.mjs'
 export { WsTransport, connectRelay } from './ws.mjs'
 export { runCli } from './cli.mjs'

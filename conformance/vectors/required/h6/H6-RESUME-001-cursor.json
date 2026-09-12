@@ -1,0 +1,42 @@
+{
+  "id": "H6-RESUME-001",
+  "type": "h6-profile",
+  "kind": "resume-cursor",
+  "invariants": ["I-12"],
+  "description": "Reconnect repeats HELLO/AUTH; already-acked ops are omitted via resume-cursor / DELIVERY §4 (same retransmit as RELAY-RESUME-001). Not a second resume protocol.",
+  "held": [
+    {
+      "op_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "physical_ms": 50,
+      "logical": 0
+    },
+    {
+      "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "physical_ms": 200,
+      "logical": 0
+    },
+    {
+      "op_id": "0303030303030303030303030303030303030303030303030303030303030303",
+      "author": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "physical_ms": 80,
+      "logical": 0
+    }
+  ],
+  "cursor": {
+    "epoch": 1,
+    "frontier": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        "op_id": "0202020202020202020202020202020202020202020202020202020202020202",
+        "physical_ms": 200,
+        "logical": 0
+      }
+    }
+  },
+  "expect": {
+    "retransmit": [
+      "0303030303030303030303030303030303030303030303030303030303030303"
+    ]
+  }
+}

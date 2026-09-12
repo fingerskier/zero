@@ -4,7 +4,11 @@
 //! MUST reuse this helper rather than inventing a second preimage
 //! (`conformance/ts/webrtc/`). Handshake *roles* (who issues
 //! CHALLENGE/WELCOME) use [`is_handshake_server`] — not a second AUTH
-//! domain. H6 is not closed. Draft-1 / unfrozen — not a format freeze.
+//! domain. Session datastore admission is [`admit_datastore`] (populated
+//! A vs offered B is `AUTH_WRONG_DATASTORE` before OPS). Reconnect
+//! repeats this handshake; already-acked ops resume via `resume-cursor`
+//! / DELIVERY §4, not a second AUTH preimage. H6 is a close *candidate*
+//! until the steward confirms. Draft-1 / unfrozen — not a format freeze.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
@@ -103,6 +107,19 @@ impl WelcomeLimits {
 /// Not a second AUTH preimage — AUTH is still [`AuthTranscript`].
 pub fn is_handshake_server(local_peer: &[u8; 32], remote_peer: &[u8; 32]) -> bool {
     local_peer < remote_peer
+}
+
+/// Session-level datastore admission (H6).
+///
+/// A populated (or otherwise bound) store of A MUST fail closed when the
+/// other side offers B — one named error before OPS mix graphs. An empty
+/// store (`bound == None`) may adopt `offered`. Optional `HELLO.datastore`
+/// is **not** in [`AuthTranscript`].
+pub fn admit_datastore(bound: Option<&[u8]>, offered: Option<&[u8]>) -> Result<(), &'static str> {
+    match (bound, offered) {
+        (Some(a), Some(b)) if a != b => Err("AUTH_WRONG_DATASTORE"),
+        _ => Ok(()),
+    }
 }
 
 /// Deterministic handshake transcript (HELLO + nonce + intended WELCOME).
@@ -325,6 +342,20 @@ mod tests {
         assert!(is_handshake_server(&a, &b));
         assert!(!is_handshake_server(&b, &a));
         assert!(!is_handshake_server(&a, &a));
+    }
+
+    #[test]
+    fn populated_a_rejects_offered_b() {
+        let a = [1u8; 32];
+        let b = [2u8; 32];
+        assert_eq!(
+            admit_datastore(Some(&a), Some(&b)),
+            Err("AUTH_WRONG_DATASTORE")
+        );
+        assert!(admit_datastore(Some(&a), Some(&a)).is_ok());
+        assert!(admit_datastore(None, Some(&b)).is_ok());
+        assert!(admit_datastore(Some(&a), None).is_ok());
+        assert!(admit_datastore(None, None).is_ok());
     }
 
     #[test]
