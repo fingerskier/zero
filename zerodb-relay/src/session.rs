@@ -204,6 +204,7 @@ enum Phase {
         pk: [u8; 32],
         protocol_version: u8,
         hello_caps: Vec<String>,
+        hello_datastore: Option<[u8; 32]>,
     },
     Authed {
         caps: Vec<String>,
@@ -361,11 +362,13 @@ impl RelaySession {
         let claimed = take32(map_get(&env.payload, "peer_id"))?;
         let pk = take32(map_get(&env.payload, "public_key"))?;
         let hello_caps = text_array(map_get(&env.payload, "capabilities"));
+        let hello_datastore = opt_hello_datastore(map_get(&env.payload, "datastore"))?;
         self.phase = Phase::Hello {
             claimed,
             pk,
             protocol_version: version as u8,
             hello_caps,
+            hello_datastore,
         };
         Ok(vec![encode_env(
             MSG_CHALLENGE,
@@ -380,6 +383,7 @@ impl RelaySession {
             pk,
             protocol_version,
             hello_caps,
+            hello_datastore,
         } = &self.phase
         else {
             self.close();
@@ -394,10 +398,12 @@ impl RelaySession {
         let pk = *pk;
         let protocol_version = *protocol_version;
         let hello_caps = hello_caps.clone();
+        let hello_datastore = *hello_datastore;
         let request_id = env.request_id;
         let sig = take64(map_get(&env.payload, "signature"))?;
         let transcript =
-            AuthTranscript::for_relay_hello(claimed, pk, protocol_version, &hello_caps, self.nonce);
+            AuthTranscript::for_relay_hello(claimed, pk, protocol_version, &hello_caps, self.nonce)
+                .with_hello_datastore(hello_datastore);
         if authenticate(&claimed, &pk, &transcript, &sig).is_err() {
             self.close();
             return Ok(vec![error_frame(
@@ -1186,6 +1192,23 @@ fn take32(c: &Cbor) -> Result<[u8; 32], RelayError> {
     match c {
         Cbor::Bytes(b) if b.len() == 32 => Ok(b.as_slice().try_into().unwrap()),
         _ => Err(RelayError::Protocol("b32".into())),
+    }
+}
+
+/// Optional HELLO.datastore: omit when absent; 32-byte id as CBOR bytes or hex text.
+fn opt_hello_datastore(c: &Cbor) -> Result<Option<[u8; 32]>, RelayError> {
+    match c {
+        Cbor::Null => Ok(None),
+        Cbor::Bytes(b) if b.len() == 32 => Ok(Some(b.as_slice().try_into().unwrap())),
+        Cbor::Text(s) if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            let mut out = [0u8; 32];
+            for i in 0..32 {
+                out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+                    .map_err(|_| RelayError::Protocol("hello.datastore".into()))?;
+            }
+            Ok(Some(out))
+        }
+        _ => Err(RelayError::Protocol("hello.datastore".into())),
     }
 }
 

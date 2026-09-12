@@ -129,9 +129,25 @@ export function isHandshakeServer(localPeerId, remotePeerId) {
   return a.length < b.length;
 }
 
-export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce, limits) {
+/**
+ * Optional HELLO.datastore: omit only when the field is actually absent
+ * (`null` / `undefined`). Present-but-invalid (wrong length, non-hex) is
+ * an error — same rule as Rust `opt_hello_datastore`.
+ */
+export function optHelloDatastore(v) {
+  if (v == null) return undefined;
+  if (v instanceof Uint8Array) {
+    if (v.length !== 32) throw new Error('HELLO.datastore');
+    return v;
+  }
+  const s = String(v);
+  if (!/^[0-9a-f]{64}$/i.test(s)) throw new Error('HELLO.datastore');
+  return hex32(s);
+}
+
+export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce, limits, helloDatastore) {
   const hello = helloCaps instanceof Array ? helloCaps : [];
-  return {
+  const t = {
     peer_id: peerId instanceof Uint8Array ? peerId : hex32(peerId),
     public_key: publicKey instanceof Uint8Array ? publicKey : hex32(publicKey),
     hello_protocol_version: helloVersion,
@@ -142,17 +158,23 @@ export function authTranscript(peerId, publicKey, helloVersion, helloCaps, nonce
     welcome_capabilities: negotiateWelcomeCaps(hello),
     limits: limits || DEFAULT_LIMITS,
   };
+  const ds = optHelloDatastore(helloDatastore);
+  if (ds) t.hello_datastore = ds;
+  return t;
 }
 
 export function authTranscriptPreimage(t) {
+  const hello = {
+    capabilities: t.hello_capabilities,
+    peer_id: t.peer_id,
+    protocol_version: t.hello_protocol_version,
+    public_key: t.public_key,
+  };
+  const ds = optHelloDatastore(t.hello_datastore);
+  if (ds) hello.datastore = ds;
   const body = encode(
     tagged({
-      hello: {
-        capabilities: t.hello_capabilities,
-        peer_id: t.peer_id,
-        protocol_version: t.hello_protocol_version,
-        public_key: t.public_key,
-      },
+      hello,
       nonce: t.nonce,
       welcome: {
         capabilities: t.welcome_capabilities,

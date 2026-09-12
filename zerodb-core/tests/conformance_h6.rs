@@ -203,7 +203,12 @@ fn run_auth(v: &Json, path: &Path) {
     let seed = arr32(v["secret_key"].as_str().unwrap());
     let nonce = arr32(v["nonce"].as_str().unwrap());
     let caps = strs(&v["hello_capabilities"]);
-    let t = AuthTranscript::for_relay_hello(peer, pk, 1, &caps, nonce);
+    let hello_ds = opt_hex(&v["hello_datastore"]).map(|b| {
+        let a: [u8; 32] = b.try_into().expect("hello_datastore 32");
+        a
+    });
+    let t =
+        AuthTranscript::for_relay_hello(peer, pk, 1, &caps, nonce).with_hello_datastore(hello_ds);
     let pre = auth_transcript_preimage(&t);
     assert!(
         pre.starts_with(DOMAIN_V2),
@@ -219,6 +224,27 @@ fn run_auth(v: &Json, path: &Path) {
         let sig = sign_auth_v1_nonce_only(&seed, &nonce);
         assert_eq!(
             authenticate(&peer, &pk, &t, &sig),
+            Err(ERR_AUTH_FAILED),
+            "{}",
+            path.display()
+        );
+        return;
+    }
+    if v["kind"] == "auth-swapped-ds" {
+        let sig = sign_auth(&seed, &t);
+        assert!(
+            authenticate(&peer, &pk, &t, &sig).is_ok(),
+            "{} honest HELLO.datastore AUTH",
+            path.display()
+        );
+        let swapped_ds = opt_hex(&v["swapped_datastore"]).map(|b| {
+            let a: [u8; 32] = b.try_into().expect("swapped_datastore 32");
+            a
+        });
+        let swapped = AuthTranscript::for_relay_hello(peer, pk, 1, &caps, nonce)
+            .with_hello_datastore(swapped_ds);
+        assert_eq!(
+            authenticate(&peer, &pk, &swapped, &sig),
             Err(ERR_AUTH_FAILED),
             "{}",
             path.display()
@@ -312,7 +338,7 @@ fn run_vector(v: &Json, path: &Path) {
         "signal-forward" => run_signal_forward(v, path),
         "signal-missing" => run_signal_missing(v, path),
         "peer-role" => run_peer_role(v, path),
-        "auth-v2" | "auth-v1-reject" => run_auth(v, path),
+        "auth-v2" | "auth-v1-reject" | "auth-swapped-ds" => run_auth(v, path),
         "welcome-version" => run_welcome_version(v, path),
         "admit" => run_admit(v, path),
         "resume-cursor" => run_resume(v, path),
@@ -335,7 +361,7 @@ fn h6_profile_vectors() {
         run_vector(&vector, &path);
         ran += 1;
     }
-    assert_eq!(ran, 9, "H6 profile is nine named fixtures under {dir:?}");
+    assert_eq!(ran, 10, "H6 profile is ten named fixtures under {dir:?}");
 }
 
 #[test]
@@ -343,7 +369,7 @@ fn registry_names_h6_fixtures() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../conformance/registry.json");
     let reg: Json = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     let fixtures = reg["h6_profile"]["fixtures"].as_array().unwrap();
-    assert_eq!(fixtures.len(), 9);
+    assert_eq!(fixtures.len(), 10);
     assert_eq!(reg["h6_profile"]["admission_error"], AUTH_WRONG_DATASTORE);
     assert_eq!(reg["h6_profile"]["auth_domain"], "zerodb-relay-auth-v2");
 }

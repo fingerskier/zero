@@ -1,7 +1,7 @@
 # ZeroDB — Path-to-MVP Execution Plan
 
-**Date:** 2026-09-11
-**Status:** M3c exited (`v0.1.0` Decision Log act @ `177e247`; steward tags). M4a-a landed main #23 @ `56a3bad`. M4a-hooks landed main #24 @ `3f81d62`. H6 first-cut landed main #25 @ `671adba`. H6 fanout+roles landed main #26 @ `45a88b5`. This PR is the **H6 protocol close candidate** (reconnect/resume, admission, named conformance profile). H6 stays **open** for steward confirm. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M4a complete, **not** M3b exit, **not** format freeze. O4 still open.
+**Date:** 2026-09-12
+**Status:** M3c exited (`v0.1.0` Decision Log act @ `177e247`; steward tags). M4a-a landed main #23 @ `56a3bad`. M4a-hooks landed main #24 @ `3f81d62`. H6 first-cut landed main #25 @ `671adba`. H6 fanout+roles landed main #26 @ `45a88b5`. H6 close candidate landed main #27 @ `ef2fca9`. This PR is the **H6 leftover**: bind optional `HELLO.datastore` into `AuthTranscript`. H6 stays **open** for steward confirm. Stage 0+1 landed `9903280`. E5–E8 live. M3b remainder pinned. Formats draft-1/unfrozen. **Not** M4a complete, **not** M3b exit, **not** format freeze. O4 still open.
 **Authority:** delivery/tracking only. [SPEC §10](../doc/SPEC.md) is the normative roadmap; [ISSUES.md](../doc/ISSUES.md) the issue ledger; [LEDGER.md](LEDGER.md) the live work tracker. On conflict, SPEC wins.
 
 ---
@@ -88,15 +88,16 @@ This is the only live action list.
 7. **M4a-hooks** — landed main #24 @ `3f81d62`: optional `@zerodb/react` (`ZeroDbProvider`, `useQuery` / `useNode` / `useMutation` / `useSyncStatus`) wrapping the live WASM API + `journal.persist`. No typed query DSL. `useSyncStatus` is local ready/offline. Not M4a complete.
 8. **M4a-webrtc** — landed main #25 @ `671adba`: SIGNAL (0x42) + ordered `zerodb-relay` DataChannel carrying the shared peer protocol (HELLO / `zerodb-relay-auth-v2` / WELCOME / OPS). Reuses `handshake.rs` `AuthTranscript` — no second AUTH preimage. Evidence: `conformance/ts/webrtc/webrtc.test.mjs` + `zerodb-relay/tests/signal.rs`. **H6 not closed.**
 9. **M4a-h6-fanout** — landed main #26 @ `45a88b5`: live `zerodb-relay` WebSocket SIGNAL fanout + PeerId-order role negotiation. Same `AuthTranscript` / `zerodb-relay-auth-v2`. **H6 not closed.**
-10. **M4a-h6-close (this PR)** — H6 protocol close *candidate*: reconnect/resume (`resume-cursor` / DELIVERY frontier; pre-drop ops omitted or `DUPLICATE`), session `AUTH_WRONG_DATASTORE` admission (populated A vs offered B; empty adopts), named `h6-profile` fixtures in the required lane. TURN/NAT parked as infra (no hosted TURN / `wrtc`). Evidence: `conformance/ts/webrtc/webrtc.test.mjs` (reconnect + admit), `conformance/vectors/required/h6/*`, `conformance_h6`. **H6 stays open** until steward confirm. **Not** M4a complete. O4 still open.
+10. **M4a-h6-close** — landed main #27 @ `ef2fca9`: reconnect/resume, session admission, named `h6-profile`. **H6 not closed.**
+11. **M4a-h6-auth-ds (this PR)** — leftover after #27: bind optional `HELLO.datastore` into the existing `AuthTranscript` / `zerodb-relay-auth-v2` hello map (omit when absent). A swapped offer fails AUTH before OPS. Evidence: `H6-AUTH-003`, handshake unit tests, `webrtc.test.mjs` MITM swap. **H6 stays open** until steward confirm. **Not** M4a complete. O4 still open. No TURN/NAT.
 
 **Pinned (do not start):**
 - **perf Stage 2** — trigger: Stage 0 still scan-dominated
 - **perf Stage 3** — trigger: equal/one-op-delta still full-history
-- **H6** — protocol close candidate this PR; do not mark closed here. TURN/NAT is infra, not a remaining protocol hole. Steward/Matt confirm.
+- **H6** — leftover bind this PR; do not mark closed here. TURN/NAT is infra. Steward/Matt confirm.
 - **H10** remains open (leftovers implemented this pass: offline-revoke at `open`, bootstrap hold, principal/device wrap, wrap-shape draft). Not closed.
 - M3b remainder stays pinned/open (this work is the pinned remainder, not a gate rename / not M3b exit)
 - M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm
-- Experimental browser-peer/IDB slice grew into M4a-a adapters (#23); hooks landed #24; H6 first-cut #25; fanout+roles #26; this PR is the H6 protocol close candidate on that track
+- Experimental browser-peer/IDB slice grew into M4a-a adapters (#23); hooks landed #24; H6 first-cut #25; fanout+roles #26; close candidate #27; this PR binds HELLO.datastore into AUTH on that track
 
 Live rows: [LEDGER.md](LEDGER.md). Historical July reviews: [plan/archive/](archive/).

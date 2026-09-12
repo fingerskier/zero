@@ -1,7 +1,7 @@
 /**
- * H6 close-candidate evidence: SIGNAL → fake DataChannel → v2 transcript
- * AUTH → WELCOME → OPS, plus admission + reconnect/resume. Not H6 closed.
- * Not M4a complete.
+ * H6 close-candidate remainder: SIGNAL → fake DataChannel → v2 transcript
+ * AUTH → WELCOME → OPS, plus admission + reconnect/resume + HELLO.datastore
+ * bind. Not H6 closed. Not M4a complete.
  *
  * The DataChannel is an in-process ordered/reliable double (not wrtc).
  */
@@ -9,7 +9,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { bytesToHex } from '../models/cbor.mjs'
-import { authTranscriptPreimage, decodeEnvelope, isHandshakeServer, signAuth } from '../models/relay.mjs'
+import {
+  MSG_HELLO,
+  authTranscript,
+  authTranscriptPreimage,
+  decodeEnvelope,
+  encodeEnvelope,
+  isHandshakeServer,
+  optHelloDatastore,
+  signAuth,
+} from '../models/relay.mjs'
 import { PeerStore } from '../peer/store.mjs'
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
 import {
@@ -63,6 +72,28 @@ test('AuthTranscript preimage is zerodb-relay-auth-v2 (no second domain)', () =>
   assert.deepEqual(pre.subarray(0, DOMAIN.length), DOMAIN)
   assert.equal(new TextDecoder().decode(pre.subarray(0, DOMAIN.length)), 'zerodb-relay-auth-v2')
   assert.notEqual(new TextDecoder().decode(pre.subarray(0, 20)), 'zerodb-relay-auth-v1')
+  const built = authTranscript(t.peer_id, t.public_key, 1, t.hello_capabilities, t.nonce)
+  assert.deepEqual(authTranscriptPreimage(built), pre)
+  const withDs = authTranscript(
+    t.peer_id,
+    t.public_key,
+    1,
+    t.hello_capabilities,
+    t.nonce,
+    undefined,
+    new Uint8Array(32).fill(0xaa),
+  )
+  assert.notDeepEqual(authTranscriptPreimage(withDs), pre)
+  assert.deepEqual(authTranscriptPreimage(withDs).subarray(0, DOMAIN.length), DOMAIN)
+  assert.equal(optHelloDatastore(null), undefined)
+  assert.equal(optHelloDatastore(undefined), undefined)
+  assert.throws(() => optHelloDatastore('not-a-datastore'), /HELLO\.datastore/)
+  assert.throws(() => optHelloDatastore(''), /HELLO\.datastore/)
+  assert.throws(() => optHelloDatastore(new Uint8Array(7)), /HELLO\.datastore/)
+  assert.throws(
+    () => authTranscript(t.peer_id, t.public_key, 1, t.hello_capabilities, t.nonce, undefined, 'not-a-datastore'),
+    /HELLO\.datastore/,
+  )
 })
 
 function channelFor(neg, peerHex, initiatorHex) {
@@ -373,6 +404,33 @@ test('admitDatastore: empty adopts, populated A vs B is AUTH_WRONG_DATASTORE', (
   assert.equal(admitDatastore(a, b), AUTH_WRONG_DATASTORE)
 })
 
+test('joinDs not-a-datastore is rejected; empty answerer does not adopt', async () => {
+  const a = new PeerStore({ seed: seed(33) })
+  const b = new PeerStore({ seed: seed(34) })
+  a.applySchemaEpoch(schemaPin())
+  const { node } = a.createNode('Todo')
+  a.setLww(node, 'title', 'garbage-ds')
+  const emptyDs = b.dsHex
+  const emptyOps = b.ops.length
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+
+  const served = serveDirect(b, right)
+  const client = connectDirect(a, left, { joinDs: 'not-a-datastore' }).catch((e) => e)
+  const [answer, err] = await Promise.all([served, client])
+
+  assert.equal(answer.phase, 'auth-failed')
+  assert.equal(answer.code, ERR_AUTH_FAILED)
+  assert.equal(err && err.code, ERR_AUTH_FAILED)
+  assert.equal(b.getLww(node, 'title'), null)
+  assert.equal(b.dsHex, emptyDs)
+  assert.equal(b.ops.length, emptyOps)
+  assert.notEqual(b.dsHex, 'not-a-datastore')
+  assert.notEqual(b.ds.length, 7)
+})
+
 test('joinDs null omits HELLO.datastore but OPS still carries the store ds', async () => {
   const a = new PeerStore({ seed: seed(23) })
   const b = new PeerStore({ seed: seed(24) })
@@ -393,6 +451,49 @@ test('joinDs null omits HELLO.datastore but OPS still carries the store ds', asy
   assert.equal(answer.rejected, 0)
   assert.equal(b.dsHex, a.dsHex)
   assert.equal(b.getLww(node, 'title'), 'ops-ds')
+})
+
+test('MITM-swapped HELLO.datastore fails AUTH before OPS mix graphs', async () => {
+  const a = new PeerStore({ seed: seed(31) })
+  const b = new PeerStore({ seed: seed(32) })
+  a.applySchemaEpoch(schemaPin())
+  const { node } = a.createNode('Todo')
+  a.setLww(node, 'title', 'should-not-land')
+  const swapped = 'bb'.repeat(32)
+  const emptyDs = b.dsHex
+  const emptyOps = b.ops.length
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+
+  const origSend = left.send.bind(left)
+  left.send = (data) => {
+    const env = decodeEnvelope(data)
+    if (env.type === MSG_HELLO && env.payload.datastore) {
+      assert.notEqual(String(env.payload.datastore).toLowerCase(), swapped)
+      return origSend(
+        encodeEnvelope(MSG_HELLO, env.request_id, {
+          ...env.payload,
+          datastore: swapped,
+        }),
+      )
+    }
+    return origSend(data)
+  }
+
+  const served = serveDirect(b, right)
+  const client = connectDirect(a, left, { joinDs: a.dsHex }).catch((e) => e)
+  const [answer, err] = await Promise.all([served, client])
+
+  assert.equal(answer.phase, 'auth-failed')
+  assert.equal(answer.code, ERR_AUTH_FAILED)
+  assert.equal(err && err.code, ERR_AUTH_FAILED)
+  assert.equal(b.getLww(node, 'title'), null)
+  assert.equal(b.dsHex, emptyDs)
+  assert.equal(b.ops.length, emptyOps)
+  assert.notEqual(b.dsHex, swapped)
+  assert.notEqual(b.dsHex, a.dsHex)
 })
 
 test('empty answerer adopts HELLO.datastore A', async () => {

@@ -25,6 +25,7 @@ import {
   encodeEnvelope,
   isHandshakeServer,
   negotiateWelcomeCaps,
+  optHelloDatastore,
   signAuth,
 } from '../models/relay.mjs'
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
@@ -39,7 +40,9 @@ export { AUTH_WRONG_DATASTORE, ERR_AUTH_FAILED }
 
 /**
  * Bound/populated A vs offered B is AUTH_WRONG_DATASTORE before OPS.
- * Empty (`boundDs` falsy) may adopt. HELLO.datastore is not in AuthTranscript.
+ * Empty (`boundDs` falsy) may adopt. Optional HELLO.datastore is in
+ * AuthTranscript when present (omit only when absent). Present-but-invalid
+ * (non-32-byte / non-hex) fails closed — do not treat as omitted.
  */
 export function admitDatastore(boundDs, offeredDs) {
   if (!boundDs || !offeredDs) return null
@@ -149,6 +152,21 @@ export async function serveDirect(store, channel, opts = {}) {
     return { phase: 'version-mismatch', code: ERR_VERSION_MISMATCH }
   }
 
+  let offered
+  try {
+    const parsed = optHelloDatastore(hello.payload && hello.payload.datastore)
+    offered = parsed ? bytesToHex(parsed) : undefined
+  } catch {
+    t.send(
+      encodeEnvelope(MSG_ERROR, hello.request_id, {
+        code: ERR_AUTH_FAILED,
+        message: 'AUTH_FAILED',
+        fatal: true,
+      }),
+    )
+    return { phase: 'auth-failed', code: ERR_AUTH_FAILED }
+  }
+
   t.send(
     encodeEnvelope(MSG_CHALLENGE, hello.request_id, {
       nonce: bytesToHex(nonce),
@@ -161,7 +179,7 @@ export async function serveDirect(store, channel, opts = {}) {
   }
   expectType(auth, MSG_AUTH, 'AUTH')
   const sig = asBytes64(auth.payload.signature)
-  const transcript = authTranscript(claimed, pk, helloVersion, helloCaps, nonce)
+  const transcript = authTranscript(claimed, pk, helloVersion, helloCaps, nonce, undefined, offered)
   const claimedHex = bytesToHex(claimed)
   const pkHex = bytesToHex(pk)
   const transcriptPeer = bytesToHex(transcript.peer_id)
@@ -188,7 +206,6 @@ export async function serveDirect(store, channel, opts = {}) {
     return { phase: 'auth-failed', code: authErr }
   }
 
-  const offered = hello.payload && hello.payload.datastore
   const populated = store.ops.length > 0
   const bound = expectedDs || (populated ? store.dsHex : null)
   const admitErr = admitDatastore(bound, offered)
@@ -293,7 +310,7 @@ export async function connectDirect(store, channel, opts = {}) {
   t.send(encodeEnvelope(MSG_HELLO, 1, helloPayload))
   const challenge = expectType(decodeEnvelope(await t.recv()), MSG_CHALLENGE, 'CHALLENGE')
   const nonce = asBytes32(challenge.payload.nonce)
-  const transcript = authTranscript(store.author, store.pk, 1, helloCaps, nonce)
+  const transcript = authTranscript(store.author, store.pk, 1, helloCaps, nonce, undefined, helloDs)
   const sig = signFn(store.seed, transcript)
   t.send(encodeEnvelope(MSG_AUTH, 2, { signature: bytesToHex(sig) }))
 

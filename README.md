@@ -2,7 +2,7 @@
 
 Offline-first, peer-to-peer, CRDT-powered **property graph database** — a successor to GunDB that keeps its zero-config, local-first developer experience while addressing necessary improvements (wall-clock conflict resolution, no oplog, JS-only core, LWW-everything).
 
-**Status:** M0 contracts, M1 local core, M2 Node SDK, M3a durable convergence, and **M3c** (`v0.1.0` Decision Log act @ `177e247`) are complete. M3b remainder is **pinned** (E5–E8 live; **not** M3b exit). M4a-a (WASM + IDB/OPFS) landed main #23. M4a-hooks landed main #24. H6 first-cut landed main #25. Fanout + roles landed main #26. Current work: **H6 protocol close candidate** (reconnect/resume, admission, named conformance profile). Protocol tests use a fake ordered DataChannel — not `wrtc`, no hosted TURN (TURN/NAT is a deployment choice; SIGNAL already carries opaque ICE). Signaling identity is still relay-asserted until DC AUTH. **H6 is not closed** (steward confirm). **Not** M4a complete. O4 still open. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
+**Status:** M0 contracts, M1 local core, M2 Node SDK, M3a durable convergence, and **M3c** (`v0.1.0` Decision Log act @ `177e247`) are complete. M3b remainder is **pinned** (E5–E8 live; **not** M3b exit). M4a-a (WASM + IDB/OPFS) landed main #23. M4a-hooks landed main #24. H6 first-cut landed main #25. Fanout + roles landed main #26. Close candidate landed main #27. Current work: **H6 leftover** — bind optional `HELLO.datastore` into `AuthTranscript`. Protocol tests use a fake ordered DataChannel — not `wrtc`, no hosted TURN (TURN/NAT is a deployment choice; SIGNAL already carries opaque ICE). Signaling identity is still relay-asserted until DC AUTH. **H6 is not closed** (steward confirm). **Not** M4a complete. O4 still open. *All formats draft-1, unfrozen until an explicit Decision Log freeze names a versioned profile.*
 
 
 ## Documents
@@ -32,7 +32,7 @@ Offline-first, peer-to-peer, CRDT-powered **property graph database** — a succ
 | [Archived reviews](plan/archive/) | Historical July 2026 FINDINGS (not the live backlog) |
 | [Node SDK (M2)](zerodb-napi/) | Experimental `@zerodb/node` NAPI binding — `npm install && npm run build && npm test` |
 | [React hooks (M4a)](zerodb-react/) | Optional `@zerodb/react` over wasm + `openDurable` — not M4a complete |
-| [WebRTC / H6](conformance/ts/webrtc/) | Fake ordered DataChannel + live WS SIGNAL + PeerId roles + reconnect/admission — H6 close candidate, not closed. No TURN. |
+| [WebRTC / H6](conformance/ts/webrtc/) | Fake ordered DataChannel + live WS SIGNAL + PeerId roles + reconnect/admission + HELLO.datastore in AUTH — H6 close-candidate remainder, not closed. No TURN. |
 | [TS→IR (M1)](tools/ts-to-ir/) | Minimal authoring JSON → schema pin IR for `schema-apply` |
 
 ## v0.1 scope
