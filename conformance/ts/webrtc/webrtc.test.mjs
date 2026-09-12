@@ -16,6 +16,7 @@ import {
   decodeEnvelope,
   encodeEnvelope,
   isHandshakeServer,
+  optHelloDatastore,
   signAuth,
 } from '../models/relay.mjs'
 import { PeerStore } from '../peer/store.mjs'
@@ -84,6 +85,15 @@ test('AuthTranscript preimage is zerodb-relay-auth-v2 (no second domain)', () =>
   )
   assert.notDeepEqual(authTranscriptPreimage(withDs), pre)
   assert.deepEqual(authTranscriptPreimage(withDs).subarray(0, DOMAIN.length), DOMAIN)
+  assert.equal(optHelloDatastore(null), undefined)
+  assert.equal(optHelloDatastore(undefined), undefined)
+  assert.throws(() => optHelloDatastore('not-a-datastore'), /HELLO\.datastore/)
+  assert.throws(() => optHelloDatastore(''), /HELLO\.datastore/)
+  assert.throws(() => optHelloDatastore(new Uint8Array(7)), /HELLO\.datastore/)
+  assert.throws(
+    () => authTranscript(t.peer_id, t.public_key, 1, t.hello_capabilities, t.nonce, undefined, 'not-a-datastore'),
+    /HELLO\.datastore/,
+  )
 })
 
 function channelFor(neg, peerHex, initiatorHex) {
@@ -392,6 +402,33 @@ test('admitDatastore: empty adopts, populated A vs B is AUTH_WRONG_DATASTORE', (
   assert.equal(admitDatastore(a, a), null)
   assert.equal(admitDatastore(a, a.toUpperCase()), null)
   assert.equal(admitDatastore(a, b), AUTH_WRONG_DATASTORE)
+})
+
+test('joinDs not-a-datastore is rejected; empty answerer does not adopt', async () => {
+  const a = new PeerStore({ seed: seed(33) })
+  const b = new PeerStore({ seed: seed(34) })
+  a.applySchemaEpoch(schemaPin())
+  const { node } = a.createNode('Todo')
+  a.setLww(node, 'title', 'garbage-ds')
+  const emptyDs = b.dsHex
+  const emptyOps = b.ops.length
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+
+  const served = serveDirect(b, right)
+  const client = connectDirect(a, left, { joinDs: 'not-a-datastore' }).catch((e) => e)
+  const [answer, err] = await Promise.all([served, client])
+
+  assert.equal(answer.phase, 'auth-failed')
+  assert.equal(answer.code, ERR_AUTH_FAILED)
+  assert.equal(err && err.code, ERR_AUTH_FAILED)
+  assert.equal(b.getLww(node, 'title'), null)
+  assert.equal(b.dsHex, emptyDs)
+  assert.equal(b.ops.length, emptyOps)
+  assert.notEqual(b.dsHex, 'not-a-datastore')
+  assert.notEqual(b.ds.length, 7)
 })
 
 test('joinDs null omits HELLO.datastore but OPS still carries the store ds', async () => {

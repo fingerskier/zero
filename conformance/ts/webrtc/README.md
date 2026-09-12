@@ -56,10 +56,11 @@ CI job: `WebRTC first-cut (H6)` (extended, not replaced).
 - Signed KERNEL wire remains source of truth. Wrong `wire.ds` is
   `AUTH_WRONG_DATASTORE` (fail closed, same as the WS peer).
 - **Admission:** optional `HELLO.datastore` is in the AUTH transcript
-  when present (omit when absent). A signaling MITM that swaps the
-  offer fails AUTH. A populated (or `expectedDs`-bound) store of A vs
-  offered B is one named `AUTH_WRONG_DATASTORE` **before** OPS. An
-  empty store may adopt A.
+  when present (omit only when absent). Present-but-invalid (non-32-byte
+  / non-hex) fails closed. A signaling MITM that swaps the offer fails
+  AUTH. A populated (or `expectedDs`-bound) store of A vs offered B is
+  one named `AUTH_WRONG_DATASTORE` **before** OPS. An empty store may
+  adopt A.
 - **Reconnect / resume:** drop the channel, re-SIGNAL, repeat the same
   handshake, then filter `exportOps` with the receiver `resume-cursor`
   / DELIVERY frontier. Pre-drop ops are omitted or `DUPLICATE`, not

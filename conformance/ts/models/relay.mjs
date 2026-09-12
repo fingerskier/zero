@@ -129,14 +129,19 @@ export function isHandshakeServer(localPeerId, remotePeerId) {
   return a.length < b.length;
 }
 
-function optHelloDatastore(v) {
-  if (v == null || v === '') return undefined;
+/**
+ * Optional HELLO.datastore: omit only when the field is actually absent
+ * (`null` / `undefined`). Present-but-invalid (wrong length, non-hex) is
+ * an error — same rule as Rust `opt_hello_datastore`.
+ */
+export function optHelloDatastore(v) {
+  if (v == null) return undefined;
   if (v instanceof Uint8Array) {
-    if (v.length !== 32) return undefined;
+    if (v.length !== 32) throw new Error('HELLO.datastore');
     return v;
   }
   const s = String(v);
-  if (!/^[0-9a-f]{64}$/i.test(s)) return undefined;
+  if (!/^[0-9a-f]{64}$/i.test(s)) throw new Error('HELLO.datastore');
   return hex32(s);
 }
 

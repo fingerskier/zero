@@ -530,7 +530,7 @@ The handshake proves the peer controls the Ed25519 private key corresponding to 
 
 If either check fails, the relay MUST respond with `ERROR` (code `0x201`) and close the connection.
 
-> Draft AUTH preimage (unfrozen). H6 reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). Optional `HELLO.datastore` is in the hello map when present and omitted when absent (no-ds goldens stay byte-identical). A swapped claim fails AUTH. H6 is a close candidate — not closed until the steward confirms.
+> Draft AUTH preimage (unfrozen). H6 reuses this helper on the DataChannel path (`conformance/ts/webrtc/`). Optional `HELLO.datastore` is in the hello map when present and omitted when absent (no-ds goldens stay byte-identical). A swapped or present-but-invalid claim (wrong length / non-hex) fails closed. H6 is a close candidate — not closed until the steward confirms.
 
 ### 5.3 Relay Identity
 

@@ -239,6 +239,26 @@ fn hello_unsupported_version_is_fatal() {
 }
 
 #[test]
+fn malformed_hello_datastore_is_protocol_error() {
+    let relay = Relay::memory();
+    let mut sess = relay.accept();
+    let frame = encode_env(
+        MSG_HELLO,
+        1,
+        Cbor::Map(vec![
+            ("peer_id".into(), Cbor::Bytes(peer_id_from_pk(&PK).to_vec())),
+            ("public_key".into(), Cbor::Bytes(PK.to_vec())),
+            ("protocol_version".into(), Cbor::Uint(1)),
+            ("capabilities".into(), Cbor::Array(vec![])),
+            ("datastore".into(), Cbor::Text("not-a-datastore".into())),
+        ]),
+    );
+    let err = sess.handle(&frame).unwrap_err();
+    assert!(err.to_string().contains("hello.datastore"), "{err}");
+    assert!(!sess.is_authed());
+}
+
+#[test]
 fn unauthenticated_ops_emits_fatal_and_closes() {
     let relay = Relay::memory();
     let mut sess = relay.accept();
