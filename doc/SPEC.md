@@ -1040,20 +1040,23 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 
 #### M3a — Durable convergence (internal)
 
-- [ ] **L2 reference relay**: durable persistence, receipt vs durable ack, full-oplog catch-up, GC off (ISSUES H11)
-- [ ] Complete Merkle/delta wire protocol + delivery/ack/resume semantics (ISSUES C3, H4)
-- [ ] Loss/reorder/partition/rejoin, three-peer offline catch-up, crash/restart — pre-provisioned signed test identities only
+- [x] **L2 reference relay**: durable SQLite persistence, full-oplog catch-up, GC off — `zerodb-relay` (M3a, 2026-08-15).
+- [ ] Receipt vs durable acknowledgement (ISSUES H11; RELAY-SPEC §4.4) — `OP_ACK` still acknowledges receipt before L2 persistence. Open; not part of the M3a exit claim.
+- [x] Merkle/delta wire protocol (`merkle-walk-v1`, frozen-snapshot walk) + delivery/ack/resume semantics (`resume-cursor`, `reject-ack`, DELIVERY §4) — M3a; `RELAY-WALK-001`, `RELAY-RESUME-001`.
+- [x] Loss/reorder/partition/rejoin, three-peer offline catch-up, crash/restart — `full_exemplar_e3_1000_ops_hard_crash_and_relay_only_catchup`, `m3a-relay.test.mjs`.
 
-**Exit gate:** three-peer convergence with offline catch-up through the durable relay; exemplar **E2 live, E3**.
+**Exit gate:** three-peer convergence with offline catch-up through the durable relay; exemplar **E2 live, E3**. **Exited 2026-08-15** (Decision Log; LEDGER Closed index).
 
 #### M3b — Security (internal)
 
-- [ ] Mandatory signing policy, author-key resolution, datastore-membership admission (ISSUES C4, C5)
-- [ ] Handshake hardening: fixed encoding through auth, transcript signature binding version/limits/transport (ISSUES H5; session resumption was removed in relay 0.2; DTLS channel binding on the DataChannel landed 2026-09-12, server identity still open); signed peer handshake shared by direct P2P and relay participation (ISSUES H6)
-- [ ] E2E encrypted-property envelope (M0-frozen bytes); recipient/group key distribution, rotation, revocation (ISSUES H10)
-- [ ] Future-clock acceptance/quarantine rule (ISSUES H1); resource limits enforced pre-auth
+- [x] Mandatory signing policy, OpId/datastore bind, datastore-membership admission, author-key resolution via device certs — `m3b_admission`, `e5_membership` (C4 on-wire; AUTH §1).
+- [ ] C5 device-cert **trust store / PKI**: a write member can still mint a well-signed cert under its own root and rebind a device. Open.
+- [x] Handshake hardening: CBOR-only through auth, transcript AUTH binding version/limits/caps (`zerodb-relay-auth-v2`), DTLS channel binding on the DataChannel (#31); shared peer handshake for direct P2P and relay (H6 closed #29).
+- [ ] Handshake-server identity (ISSUES H5 remainder): the client cannot authenticate the relay / DC handshake server in-protocol; TLS + DTLS binding are the interim story. Open.
+- [ ] E2E encrypted-property envelope + group-key wrap + offline revoke are live (E6, H10 leftovers 2026-08-28); key **rotation** and the wrap-body freeze are not — H10 not closed. Whole-op encryption (H8) undecided by choice.
+- [x] Future-clock quarantine (`CLOCK_DRIFT`, H1 closed 2026-08-27); resource limits enforced pre-auth and at the transport (O6 resolved 2026-09-12; `limits.rs`, `hardening.rs`).
 
-**Exit gate:** malicious relay/peer negatives (forged ops, wrong datastore, clock abuse, auth bypass, resource limits); exemplar **E5–E8**.
+**Exit gate:** malicious relay/peer negatives (forged ops, wrong datastore, clock abuse, auth bypass, resource limits); exemplar **E5–E8** — all live. **Exit not claimed** (2026-08-28 decision, reaffirmed 2026-09-12): outstanding C5/PKI trust store, H10 close, H8 direction; remainder rows in LEDGER.
 
 #### M3c — Interop & release (`v0.1.0`)
 
@@ -1061,7 +1064,7 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 - [x] Reference relay + conformance harness with golden/negative vectors in two languages (ISSUES H9) — landed main PR #19; H9 not removed
 - [x] Version/upgrade matrix, packaging, support profile — landed main PR #20 ([SUPPORT.md](SUPPORT.md), [UPGRADE.md](UPGRADE.md), [CHANGELOG.md](../CHANGELOG.md))
 
-**Exit gate:** `v0.1.0` Decision Log (this act) — experimental; not a format freeze. Evidence: H9 two-language fixtures (#19), existing Rust E3, TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze.
+**Exit gate:** `v0.1.0` Decision Log — landed #22 @ `177e247` and **tagged**; experimental; not a format freeze. Evidence: H9 two-language fixtures (#19), existing Rust E3, TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze.
 
 ### M4 — Browser, P2P & evolution (tracks M4a / M4b)
 
@@ -1069,8 +1072,13 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 
 **M4a — platform:**
 
-- [ ] IndexedDB + OPFS adapters; WASM gzip under the CI regression ceiling (ISSUES O4 pinned 2026-09-12 — not an M4a gate); React hooks
-- [ ] WebRTC direct sync using the shared peer protocol
+- [x] IndexedDB + OPFS adapters (#23); React hooks (#24); WASM gzip under the CI regression ceiling (ISSUES O4 pinned 2026-09-12 — not an M4a gate)
+- [x] WebRTC direct sync **protocol** using the shared peer protocol — H6 closed (#25–#29), DTLS channel binding (#31); exercised over an in-process fake DataChannel
+- [ ] Real-browser DataChannel path (an actual `RTCPeerConnection`, SIGNAL via a live relay, binding from real SDP)
+- [ ] Direct/relay parity (same op set, both transports, incl. reconnect)
+- [ ] Browser restart/offline tests (`openDurable` reload + offline edits + later sync)
+
+**M4a exit gate (added 2026-09-12):** the three unchecked items above, then a Decision Log claim. E10 is **not** an M4a criterion.
 
 **M4b — evolution:**
 
@@ -1079,7 +1087,7 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 - [ ] Adjacent-version rollback/upgrade matrix
 - [ ] Large-payload (`BlobRef`) transfer/storage implemented under the M0 reservation (ISSUES O1)
 
-**Exit gate:** upgrade/downgrade/rollback matrix, mixed-schema peers (**E10**), snapshot + tail recovery, direct/relay parity, browser restart/offline tests.
+**M4 exit gate (both tracks):** M4a gate above plus upgrade/downgrade/rollback matrix, mixed-schema peers (**E10**), snapshot + tail recovery.
 
 ### M5 — Production readiness & GA (program M5a / M5b / M5c)
 
@@ -1144,7 +1152,7 @@ All specification issues and open decisions are tracked by ID in **[ISSUES.md](I
 |----|----------|-----------|
 | O1 | Large operation payload **transfer/storage protocol** (encoding reserved in M0a: caps + `BlobRef`, KERNEL §8; blocks Richtext) | M4 |
 | O4 | WASM size budget; optional modules for RGA/Richtext | **pinned** 2026-09-12 (CI ceiling 300 KiB gz; modules ride M2-crdts) |
-| O6 | Protocol-level rate limiting (provisional size limits set in **M0a**, registry `limits`) | M3 |
+| O6 | Protocol-level rate limiting (provisional size limits set in **M0a**, registry `limits`) | **resolved** 2026-09-12 (Decision Log; RELAY-SPEC §8) |
 | O7 | Causal `deps` scale — compact causal frontier + checkpoint translation | **M0f** contract; scale tests M5 |
 
 O2 (TS authoring-canonical → IR identity-canonical) and O3 (minimal v0.1 query subset) were decided 2026-07-16 — see the Decision Log and [SCHEMA.md](SCHEMA.md).

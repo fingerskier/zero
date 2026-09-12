@@ -2,7 +2,7 @@
 
 Canonical work tracker. A gate closes only with **Exit evidence** (commit, fixture path, or CI run).
 
-**DRI:** `fingerskier` unless a row names someone else. Effort bands (rough solo): S ≤ 1 wk, M ≤ 1 mo, L > 1 mo. DQ-12 capacity ratification remains open.
+**DRI:** `fingerskier` unless a row names someone else. Effort bands (rough solo): S ≤ 1 wk, M ≤ 1 mo, L > 1 mo — informational; DQ-12 capacity ratification was dropped 2026-09-12.
 
 Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)` · `pinned`.
 
@@ -29,8 +29,15 @@ Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)` · `pin
 | perf-doc | 2026-08-28 | [PERF.md](PERF.md). Stage 0+1 **landed** `9903280`; Stage 2/3 and H10 leftovers pinned. Not a benchmark report. |
 | perf-s0 | 2026-08-28 | `perf_s0` fixtures/phase counters (1k). No invented README numbers. |
 | perf-s1 | 2026-08-28 | `import_replay_equiv` + `limits` + chunk tests. Advertised payload/batch; import≡replay. Not Stage 2/3. |
-| M3c Interop + release (`v0.1.0`) | 2026-09-11 | Decision Log act (this PR); steward tags `v0.1.0` after merge. #17 SchemaEpoch n=1, #18 TS wire peer, #19 H9 two-language fixtures (H9 not removed), #20 SUPPORT/UPGRADE, #21 WELCOME `protocol_version` reject (`0x102`), existing Rust E3, TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze. Not M3b exit / H9 closed. |
+| M3c Interop + release (`v0.1.0`) | 2026-09-11 | Decision Log act #22 @ `177e247`; **tagged `v0.1.0`**. #17 SchemaEpoch n=1, #18 TS wire peer, #19 H9 two-language fixtures (H9 not removed), #20 SUPPORT/UPGRADE, #21 WELCOME `protocol_version` reject (`0x102`), existing Rust E3, TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze. Not M3b exit / H9 closed. |
 | M4a-browser-slice / wasm-events / push-driver / idb-journal | experimental shipped | Grew into M4a-a (#23, `zerodb-wasm/js/storage.mjs`). Not M4a complete. |
+| M4a-a WASM + IDB/OPFS | 2026-09-11 | #23 @ `56a3bad`; `zerodb-wasm/test/persist-reopen.test.mjs`. Not M4a complete. |
+| M4a-hooks `@zerodb/react` | 2026-09-11 | #24 @ `3f81d62`; `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` local only. |
+| H6 direct P2P protocol | 2026-09-12 | Decision Log; RELAY-SPEC §14.2. #25 @ `671adba` first-cut, #26 @ `45a88b5` WS SIGNAL fanout + PeerId roles, #27 @ `ef2fca9` reconnect/admission/`h6-profile`, #28 @ `bfe69b9` HELLO.datastore bind, #29 @ `a4fc3b8` close. Fake ordered DataChannel; TURN is infra. |
+| O4 pinned | 2026-09-12 | Decision Log; #30 @ `0e90aef`. Out of the M4a gate; CI ceiling 300 KiB gzip; RGA/Richtext modules ride M2-crdts. Not closed. |
+| M4a-h5-binding DTLS channel binding | 2026-09-12 | #31 @ `a322c4d`; `H6-AUTH-004` both runners; `webrtc.test.mjs` bridged-MITM + control; entrypoints require binding. H5 not closed. |
+| M3b-relay-harden transport hardening + in-process TLS | 2026-09-12 | #32 @ `175784f`; `zerodb-relay/tests/hardening.rs` (9). Issue "no wss listener" closed. Not M3b exit. |
+| O6 resolved | 2026-09-12 | Decision Log; advertised limits, rate windows, subscription/connection caps, pre-buffer ceiling all enforced (`limits.rs`, `hardening.rs`). Quotas/datastore-creation policy stay M3b remainder. |
 
 Detailed resolved-issue audit prose lives in the [ISSUES Decision Log](../doc/ISSUES.md) only (no second copy here).
 
@@ -42,52 +49,43 @@ Detailed resolved-issue audit prose lives in the [ISSUES Decision Log](../doc/IS
 |----|--------|--------|
 | DQ-9 L2 catch-up mandatory for v0.1 | **ratified** (M3a; default yes) | — |
 | DQ-11 approver + records | plan default: this ledger + Decision Log | — |
-| DQ-12 capacity/effort bands | **open** | schedule credibility |
+
+DQ-12 (capacity / effort bands) dropped 2026-09-12 — no owner, blocked nothing.
 
 ---
 
 ## Live work
 
-### M3c — Interop TS wire peer + release (`v0.1.0`)
+### M3c — done (see Closed index)
 
-Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`.
-
-| ID | Work | Status | Notes |
-|----|------|--------|-------|
-| M3c | Interop TS wire peer + release (include signed `SchemaEpoch`) | done(Decision Log this PR; tag pending steward after merge) | SPEC M3c exit. Evidence #17–#21: H9 two-language fixtures (#19) + existing Rust E3 + TS smoke. Live Rust↔TS partition/rejoin is follow-on, not this tag, not format freeze. **Not** M3b exit / H9 closed. |
-| M3c-epoch | Signed KERNEL kind 5 `SchemaEpoch` | done(landed main #17) | Kind 5 persist/ingest/import (`m3c_schema_epoch`; n=1, empty migration). Schema including `encrypted: true` is an op. Unknown `ep` is `EPOCH_UNKNOWN`. Codex P1s: epoch-first in multi-op batches; own-epoch IR for pin/encrypt (ep=0 schemaless). Fork/quarantine + non-empty migration not this slice. Do not freeze wrap-body. |
-| M3c-ts-peer | Independent TypeScript wire peer | done(landed main #18) | `conformance/ts/peer/` evolved from the runner, **not** NAPI-backed (SPEC M3c). HELLO/`zerodb-relay-auth-v2`/WELCOME; signed CreateNode, SetProperty LWW, SchemaEpoch n=1; merkle-walk catch-up; `EPOCH_UNKNOWN` fail-closed; advertised WELCOME limits. Smoke: `conformance/ts/peer/smoke.test.mjs`. |
-| M3c-harness | Two-language golden/negative harness (H9) | done(landed main #19) | Registry is the protocol definition; `conformance/schemas/` generated from it. Required-lane: `RELAY-OPS-001`, `RELAY-WALK-001`, `RELAY-LIMIT-001`, `PEER-EPOCH-001`, `PEER-REJECT-001..004` plus existing `RELAY-HELLO-*` / ROOT / RESUME / REJECT. Runners: `conformance/ts/runner.mjs` (independent, NAPI-free) and `zerodb-core` `conformance_relay` / `conformance_peer` / `conformance_registry`. Demonstrated red in xfail, then promoted. H9 not removed; not a format freeze. |
-| M3c-pack | Version/upgrade matrix, support profile | done(landed main #20) | [SUPPORT.md](../doc/SUPPORT.md), [UPGRADE.md](../doc/UPGRADE.md), [CHANGELOG.md](../CHANGELOG.md). Workspace stays `0.1.0-alpha` / unpublished. Window size 1; `FORMAT_UNSUPPORTED` / `MERKLE_VERSION_MISMATCH`. M4 adjacent-version rollback matrix not this slice. **Not** format freeze. |
+`v0.1.0` tagged @ `177e247` (#22). Slice rows #17–#21 are indexed above; nothing live.
 
 ### Pinned / remainder
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
-| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH, session limits/TLS-outside-dev, and H10 leftovers landed as `M3b-h5` / `M3b-limits` / `M3b-h10-remain` below. H6 protocol closed this act (M4a-h6-*; Decision Log). **Not** M3b exit. |
+| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH + DTLS binding, session limits, transport hardening + TLS, and H10 leftovers landed (rows below). **Not** M3b exit — outstanding: C5/PKI device-cert trust store, H10 close (rotation, wrap-body), H8 direction (undecided 2026-09-12), quotas / datastore-creation policy. H5 remainder is handshake-server identity. |
 | M3b-h5 | Transcript AUTH (draft) | done(handshake + RELAY-HELLO-001 + limits H5 negatives) | `zerodb-relay-auth-v2` ‖ HELLO+nonce+intended WELCOME. v1 nonce-only `AUTH_FAILED`. Not a format freeze. |
 | M3b-limits | Session rate/sub/conn + plaintext listen | done(`zerodb-relay/tests/limits.rs`) | `0x305 TOO_MANY_SUBS`, `0x304 RATE_EXCEEDED` / `TOO_MANY_CONNECTIONS`, `--allow-insecure`. No global quota. |
 | M3b-h10-remain | H10 leftovers | done(`e6_encrypted_notes` H10 cases) | Offline-revoke at open, key-before/after-data hold, principal+device wrap, wrap-shape draft. **H10 not closed.** |
-| M3b-relay-harden | Relay transport hardening + in-process TLS | done(this PR) | WS message ceiling before buffering; handshake deadline (`0x100 HANDSHAKE_TIMEOUT`); idle timeout (`GOODBYE IDLE_TIMEOUT`; PING/PONG keepalive); global `--max-connections` (`0x304`); GOODBYE; `--tls-cert`/`--tls-key` wss via rustls. Evidence: `zerodb-relay/tests/hardening.rs`. Pinned: datastore-creation policy, op/byte quotas, walk/response limits, CA/rotation. **Not** M3b exit. |
+| M3b-relay-harden | Relay transport hardening + in-process TLS | done(landed main #32 @ `175784f`) | WS message ceiling before buffering; handshake deadline (`0x100 HANDSHAKE_TIMEOUT`); idle timeout (`GOODBYE IDLE_TIMEOUT`; PING/PONG keepalive); global `--max-connections` (`0x304`); GOODBYE; `--tls-cert`/`--tls-key` wss via rustls. Evidence: `zerodb-relay/tests/hardening.rs`. Pinned: datastore-creation policy, op/byte quotas, walk/response limits, CA/rotation. **Not** M3b exit. |
+| M3b-quotas | Datastore-creation policy; per-principal / per-datastore / global op-byte quotas; walk/response limits | pinned | Remaining "before network exposure" items (PERF). No trigger set. |
 | perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
 | perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
+| perf-bench | Benchmark harness (1k/10k/100k) for the four P0 findings | pinned | Needed before either perf trigger can be judged; PERF.md is a static review. |
 
-### M4a — Browser / WASM / React (H6 protocol closed this act; M4a still open)
+### M4a — Browser / WASM / WebRTC / React (open)
 
-Depends: M3c done. **H6 closed** 2026-09-12. **O4 pinned** 2026-09-12 (out of the M4a gate). **Not** M4a complete — M4a stays open on its own platform criteria (real-browser WebRTC DataChannel path — tests use a fake channel; direct/relay parity; browser restart/offline tests); E10 is M4b.
+Depends: M3c done. Landed slices (#23–#32) are in the Closed index. **Not** M4a complete. Exit gate (SPEC §10 M4a, added 2026-09-12): real-browser DataChannel path, direct/relay parity, browser restart/offline tests. E10 is M4b.
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
-| M4a-a | WASM + IndexedDB + OPFS persist/reopen | done(landed main #23 @ `56a3bad`) | Product-surface adapters in `zerodb-wasm/js/storage.mjs`; live store remains `MemoryBackend`. Evidence: `zerodb-wasm/test/persist-reopen.test.mjs` (occupied-IDB auto, IDB v2 open, serialized persist, corrupt identity fail-closed). WASM gzip recorded in SUPPORT (O4 pinned 2026-09-12). Not M4a complete. |
-| M4a-hooks | Optional React hooks over wasm + `openDurable` | done(landed main #24 @ `3f81d62`) | `@zerodb/react`: `ZeroDbProvider` + `useQuery` / `useNode` / `useMutation` / `useSyncStatus` wrapping live WASM (`onChange`, O3 string query, `listNodes`, `setLww`, `createNode`) and `journal.persist`. Evidence: `zerodb-react/test/hooks.test.mjs`. `useSyncStatus` is local ready/offline. Not M4a complete. |
-| M4a-webrtc | H6 first-cut WebRTC DataChannel | done(landed main #25 @ `671adba`) | SIGNAL 0x42 + ordered `zerodb-relay` DataChannel carrying shared peer protocol. Reuses `AuthTranscript` / `zerodb-relay-auth-v2` (no second preimage). Evidence: `conformance/ts/webrtc/webrtc.test.mjs` (fake ordered channel; not wrtc) + `zerodb-relay/tests/signal.rs` (0x307). |
-| M4a-h6-fanout | H6 live WS SIGNAL fanout + role negotiation | done(landed main #26 @ `45a88b5`) | Forwarded SIGNAL is written to the target live socket. Roles: smaller PeerId issues CHALLENGE/WELCOME. AUTH still `zerodb-relay-auth-v2`. Evidence: `zerodb-relay/tests/signal_ws.rs`, `conformance/ts/webrtc/signal-ws.test.mjs`. |
-| M4a-h6-close | H6 reconnect/admission/`h6-profile` | done(landed main #27 @ `ef2fca9`) | Reconnect/resume, session admission, named `h6-profile`. Not M4a complete. |
-| M4a-h6-auth-ds | Bind HELLO.datastore into AuthTranscript | done(landed main #28 @ `bfe69b9`) | Optional `HELLO.datastore` in the existing `zerodb-relay-auth-v2` hello map; omit when absent. Swapped offer is AUTH_FAILED. Evidence: `H6-AUTH-003`, handshake tests, MITM webrtc test. No TURN. Not M4a complete. |
-| M4a-h5-binding | DTLS channel binding in DC AUTH | done(this PR) | `HELLO.channel_binding` = BLAKE3 over both SHA-256 DTLS fingerprints in the existing `zerodb-relay-auth-v2` hello map (omit when absent). DC server derives its own, requires equality before CHALLENGE. Bridged-DTLS MITM fails `0x201`. Evidence: `H6-AUTH-004` (both runners), `webrtc.test.mjs` bridged-MITM + control, handshake unit tests. **H5 not closed.** |
-| H6 | Direct P2P protocol | done(Decision Log this PR) | Closed 2026-09-12. Shared peer protocol over DataChannel (RELAY-SPEC §14.2). Evidence #25–#28. TURN parked. **Not** M4a complete. |
-| O4 | WASM size budget | pinned | Pinned 2026-09-12 (Decision Log): out of the M4a gate. CI regression ceiling 300 KiB gzip (`zerodb-wasm/scripts/measure-size.mjs`); artifact 262.6 KiB. Optional RGA/Richtext modules ride M2-crdts. Not closed. |
-| M4a | Browser/WASM/WebRTC/React | open | H6 closed 2026-09-12; O4 pinned. Do not mark M4a complete: M4a stays open on its own platform criteria (real-browser WebRTC DataChannel path — tests use a fake channel; direct/relay parity; browser restart/offline tests); E10 is M4b. |
+| M4a-browser-dc | Real-browser WebRTC DataChannel path | open | `conformance/ts/webrtc/` driven by an actual `RTCPeerConnection` (browser or `wrtc`-class runtime), SIGNAL via live `zerodb-relay`, `channelBindingFor(pc)` on real SDP, OPS converge. Fake channel stays the protocol oracle. TURN/NAT is infra. |
+| M4a-parity | Direct/relay parity | open | Same op set converges identically over DataChannel and via relay, incl. reconnect / `resume-cursor`; one fixture set, both transports. |
+| M4a-offline | Browser restart/offline tests | open | `openDurable` reload + offline edits + later sync over both transports; todo app or browser-peer example as harness. |
+| M4a-todo-transport | Todo app cannot reach a LAN peer from GitHub Pages | todo (optional) | Direct NAPI `db.serve` peer has no TLS listener; relay TLS does not help. Either add wss to `db.serve` / `zerodb serve`, or route the app through `zerodb-relay`. Not scheduled. |
+| O4 | WASM size budget | pinned | Pinned 2026-09-12 (#30): out of the M4a gate. CI ceiling 300 KiB gzip; artifact 262.6 KiB. RGA/Richtext modules ride M2-crdts. Not closed. |
+| M4a | Browser/WASM/WebRTC/React | open | Exit claim only after the three rows above; Decision Log names it. |
 
 ### Later gates
 

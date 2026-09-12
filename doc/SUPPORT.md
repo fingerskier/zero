@@ -1,6 +1,6 @@
 # ZeroDB support profile (draft-1 / unfrozen)
 
-**Status:** packaging notes for the M3c product slice (`v0.1.0` Decision Log act; git tag follows this act). Formats remain **draft-1 / unfrozen**. This is **not** a format freeze, **not** M3b exit, and **not** a crates.io/npm publish.
+**Status:** packaging notes for the M3c product slice (`v0.1.0` Decision Log act, tagged @ `177e247`). Formats remain **draft-1 / unfrozen**. This is **not** a format freeze, **not** M3b exit, and **not** a crates.io/npm publish.
 
 **Authority:** descriptive of what the tree actually builds and CI actually runs. Normative version policy is [VERSIONS.md](VERSIONS.md); current constants live in [`conformance/registry.json`](../conformance/registry.json). Upgrade/reject names: [UPGRADE.md](UPGRADE.md). Product tags vs crate/npm versions: [CHANGELOG.md](../CHANGELOG.md).
 
@@ -8,9 +8,9 @@
 
 ## 1. What this slice is
 
-The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M3c) is named by the `v0.1.0` Decision Log act. The git tag follows this act (steward tags after merge):
+The first multi-peer secure product slice **with offline catch-up** (SPEC §10 M3c) is named by the `v0.1.0` Decision Log act (#22 @ `177e247`, tagged):
 
-- Git tags: `v0.1.0-local` (M1 experimental), `v0.1.0-sdk` (M2 experimental), `v0.1.0` (M3c; tag follows this Decision Log act).
+- Git tags: `v0.1.0-local` (M1 experimental), `v0.1.0-sdk` (M2 experimental), `v0.1.0` (M3c; on `177e247`).
 - Workspace crates and npm packages stay `0.1.0-alpha` with `publish = false` / `"private": true`.
 - All wire, bundle, SQLite, wrap-body, and RELAY shapes stay draft-1 / unfrozen.
 
