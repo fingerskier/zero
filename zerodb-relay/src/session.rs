@@ -21,10 +21,11 @@ use zerodb_core::handshake::{
 use zerodb_core::relay::{
     ERR_AUTH_FAILED, ERR_PAYLOAD_TOO_LARGE, ERR_RATE_EXCEEDED, ERR_TARGET_NOT_CONNECTED,
     ERR_TOO_MANY_SUBS, FrontierTip, HeldOp, MSG_AUTH, MSG_CHALLENGE, MSG_DELTA_BATCH,
-    MSG_DELTA_REQUEST, MSG_ERROR, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST, MSG_MERKLE_LEAF_RESPONSE,
-    MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK, MSG_OPS, MSG_SIGNAL,
-    MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST, MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS,
-    admit_experimental_op, authenticate, negotiate_capabilities, retransmit,
+    MSG_DELTA_REQUEST, MSG_ERROR, MSG_GOODBYE, MSG_HELLO, MSG_MERKLE_LEAF_REQUEST,
+    MSG_MERKLE_LEAF_RESPONSE, MSG_MERKLE_NODE_REQUEST, MSG_MERKLE_NODE_RESPONSE, MSG_OP_ACK,
+    MSG_OPS, MSG_PING, MSG_PONG, MSG_SIGNAL, MSG_SUBSCRIBE, MSG_SUBSCRIBED, MSG_SYNC_REQUEST,
+    MSG_SYNC_RESPONSE, MSG_WELCOME, RELAY_CAPS, admit_experimental_op, authenticate,
+    negotiate_capabilities, retransmit,
 };
 
 use crate::store::{OpStore, StoredOp, validated_root_hex};
@@ -55,6 +56,8 @@ pub struct Inner {
     connections: HashMap<[u8; 32], HashSet<u64>>,
     /// SIGNAL frames waiting for another session (in-process / tests).
     outbound: HashMap<u64, Vec<Vec<u8>>>,
+    /// Live transport connections holding a [`ConnectionSlot`] (global cap).
+    live_connections: usize,
     /// When true, skip membership filters and persist even unsigned / forged /
     /// tampered ops so peers can prove AUTH.md §4 / KERNEL §4.4 independently
     /// of the relay (EXEMPLAR E5 / E7).
@@ -84,6 +87,7 @@ impl Relay {
                 subscribers: HashMap::new(),
                 connections: HashMap::new(),
                 outbound: HashMap::new(),
+                live_connections: 0,
                 colluding,
             })),
         }
@@ -98,9 +102,29 @@ impl Relay {
                 subscribers: HashMap::new(),
                 connections: HashMap::new(),
                 outbound: HashMap::new(),
+                live_connections: 0,
                 colluding: false,
             })),
         })
+    }
+
+    /// Reserve one of `max` global transport slots. `None` means the relay
+    /// is at capacity; the caller should refuse the connection. The slot is
+    /// released on drop (socket close), independent of session phase.
+    pub fn acquire_connection(&self, max: usize) -> Option<ConnectionSlot> {
+        let mut g = self.inner.lock().ok()?;
+        if g.live_connections >= max {
+            return None;
+        }
+        g.live_connections += 1;
+        Some(ConnectionSlot {
+            inner: self.inner.clone(),
+        })
+    }
+
+    /// Transport connections currently holding a slot.
+    pub fn live_connections(&self) -> usize {
+        self.inner.lock().map(|g| g.live_connections).unwrap_or(0)
     }
 
     pub fn set_next_nonce(&self, nonce: [u8; 32]) {
@@ -214,6 +238,19 @@ enum Phase {
     Closed,
 }
 
+/// RAII global-connection slot (see [`Relay::acquire_connection`]).
+pub struct ConnectionSlot {
+    inner: Arc<Mutex<Inner>>,
+}
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.live_connections = g.live_connections.saturating_sub(1);
+        }
+    }
+}
+
 /// Sliding 1s window of admitted OPS count/bytes (RELAY §8).
 struct RateWindow {
     events: VecDeque<(Instant, u32, u64)>,
@@ -310,7 +347,26 @@ impl RelaySession {
             )]);
         }
         let env = decode_env(frame)?;
+        if self.is_closed() {
+            return Ok(Vec::new());
+        }
         match env.ty {
+            // RELAY §4.6 keepalive: allowed in any phase so an idle-timeout
+            // aware client can stay up before/after AUTH. Cheap; no state.
+            MSG_PING => Ok(vec![match map_get(&env.payload, "timestamp") {
+                Cbor::Uint(ts) => encode_env(
+                    MSG_PONG,
+                    env.request_id,
+                    Cbor::Map(vec![("timestamp".into(), Cbor::Uint(*ts))]),
+                ),
+                _ => error_frame(env.request_id, 0x103, "MALFORMED_MESSAGE", false),
+            }]),
+            // RELAY §4.1 clean disconnect: release per-peer / subscription
+            // state now rather than at socket teardown; no reply.
+            MSG_GOODBYE => {
+                self.close();
+                Ok(Vec::new())
+            }
             MSG_HELLO => self.on_hello(&env),
             MSG_AUTH => self.on_auth(&env),
             MSG_OPS => self.require_auth(&env, |s, e| s.on_ops(e)),

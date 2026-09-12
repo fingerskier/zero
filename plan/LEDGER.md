@@ -68,6 +68,7 @@ Depends: M3a done; M3b remainder pinned (not a start-blocker). Release: `v0.1.0`
 | M3b-h5 | Transcript AUTH (draft) | done(handshake + RELAY-HELLO-001 + limits H5 negatives) | `zerodb-relay-auth-v2` ‖ HELLO+nonce+intended WELCOME. v1 nonce-only `AUTH_FAILED`. Not a format freeze. |
 | M3b-limits | Session rate/sub/conn + plaintext listen | done(`zerodb-relay/tests/limits.rs`) | `0x305 TOO_MANY_SUBS`, `0x304 RATE_EXCEEDED` / `TOO_MANY_CONNECTIONS`, `--allow-insecure`. No global quota. |
 | M3b-h10-remain | H10 leftovers | done(`e6_encrypted_notes` H10 cases) | Offline-revoke at open, key-before/after-data hold, principal+device wrap, wrap-shape draft. **H10 not closed.** |
+| M3b-relay-harden | Relay transport hardening + in-process TLS | done(this PR) | WS message ceiling before buffering; handshake deadline (`0x100 HANDSHAKE_TIMEOUT`); idle timeout (`GOODBYE IDLE_TIMEOUT`; PING/PONG keepalive); global `--max-connections` (`0x304`); GOODBYE; `--tls-cert`/`--tls-key` wss via rustls. Evidence: `zerodb-relay/tests/hardening.rs`. Pinned: datastore-creation policy, op/byte quotas, walk/response limits, CA/rotation. **Not** M3b exit. |
 | perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
 | perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
 

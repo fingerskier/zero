@@ -538,7 +538,7 @@ The relay is authenticated at the transport layer: peers verify the relay's TLS 
 
 ### 5.4 Transport Security
 
-Relay connections MUST use TLS (`wss://`) except for loopback and explicitly configured development environments. The `zerodb-relay` binary does not terminate TLS and does not mint certificates. It refuses a non-loopback plaintext listen unless `--allow-insecure` is passed (loopback `127.0.0.1` / `localhost` / `::1` may listen plaintext without the flag).
+Relay connections MUST use TLS (`wss://`) except for loopback and explicitly configured development environments. The `zerodb-relay` binary terminates TLS in-process when started with `--tls-cert <pem> --tls-key <pem>` (rustls; the operator supplies the certificate chain and key — no CA, no minting) and then serves `wss://` on any bind. Without TLS material it refuses a non-loopback plaintext listen unless `--allow-insecure` is passed (loopback `127.0.0.1` / `localhost` / `::1` may listen plaintext without the flag). A TLS terminator in front of a loopback plaintext listener remains a supported deployment.
 
 **Important:** TLS does NOT replace ZeroDB's E2E encryption of operation content (SPEC.md §6.2; whether the encryption unit is individual properties or whole operations is an open choice — ISSUES H8/H10). TLS protects the transport; E2E encryption protects operation content from the relay itself.
 
@@ -656,7 +656,7 @@ When a peer exceeds its limits, or the relay is under global load (queue depth, 
 
 ### 8.3 Abuse Mitigation
 
-Relay operators SHOULD limit concurrent connections per `PeerId` (RECOMMENDED: 3). This implementation enforces 3: a fourth AUTH from the same `PeerId` is `ERROR` `0x304` `TOO_MANY_CONNECTIONS` (fatal) and the session is closed. IP-based rate limiting and DDoS mitigation are transport-level defenses outside this protocol, RECOMMENDED for production deployments.
+Relay operators SHOULD limit concurrent connections per `PeerId` (RECOMMENDED: 3). This implementation enforces 3: a fourth AUTH from the same `PeerId` is `ERROR` `0x304` `TOO_MANY_CONNECTIONS` (fatal) and the session is closed. It also enforces, per listener (`ListenConfig` / binary flags): a **global connection cap** (`--max-connections`, default 1024 — an over-cap socket gets `ERROR` `0x304` `TOO_MANY_CONNECTIONS` fatal after the upgrade and never holds a slot); a **handshake deadline** (`--handshake-timeout-secs`, default 10 — TLS + WebSocket upgrade + HELLO/AUTH must complete, else `ERROR` `0x100` `HANDSHAKE_TIMEOUT` fatal; the deadline starts at TCP accept, so a raw TCP client that never upgrades, or one that trickles upgrade bytes to defeat the per-read socket timeout, is dropped at the same deadline); an **idle timeout** (`--idle-timeout-secs`, default 300, `0` disables — no inbound frame or WebSocket ping for that long is `GOODBYE` reason `0` message `IDLE_TIMEOUT`; §4.6 `PING` and WebSocket pings both reset it); and a **pre-decode message ceiling** (`MAX_FRAME_BYTES`) applied by the WebSocket layer before any buffering, answered with `ERROR` `0x303` `PAYLOAD_TOO_LARGE` fatal. IP-based rate limiting and DDoS mitigation are transport-level defenses outside this protocol, RECOMMENDED for production deployments.
 
 ---
 
