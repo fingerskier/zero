@@ -276,7 +276,10 @@ function asBytes64(v) {
 export async function connectDirect(store, channel, opts = {}) {
   const t = new ChannelTransport(channel)
   const helloCaps = opts.capabilities || RELAY_CAPS.slice()
-  const joinDs = opts.joinDs === undefined ? store.datastoreIdHex() : opts.joinDs
+  // `joinDs: null` omits HELLO.datastore (OPS-time admission). OPS still
+  // carries the store's datastore — do not send `datastore: null`.
+  const helloDs = opts.joinDs === undefined ? store.datastoreIdHex() : opts.joinDs
+  const opsDs = helloDs || store.datastoreIdHex()
   const signFn = opts.signAuthFn || ((seed, transcript) => signAuth(seed, transcript))
 
   const helloPayload = {
@@ -285,7 +288,7 @@ export async function connectDirect(store, channel, opts = {}) {
     protocol_version: opts.helloProtocolVersion == null ? 1 : opts.helloProtocolVersion,
     capabilities: helloCaps,
   }
-  if (joinDs) helloPayload.datastore = joinDs
+  if (helloDs) helloPayload.datastore = helloDs
   if (opts.remoteCursor) helloPayload.cursor = opts.remoteCursor
   t.send(encodeEnvelope(MSG_HELLO, 1, helloPayload))
   const challenge = expectType(decodeEnvelope(await t.recv()), MSG_CHALLENGE, 'CHALLENGE')
@@ -304,12 +307,12 @@ export async function connectDirect(store, channel, opts = {}) {
   expectType(welcome, MSG_WELCOME, 'WELCOME')
   checkWelcomeProtocol(welcome.payload)
 
-  const toSend = store.exportOps(joinDs, { cursor: opts.remoteCursor })
+  const toSend = store.exportOps(opsDs, { cursor: opts.remoteCursor })
   const limits = welcomeLimits(welcome.payload)
   const encoded = toSend.map(encodeRelayOp)
   const batches = toSend.length
     ? splitOpsBatches(
-        joinDs,
+        opsDs,
         encoded,
         limits.max_batch_ops,
         limits.max_batch_bytes,
@@ -322,7 +325,7 @@ export async function connectDirect(store, channel, opts = {}) {
   for (const batch of batches) {
     const wires = toSend.slice(offset, offset + batch.length)
     offset += batch.length
-    t.send(encodeEnvelope(MSG_OPS, requestId, opsPayload(joinDs, wires)))
+    t.send(encodeEnvelope(MSG_OPS, requestId, opsPayload(opsDs, wires)))
     requestId += 1
     const ack = expectType(decodeEnvelope(await t.recv()), MSG_OP_ACK, 'OP_ACK')
     outcomes.push(...(ack.payload.outcomes || []))
@@ -334,7 +337,7 @@ export async function connectDirect(store, channel, opts = {}) {
     sentIds: toSend.map((w) => w.id),
     batches: batches.length,
     outcomes,
-    frontier: frontierFromOps(store.ops, joinDs || store.dsHex),
+    frontier: frontierFromOps(store.ops, opsDs),
   }
 }
 

@@ -16,6 +16,8 @@ use crate::cbor::{self, Cbor};
 
 /// RELAY §10 `AUTH_FAILED`.
 const ERR_AUTH_FAILED: u16 = 0x201;
+/// RELAY §10 `VERSION_MISMATCH` (HELLO/WELCOME protocol_version).
+pub const ERR_VERSION_MISMATCH: u16 = 0x102;
 
 fn peer_id_from_pk(pk: &[u8; 32]) -> [u8; 32] {
     *blake3::hash(pk).as_bytes()
@@ -119,6 +121,15 @@ pub fn admit_datastore(bound: Option<&[u8]>, offered: Option<&[u8]>) -> Result<(
     match (bound, offered) {
         (Some(a), Some(b)) if a != b => Err("AUTH_WRONG_DATASTORE"),
         _ => Ok(()),
+    }
+}
+
+/// Client WELCOME.protocol_version gate (PR #21). Draft-1 window size 1:
+/// only `1` is accepted. Missing/other is `0x102 VERSION_MISMATCH`.
+pub fn check_welcome_protocol_version(version: Option<u64>) -> Result<(), u16> {
+    match version {
+        Some(n) if n == DEFAULT_PROTOCOL_VERSION as u64 => Ok(()),
+        _ => Err(ERR_VERSION_MISMATCH),
     }
 }
 
@@ -356,6 +367,19 @@ mod tests {
         assert!(admit_datastore(None, Some(&b)).is_ok());
         assert!(admit_datastore(Some(&a), None).is_ok());
         assert!(admit_datastore(None, None).is_ok());
+    }
+
+    #[test]
+    fn welcome_protocol_version_rejects_other_than_1() {
+        assert!(check_welcome_protocol_version(Some(1)).is_ok());
+        assert_eq!(
+            check_welcome_protocol_version(Some(2)),
+            Err(ERR_VERSION_MISMATCH)
+        );
+        assert_eq!(
+            check_welcome_protocol_version(None),
+            Err(ERR_VERSION_MISMATCH)
+        );
     }
 
     #[test]

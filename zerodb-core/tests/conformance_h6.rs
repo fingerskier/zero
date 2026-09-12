@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value as Json;
 use zerodb_core::cbor::{self, Cbor, encode};
 use zerodb_core::handshake::{
-    AuthTranscript, admit_datastore, auth_transcript_preimage, authenticate, is_handshake_server,
-    sign_auth, sign_auth_v1_nonce_only,
+    AuthTranscript, ERR_VERSION_MISMATCH, admit_datastore, auth_transcript_preimage, authenticate,
+    check_welcome_protocol_version, is_handshake_server, sign_auth, sign_auth_v1_nonce_only,
 };
 use zerodb_core::relay::{
     ERR_AUTH_FAILED, ERR_TARGET_NOT_CONNECTED, FrontierTip, HeldOp, MSG_ERROR, MSG_SIGNAL,
@@ -16,7 +16,6 @@ use zerodb_core::relay::{
 };
 
 const AUTH_WRONG_DATASTORE: &str = "AUTH_WRONG_DATASTORE";
-const ERR_VERSION_MISMATCH: u16 = 0x102;
 const DOMAIN_V2: &[u8] = b"zerodb-relay-auth-v2";
 const DOMAIN_V1: &[u8] = b"zerodb-relay-auth-v1";
 
@@ -114,7 +113,7 @@ fn run_signal_forward(v: &Json, path: &Path) {
         MSG_SIGNAL,
         rid,
         Cbor::Map(vec![
-            ("payload".into(), Cbor::Bytes(payload)),
+            ("payload".into(), Cbor::Bytes(payload.clone())),
             ("sender".into(), Cbor::Bytes(sender)),
         ]),
     );
@@ -122,6 +121,20 @@ fn run_signal_forward(v: &Json, path: &Path) {
     let (out_ty, out_pl) = decode_env(&forwarded);
     assert_eq!(inn_ty, MSG_SIGNAL, "{} inbound type", path.display());
     assert_eq!(out_ty, MSG_SIGNAL, "{} forward type", path.display());
+    match map_get(&inn_pl, "payload") {
+        Cbor::Bytes(b) if *b == payload => {}
+        other => panic!(
+            "{} inbound SIGNAL.payload must be CBOR bytes, got {other:?}",
+            path.display()
+        ),
+    }
+    match map_get(&out_pl, "payload") {
+        Cbor::Bytes(b) if *b == payload => {}
+        other => panic!(
+            "{} forward SIGNAL.payload must be CBOR bytes, got {other:?}",
+            path.display()
+        ),
+    }
     match map_get(&inn_pl, "target") {
         Cbor::Bytes(b) if !b.is_empty() => {}
         _ => panic!("{} inbound must carry target", path.display()),
@@ -221,12 +234,6 @@ fn run_auth(v: &Json, path: &Path) {
 }
 
 fn run_welcome_version(v: &Json, path: &Path) {
-    assert_ne!(
-        v["protocol_version"].as_u64().unwrap(),
-        1,
-        "{}",
-        path.display()
-    );
     assert_eq!(
         v["expect"]["code"].as_u64().unwrap() as u16,
         ERR_VERSION_MISMATCH,
@@ -236,6 +243,17 @@ fn run_welcome_version(v: &Json, path: &Path) {
     assert_eq!(
         v["expect"]["name"].as_str().unwrap(),
         "VERSION_MISMATCH",
+        "{}",
+        path.display()
+    );
+    assert!(
+        check_welcome_protocol_version(Some(1)).is_ok(),
+        "{} draft-1 WELCOME must accept",
+        path.display()
+    );
+    assert_eq!(
+        check_welcome_protocol_version(v["protocol_version"].as_u64()),
+        Err(ERR_VERSION_MISMATCH),
         "{}",
         path.display()
     );

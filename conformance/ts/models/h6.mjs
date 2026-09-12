@@ -3,7 +3,10 @@
 // handshake.rs / webrtc/peer.mjs. Not H6 closed. Not M4a complete.
 
 import { AUTH_WRONG_DATASTORE } from '../peer/store.mjs'
+import { checkWelcomeProtocol } from '../peer/client.mjs'
 import { admitDatastore, signAuthV1NonceOnly } from '../webrtc/peer.mjs'
+import { encodeSignal } from '../webrtc/signal.mjs'
+import { decode } from './cbor.mjs'
 import {
   DOMAIN_RELAY_AUTH,
   DOMAIN_RELAY_AUTH_V1,
@@ -31,15 +34,25 @@ function hex32(s) {
   return out
 }
 
+function signalPayloadTagged(frame) {
+  const tagged = decode(frame)
+  const pl = tagged && tagged.v && tagged.v.payload && tagged.v.payload.v
+  return pl && pl.payload
+}
+
 function runSignalForward(v) {
-  const inbound = encodeEnvelope(MSG_SIGNAL, v.request_id, {
-    target: v.target,
-    payload: v.payload_hex,
-  })
-  const forwarded = encodeEnvelope(MSG_SIGNAL, v.request_id, {
-    sender: v.sender,
-    payload: v.payload_hex,
-  })
+  // Use encodeSignal (CBOR bytes), not encodeEnvelope — `payload` is not a
+  // registry byte_field and would otherwise become CBOR text.
+  const inbound = encodeSignal(v.request_id, { target: v.target, payload: v.payload_hex })
+  const forwarded = encodeSignal(v.request_id, { sender: v.sender, payload: v.payload_hex })
+  const innTag = signalPayloadTagged(inbound)
+  const outTag = signalPayloadTagged(forwarded)
+  if (!innTag || innTag.t !== 'bytes' || innTag.hex !== String(v.payload_hex).toLowerCase()) {
+    throw new Error('inbound SIGNAL.payload must be CBOR bytes')
+  }
+  if (!outTag || outTag.t !== 'bytes' || outTag.hex !== String(v.payload_hex).toLowerCase()) {
+    throw new Error('forwarded SIGNAL.payload must be CBOR bytes')
+  }
   const inn = decodeEnvelope(inbound)
   const out = decodeEnvelope(forwarded)
   if (inn.type !== MSG_SIGNAL || out.type !== MSG_SIGNAL) {
@@ -117,9 +130,23 @@ function runAuth(v) {
 }
 
 function runWelcomeVersion(v) {
-  if (v.protocol_version === 1) throw new Error('positive welcome is not this vector')
   if (v.expect.code !== ERR_VERSION_MISMATCH) throw new Error('expect 0x102')
   if (v.expect.name !== 'VERSION_MISMATCH') throw new Error('expect VERSION_MISMATCH')
+  try {
+    checkWelcomeProtocol({ protocol_version: 1 })
+  } catch (e) {
+    throw new Error(`draft-1 WELCOME must accept: ${e.message}`)
+  }
+  let threw = null
+  try {
+    checkWelcomeProtocol({ protocol_version: v.protocol_version })
+  } catch (e) {
+    threw = e
+  }
+  if (!threw) throw new Error('WELCOME protocol_version other than 1 must reject')
+  if (!String(threw.message).includes('0x102 VERSION_MISMATCH')) {
+    throw new Error(`got ${threw.message}, want 0x102 VERSION_MISMATCH`)
+  }
 }
 
 function runAdmit(v) {

@@ -373,6 +373,28 @@ test('admitDatastore: empty adopts, populated A vs B is AUTH_WRONG_DATASTORE', (
   assert.equal(admitDatastore(a, b), AUTH_WRONG_DATASTORE)
 })
 
+test('joinDs null omits HELLO.datastore but OPS still carries the store ds', async () => {
+  const a = new PeerStore({ seed: seed(23) })
+  const b = new PeerStore({ seed: seed(24) })
+  a.applySchemaEpoch(schemaPin())
+  const { node } = a.createNode('Todo')
+  a.setLww(node, 'title', 'ops-ds')
+
+  const left = new FakeDataChannel()
+  const right = new FakeDataChannel()
+  pairDataChannels(left, right)
+
+  const served = serveDirect(b, right)
+  const client = connectDirect(a, left, { joinDs: null })
+  const [answer] = await Promise.all([served, client])
+
+  assert.equal(answer.phase, 'ops')
+  assert.ok(answer.applied >= 2)
+  assert.equal(answer.rejected, 0)
+  assert.equal(b.dsHex, a.dsHex)
+  assert.equal(b.getLww(node, 'title'), 'ops-ds')
+})
+
 test('empty answerer adopts HELLO.datastore A', async () => {
   const a = new PeerStore({ seed: seed(21) })
   const b = new PeerStore({ seed: seed(22) })
