@@ -59,6 +59,7 @@ Workspace version is `0.1.0-alpha` in the root `Cargo.toml`. Do not bump it to `
 - Advertised WELCOME limits (registry `relay_wire.welcome_limits`) plus 3 connections per PeerId.
 - Loopback plaintext is the default bind (`127.0.0.1:7700`). Non-loopback plaintext requires `--allow-insecure`. `--tls-cert <pem> --tls-key <pem>` terminates TLS in-process (`wss://`, rustls) and may bind anywhere. **This binary does not mint certificates.**
 - Listener hardening: global `--max-connections` (1024), `--handshake-timeout-secs` (10), `--idle-timeout-secs` (300; `0` disables; PING/PONG and WebSocket pings keep a session alive), pre-decode WebSocket message ceiling, GOODBYE handled. Per-PeerId cap 3, subscription cap, and ops/bytes rate windows as before.
+- Counters: `--stats-interval-secs N` prints `zerodb-relay stats {json}` to stderr every N seconds (sessions, ops outcomes, sync requests, Merkle builds, walk requests). Off by default; not on the wire.
 
 LocalStore / NAPI `connectRelay` and the TS peer speak the same envelopes.
 

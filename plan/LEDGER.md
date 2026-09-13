@@ -72,7 +72,7 @@ DQ-12 (capacity / effort bands) dropped 2026-09-12 — no owner, blocked nothing
 | M3b-quotas | Datastore-creation policy; per-principal / per-datastore / global op-byte quotas; walk/response limits | pinned | Remaining "before network exposure" items (PERF). No trigger set. |
 | perf-s2 | Stage 2 targeted projections | pinned | derived `op_targets`, AUTH control projection, single-pass replay rewrite, persisted CRDT accumulators. Trigger: Stage 0 still scan-dominated after Stage 1. |
 | perf-s3 | Stage 3 bounded reconciliation | pinned | replace full OpId manifests; missing-only relay upload; compact Merkle snapshot cache. Trigger: equal/one-op-delta wire still full-history after Stage 1. |
-| perf-bench | Benchmark harness (1k/10k/100k) for the four P0 findings | pinned | Needed before either perf trigger can be judged; PERF.md is a static review. |
+| perf-bench | Benchmark harness (1k/10k/100k) for the four P0 findings | first slice done (`bench/relay-chat/`); remainder pinned | Relay path: cold / reconnect / delta / sparse / chat scenarios, wire bytes via counting proxy, `RelayStats` (`--stats-interval-secs`), `/proc` RSS+CPU, delivery latency. Baselines in `bench/results/`, not published numbers. Missing: local 10k/100k Stage 0 fixture (P0-1), direct-peer scenario set (P0-2), 100k relay history, DataChannel path. CI runs `smoke.test.mjs` (shape only). |
 
 ### M4a — Browser / WASM / WebRTC / React (open)
 

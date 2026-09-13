@@ -1,6 +1,7 @@
 //! RELAY 0.2.2 session: handshake → persist / sync / subscribe.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use std::collections::VecDeque;
@@ -64,8 +65,94 @@ pub struct Inner {
     colluding: bool,
 }
 
+/// Process-lifetime counters for benchmarking and operations. Never on the
+/// wire; never authoritative. Read with [`Relay::stats`] /
+/// [`RelayStats::snapshot`].
+#[derive(Default, Debug)]
+pub struct RelayStats {
+    pub sessions_accepted: AtomicU64,
+    pub sessions_authed: AtomicU64,
+    pub ops_received: AtomicU64,
+    pub ops_accepted: AtomicU64,
+    pub ops_duplicate: AtomicU64,
+    pub ops_rejected: AtomicU64,
+    pub sync_requests: AtomicU64,
+    /// Full `MerkleTree::build` passes over a datastore (SYNC_REQUEST plus
+    /// every node / leaf request re-walk). PERF P0-4 evidence.
+    pub merkle_builds: AtomicU64,
+    pub merkle_node_requests: AtomicU64,
+    pub merkle_leaf_requests: AtomicU64,
+    pub delta_requests: AtomicU64,
+    pub delta_ops_sent: AtomicU64,
+}
+
+/// Point-in-time copy of [`RelayStats`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RelayStatsSnapshot {
+    pub sessions_accepted: u64,
+    pub sessions_authed: u64,
+    pub ops_received: u64,
+    pub ops_accepted: u64,
+    pub ops_duplicate: u64,
+    pub ops_rejected: u64,
+    pub sync_requests: u64,
+    pub merkle_builds: u64,
+    pub merkle_node_requests: u64,
+    pub merkle_leaf_requests: u64,
+    pub delta_requests: u64,
+    pub delta_ops_sent: u64,
+}
+
+impl RelayStats {
+    fn bump(c: &AtomicU64, n: u64) {
+        c.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub fn snapshot(&self) -> RelayStatsSnapshot {
+        let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        RelayStatsSnapshot {
+            sessions_accepted: g(&self.sessions_accepted),
+            sessions_authed: g(&self.sessions_authed),
+            ops_received: g(&self.ops_received),
+            ops_accepted: g(&self.ops_accepted),
+            ops_duplicate: g(&self.ops_duplicate),
+            ops_rejected: g(&self.ops_rejected),
+            sync_requests: g(&self.sync_requests),
+            merkle_builds: g(&self.merkle_builds),
+            merkle_node_requests: g(&self.merkle_node_requests),
+            merkle_leaf_requests: g(&self.merkle_leaf_requests),
+            delta_requests: g(&self.delta_requests),
+            delta_ops_sent: g(&self.delta_ops_sent),
+        }
+    }
+}
+
+impl RelayStatsSnapshot {
+    /// One-line JSON for logs; hand-built so the format is stable and
+    /// independent of serde derive.
+    pub fn to_json(&self, live_connections: usize) -> String {
+        format!(
+            "{{\"sessions_accepted\":{},\"sessions_authed\":{},\"live_connections\":{},\"ops_received\":{},\"ops_accepted\":{},\"ops_duplicate\":{},\"ops_rejected\":{},\"sync_requests\":{},\"merkle_builds\":{},\"merkle_node_requests\":{},\"merkle_leaf_requests\":{},\"delta_requests\":{},\"delta_ops_sent\":{}}}",
+            self.sessions_accepted,
+            self.sessions_authed,
+            live_connections,
+            self.ops_received,
+            self.ops_accepted,
+            self.ops_duplicate,
+            self.ops_rejected,
+            self.sync_requests,
+            self.merkle_builds,
+            self.merkle_node_requests,
+            self.merkle_leaf_requests,
+            self.delta_requests,
+            self.delta_ops_sent,
+        )
+    }
+}
+
 pub struct Relay {
     inner: Arc<Mutex<Inner>>,
+    stats: Arc<RelayStats>,
 }
 
 impl Relay {
@@ -90,7 +177,13 @@ impl Relay {
                 live_connections: 0,
                 colluding,
             })),
+            stats: Arc::new(RelayStats::default()),
         }
+    }
+
+    /// Process-lifetime counters (benchmark / ops evidence, never on the wire).
+    pub fn stats(&self) -> &RelayStats {
+        &self.stats
     }
 
     pub fn open(path: &std::path::Path) -> Result<Self, RelayError> {
@@ -105,6 +198,7 @@ impl Relay {
                 live_connections: 0,
                 colluding: false,
             })),
+            stats: Arc::new(RelayStats::default()),
         })
     }
 
@@ -142,8 +236,10 @@ impl Relay {
             }
             Err(_) => (random_nonce(), 0),
         };
+        RelayStats::bump(&self.stats.sessions_accepted, 1);
         RelaySession {
             inner: self.inner.clone(),
+            stats: self.stats.clone(),
             phase: Phase::New,
             nonce,
             session_id,
@@ -283,6 +379,7 @@ impl RateWindow {
 
 pub struct RelaySession {
     inner: Arc<Mutex<Inner>>,
+    stats: Arc<RelayStats>,
     phase: Phase,
     nonce: [u8; 32],
     session_id: u64,
@@ -492,6 +589,7 @@ impl RelaySession {
         let offered: Vec<&str> = hello_caps.iter().map(|s| s.as_str()).collect();
         let caps = negotiate_capabilities(&offered, RELAY_CAPS);
         self.authed_peer = Some(claimed);
+        RelayStats::bump(&self.stats.sessions_authed, 1);
         self.phase = Phase::Authed {
             caps: caps.iter().map(|c| (*c).to_string()).collect(),
             peer_id: claimed,
@@ -573,12 +671,15 @@ impl RelaySession {
             )]);
         }
         let mut outcomes = Vec::new();
+        RelayStats::bump(&self.stats.ops_received, operations.len() as u64);
+        let (mut n_accept, mut n_dup, mut n_reject) = (0u64, 0u64, 0u64);
         let mut guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         let colluding = guard.colluding;
         guard.store.run_write(&mut |store| {
             for op in operations {
                 let (outcome, reason, parsed) = parse_stored(op, &ds, colluding);
                 if outcome == "REJECT" {
+                    n_reject += 1;
                     let mut m = vec![
                         ("op_id".into(), op_id_cbor(op)),
                         ("outcome".into(), Cbor::Text("REJECT".into())),
@@ -592,6 +693,7 @@ impl RelaySession {
                 let parsed = parsed.expect("parsed");
                 let id = parsed.op_id;
                 if !colluding && !author_write_allowed(store, &ds, op, parsed.author)? {
+                    n_reject += 1;
                     outcomes.push(Cbor::Map(vec![
                         ("op_id".into(), Cbor::Bytes(id.to_vec())),
                         ("outcome".into(), Cbor::Text("REJECT".into())),
@@ -603,7 +705,13 @@ impl RelaySession {
                 if inserted {
                     apply_membership_from_op(store, &ds, op, id)?;
                 }
-                let tag = if inserted { "ACCEPT" } else { "DUPLICATE" };
+                let tag = if inserted {
+                    n_accept += 1;
+                    "ACCEPT"
+                } else {
+                    n_dup += 1;
+                    "DUPLICATE"
+                };
                 outcomes.push(Cbor::Map(vec![
                     ("op_id".into(), Cbor::Bytes(id.to_vec())),
                     ("outcome".into(), Cbor::Text(tag.into())),
@@ -612,6 +720,9 @@ impl RelaySession {
             Ok(())
         })?;
         drop(guard);
+        RelayStats::bump(&self.stats.ops_accepted, n_accept);
+        RelayStats::bump(&self.stats.ops_duplicate, n_dup);
+        RelayStats::bump(&self.stats.ops_rejected, n_reject);
         Ok(vec![encode_env(
             MSG_OP_ACK,
             env.request_id,
@@ -624,6 +735,7 @@ impl RelaySession {
     }
 
     fn on_sync(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        RelayStats::bump(&self.stats.sync_requests, 1);
         let ds = text(map_get(&env.payload, "datastore"))?;
         if !self.datastore_allowed(&ds)? {
             return Ok(vec![error_frame(
@@ -638,6 +750,7 @@ impl RelaySession {
         let guard = self.inner.lock().map_err(|_| RelayError::Poison)?;
         let stored = guard.store.list(&ds)?;
         drop(guard);
+        RelayStats::bump(&self.stats.merkle_builds, 1);
         let tree = MerkleTree::build(&stored.iter().map(StoredOp::merkle).collect::<Vec<_>>());
         let root = tree.root().to_vec();
         let merkle_walk = self.has_cap("merkle-walk-v1");
@@ -699,6 +812,7 @@ impl RelaySession {
     }
 
     fn on_merkle_node(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        RelayStats::bump(&self.stats.merkle_node_requests, 1);
         let ds = text(map_get(&env.payload, "datastore"))?;
         if !self.datastore_allowed(&ds)? {
             return Ok(vec![error_frame(
@@ -714,6 +828,7 @@ impl RelaySession {
             .walk_snapshots
             .get(&ds)
             .ok_or_else(|| RelayError::Protocol("no frozen merkle walk".into()))?;
+        RelayStats::bump(&self.stats.merkle_builds, 1);
         let tree = MerkleTree::build(&stored.iter().map(StoredOp::merkle).collect::<Vec<_>>());
         let hash = tree
             .levels
@@ -738,6 +853,7 @@ impl RelaySession {
     }
 
     fn on_merkle_leaf(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        RelayStats::bump(&self.stats.merkle_leaf_requests, 1);
         let ds = text(map_get(&env.payload, "datastore"))?;
         if !self.datastore_allowed(&ds)? {
             return Ok(vec![error_frame(
@@ -752,6 +868,7 @@ impl RelaySession {
             .walk_snapshots
             .get(&ds)
             .ok_or_else(|| RelayError::Protocol("no frozen merkle walk".into()))?;
+        RelayStats::bump(&self.stats.merkle_builds, 1);
         let tree = MerkleTree::build(&stored.iter().map(StoredOp::merkle).collect::<Vec<_>>());
         let leaf = tree
             .leaves
@@ -781,6 +898,7 @@ impl RelaySession {
     }
 
     fn on_delta(&mut self, env: &Envelope) -> Result<Vec<Vec<u8>>, RelayError> {
+        RelayStats::bump(&self.stats.delta_requests, 1);
         let ds = text(map_get(&env.payload, "datastore"))?;
         if !self.datastore_allowed(&ds)? {
             return Ok(vec![error_frame(
@@ -804,6 +922,7 @@ impl RelaySession {
             .cloned()
             .map(stored_to_cbor)
             .collect();
+        RelayStats::bump(&self.stats.delta_ops_sent, operations.len() as u64);
         match chunk_delta_frames(&ds, env.request_id, operations) {
             Ok(frames) => Ok(frames),
             Err(_) => Ok(vec![error_frame(

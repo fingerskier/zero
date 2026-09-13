@@ -45,6 +45,11 @@ jobs:
           host_target="$(rustc -vV | sed -n 's/^host: //p')"
           npx napi build --platform --release --target "$host_target"
       - run: npm test
+      # Benchmark harness smoke: convergence + metric shape only, no timing gate.
+      - name: relay-chat harness smoke
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: node --test bench/relay-chat/smoke.test.mjs
 
   ts-to-ir:
     name: tools/ts-to-ir

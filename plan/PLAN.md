@@ -79,7 +79,7 @@ This is the only live action list. Everything landed before 2026-09-12 is indexe
 - **O4 WASM size budget** — pinned 2026-09-12; trigger: an app needs RGA/Richtext in the browser (then decide optional modules). CI ceiling 300 KiB gzip stands meanwhile.
 - **H5 remainder** — handshake-server identity (signed CHALLENGE/WELCOME or an explicit Decision Log exception). TLS on the relay path and DTLS binding on the DataChannel are the interim story.
 - **M3b exit** — needs C5/PKI trust store, H10 close, H8 direction; remainder rows in LEDGER. Not a gate rename.
-- **perf Stage 2** — trigger: Stage 0 still scan-dominated. **perf Stage 3** — trigger: equal/one-op-delta still full-history. Both need a benchmark harness that does not exist yet (PERF.md).
+- **perf Stage 2** — trigger: Stage 0 still scan-dominated. **perf Stage 3** — trigger: equal/one-op-delta still full-history. Relay-side evidence now comes from `bench/relay-chat/` (LEDGER `perf-bench`, first slice landed); the local 10k/100k fixture and a direct-peer scenario set are still missing.
 - **Todo-app transport** — GitHub Pages todo app cannot reach a LAN peer (direct NAPI peer has no TLS listener). Optional either way: wss on `db.serve`, or route the app via the relay. Tracked in LEDGER; not scheduled.
 - M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm.
 

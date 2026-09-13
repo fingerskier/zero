@@ -2,7 +2,7 @@
 
 **Review date:** 2026-08-27  
 **Scope:** written against `bec091c`; Stage 0+1 landed on `9903280`. Local SQLite/materialization/query paths, direct peer sync, relay sync, and relay persistence.  
-**Status:** static code review, not a benchmark report. The repository has strong conformance and end-to-end coverage, but no repeatable performance benchmark suite yet (LEDGER `perf-bench`, pinned). Claims below distinguish observed algorithmic work from hypotheses that still need measurement. The four P0 findings are tracked for later benchmarking (Reqall PERF P0-1..P0-4).
+**Status:** static code review plus a first relay-path baseline. `bench/relay-chat/` (LEDGER `perf-bench`, first slice) measures the relay scenarios below on loopback; results under `bench/results/` are baselines, not published numbers. Local 10k/100k and direct-peer harnesses are still missing. Claims below distinguish observed algorithmic work from hypotheses that still need measurement. The four P0 findings are tracked for later benchmarking (Reqall PERF P0-1..P0-4).
 
 ## Disposition
 
@@ -232,6 +232,8 @@ Capture p50/p95/p99 latency, SQLite statement count, rows scanned, JSON bytes pa
 Measure equal replicas, one-op delta, 1% divergence, and cold join at increasing histories. Capture bytes and frames each direction, IDs transmitted, diff CPU, export/import time, replay time, store-lock hold time, and peak RSS.
 
 ### Relay
+
+`bench/relay-chat/run.mjs` covers equal-replica reconnect, one-op delta, sparse divergence, cold join, and a polling chat round (delivery latency), with wire bytes from a counting proxy and relay counters (`merkle_builds`, `sync_requests`, ops outcomes) from `--stats-interval-secs`. Dense same-bucket divergence and 100k history are not run yet.
 
 Measure equal replicas, missing upload only, sparse missing buckets, dense same-bucket divergence, and cold join. Capture upload duplicate ratio, request count, drain-wait time, Merkle builds, snapshot bytes, delta bytes, SQLite commits, relay-lock wait/hold time, and end-to-end latency.
 
