@@ -452,3 +452,58 @@ fn plaintext_wildcard_bind_refuses_without_flag() {
         "error should mention --allow-insecure: {stderr}"
     );
 }
+
+#[test]
+fn stats_count_sessions_ops_and_merkle_builds() {
+    use zerodb_core::relay::MSG_SYNC_REQUEST;
+    let relay = Relay::memory();
+    assert_eq!(relay.stats().snapshot(), Default::default());
+    let mut sess = relay.accept();
+    handshake(&mut sess);
+    let ops: Vec<Cbor> = (0..5)
+        .map(|i| mint_experimental_relay_op(&SK, DS, 20 + i, 0, 1))
+        .collect();
+    let frame = encode_env(
+        MSG_OPS,
+        9,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text(DS.into())),
+            ("operations".into(), Cbor::Array(ops)),
+        ]),
+    );
+    sess.handle(&frame).unwrap();
+    sess.handle(&frame).unwrap();
+    let sync = encode_env(
+        MSG_SYNC_REQUEST,
+        11,
+        Cbor::Map(vec![
+            ("datastore".into(), Cbor::Text(DS.into())),
+            ("accepted_root".into(), Cbor::Bytes(vec![0; 32])),
+            ("cursor".into(), Cbor::Array(vec![])),
+        ]),
+    );
+    let out = sess.handle(&sync).unwrap();
+    assert_eq!(decode_env(&out[0]).0, zerodb_core::relay::MSG_SYNC_RESPONSE);
+    let s = relay.stats().snapshot();
+    assert_eq!(s.sessions_accepted, 1);
+    assert_eq!(s.sessions_authed, 1);
+    assert_eq!(s.ops_received, 10);
+    assert_eq!(s.ops_accepted, 5);
+    assert_eq!(s.ops_duplicate, 5);
+    assert_eq!(s.ops_rejected, 0);
+    assert_eq!(s.sync_requests, 1);
+    assert_eq!(s.merkle_builds, 1, "one full build per SYNC_REQUEST");
+    assert_eq!(
+        s.merkle_node_requests + s.merkle_leaf_requests + s.delta_requests,
+        0
+    );
+    let json = s.to_json(relay.live_connections());
+    assert!(
+        json.starts_with('{') && json.contains("\"merkle_builds\":1"),
+        "{json}"
+    );
+    // A second session on the same relay shares the counters.
+    let mut sess2 = relay.accept();
+    handshake(&mut sess2);
+    assert_eq!(relay.stats().snapshot().sessions_accepted, 2);
+}

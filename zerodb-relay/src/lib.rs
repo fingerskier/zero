@@ -18,7 +18,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use session::{ConnectionSlot, MAX_FRAME_BYTES, Relay, RelayError, RelaySession};
+pub use session::{
+    ConnectionSlot, MAX_FRAME_BYTES, Relay, RelayError, RelaySession, RelayStats,
+    RelayStatsSnapshot,
+};
 pub use ws::{serve_connection, serve_connection_with, spawn_listener, spawn_listener_with};
 
 /// Listener / per-connection hardening knobs. `Default` is the binary's

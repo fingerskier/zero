@@ -43,6 +43,10 @@ struct Args {
     /// Close a session idle (no inbound frame / WS ping) this long; 0 disables.
     #[arg(long, default_value_t = 300)]
     idle_timeout_secs: u64,
+    /// Print one `zerodb-relay stats {json}` line to stderr every N seconds
+    /// (process-lifetime counters: sessions, ops, sync / Merkle work); 0 disables.
+    #[arg(long, default_value_t = 0)]
+    stats_interval_secs: u64,
 }
 
 fn main() {
@@ -84,6 +88,19 @@ fn main() {
         "zerodb-relay listening on {scheme}://127.0.0.1:{}",
         addr.port()
     );
+    if args.stats_interval_secs > 0 {
+        let relay = relay.clone();
+        let every = Duration::from_secs(args.stats_interval_secs);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(every);
+                eprintln!(
+                    "zerodb-relay stats {}",
+                    relay.stats().snapshot().to_json(relay.live_connections())
+                );
+            }
+        });
+    }
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {

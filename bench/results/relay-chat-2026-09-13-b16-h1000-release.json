@@ -1,0 +1,511 @@
+{
+  "meta": {
+    "date": "2026-09-13T00:26:21.941Z",
+    "host": "omarchy",
+    "node": "v26.7.0",
+    "git": "bf25af0",
+    "relayBuild": "release",
+    "bots": 16,
+    "history": 1000,
+    "messages": 5,
+    "pollMs": 50,
+    "gapMs": 500,
+    "reconnects": 2,
+    "seed": {
+      "messages": 500,
+      "localMs": 3001.8470479846,
+      "uploadMs": 16624.656948029995,
+      "sent": 1000,
+      "ackAccepted": 1000
+    },
+    "historyOps": 1000,
+    "chatDeadlineMs": 135497.25558423996
+  },
+  "scenarios": {
+    "cold": {
+      "historyOps": 1000,
+      "ms": 429.8426150083542,
+      "received": 1000,
+      "applied": 1000,
+      "merkleNodes": 0,
+      "merkleLeaves": 1,
+      "wire": {
+        "connections": 1,
+        "bytesToRelay": 34901,
+        "bytesFromRelay": 737841
+      },
+      "relayMerkleBuilds": 2
+    },
+    "reconnect": {
+      "reconnects": 2,
+      "perBot": [
+        {
+          "bot": "bot0",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16514.65145099163,
+            "p50": 16514.65145099163,
+            "p95": 16515.69094800949,
+            "p99": 16515.69094800949,
+            "max": 16515.69094800949,
+            "mean": 16515.17119950056
+          }
+        },
+        {
+          "bot": "bot1",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16525.804675996304,
+            "p50": 16525.804675996304,
+            "p95": 16546.19624096155,
+            "p99": 16546.19624096155,
+            "max": 16546.19624096155,
+            "mean": 16536.000458478928
+          }
+        },
+        {
+          "bot": "bot2",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16530.24495500326,
+            "p50": 16530.24495500326,
+            "p95": 16536.161215007305,
+            "p99": 16536.161215007305,
+            "max": 16536.161215007305,
+            "mean": 16533.203085005283
+          }
+        },
+        {
+          "bot": "bot3",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16543.056104004383,
+            "p50": 16543.056104004383,
+            "p95": 16558.943630039692,
+            "p99": 16558.943630039692,
+            "max": 16558.943630039692,
+            "mean": 16550.999867022038
+          }
+        },
+        {
+          "bot": "bot4",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16536.69574701786,
+            "p50": 16536.69574701786,
+            "p95": 16569.5959020257,
+            "p99": 16569.5959020257,
+            "max": 16569.5959020257,
+            "mean": 16553.14582452178
+          }
+        },
+        {
+          "bot": "bot5",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16549.90380704403,
+            "p50": 16549.90380704403,
+            "p95": 16556.021179020405,
+            "p99": 16556.021179020405,
+            "max": 16556.021179020405,
+            "mean": 16552.962493032217
+          }
+        },
+        {
+          "bot": "bot6",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16573.286879003048,
+            "p50": 16573.286879003048,
+            "p95": 16581.126002013683,
+            "p99": 16581.126002013683,
+            "max": 16581.126002013683,
+            "mean": 16577.206440508366
+          }
+        },
+        {
+          "bot": "bot7",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16565.281418979168,
+            "p50": 16565.281418979168,
+            "p95": 16577.985971987247,
+            "p99": 16577.985971987247,
+            "max": 16577.985971987247,
+            "mean": 16571.633695483208
+          }
+        },
+        {
+          "bot": "bot8",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16564.76434701681,
+            "p50": 16564.76434701681,
+            "p95": 16576.79531800747,
+            "p99": 16576.79531800747,
+            "max": 16576.79531800747,
+            "mean": 16570.77983251214
+          }
+        },
+        {
+          "bot": "bot9",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16566.20089697838,
+            "p50": 16566.20089697838,
+            "p95": 16571.58988803625,
+            "p99": 16571.58988803625,
+            "max": 16571.58988803625,
+            "mean": 16568.895392507315
+          }
+        },
+        {
+          "bot": "bot10",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16541.58117198944,
+            "p50": 16541.58117198944,
+            "p95": 16563.117978990078,
+            "p99": 16563.117978990078,
+            "max": 16563.117978990078,
+            "mean": 16552.34957548976
+          }
+        },
+        {
+          "bot": "bot11",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16568.160281956196,
+            "p50": 16568.160281956196,
+            "p95": 16580.205605983734,
+            "p99": 16580.205605983734,
+            "max": 16580.205605983734,
+            "mean": 16574.182943969965
+          }
+        },
+        {
+          "bot": "bot12",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16556.963099002838,
+            "p50": 16556.963099002838,
+            "p95": 16564.46534103155,
+            "p99": 16564.46534103155,
+            "max": 16564.46534103155,
+            "mean": 16560.714220017195
+          }
+        },
+        {
+          "bot": "bot13",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16572.113785982132,
+            "p50": 16572.113785982132,
+            "p95": 16574.267695963383,
+            "p99": 16574.267695963383,
+            "max": 16574.267695963383,
+            "mean": 16573.190740972757
+          }
+        },
+        {
+          "bot": "bot14",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16558.051753997803,
+            "p50": 16558.051753997803,
+            "p95": 16570.635268986225,
+            "p99": 16570.635268986225,
+            "max": 16570.635268986225,
+            "mean": 16564.343511492014
+          }
+        },
+        {
+          "bot": "bot15",
+          "n": 2,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 2,
+            "min": 16567.30179399252,
+            "p50": 16567.30179399252,
+            "p95": 16579.232658028603,
+            "p99": 16579.232658028603,
+            "max": 16579.232658028603,
+            "mean": 16573.26722601056
+          }
+        }
+      ],
+      "wire": {
+        "connections": 32,
+        "bytesToRelay": 22518336,
+        "bytesFromRelay": 1932096
+      },
+      "wirePerReconnect": {
+        "bytesToRelay": 703698,
+        "bytesFromRelay": 60378
+      },
+      "syncRequests": 32,
+      "relayMerkleBuilds": 32,
+      "relayOpsDuplicate": 32000
+    },
+    "delta": {
+      "writer": {
+        "sent": 1002,
+        "ackAccepted": 2,
+        "ackDuplicate": 1000,
+        "ms": 16521.397619009018
+      },
+      "readerReceived": 2,
+      "readerMs": {
+        "n": 15,
+        "min": 16565.6907979846,
+        "p50": 16600.399141967297,
+        "p95": 16606.023422956467,
+        "p99": 16606.023422956467,
+        "max": 16606.023422956467,
+        "mean": 16598.594521057606
+      },
+      "wire": {
+        "connections": 16,
+        "bytesToRelay": 11267124,
+        "bytesFromRelay": 996075
+      },
+      "relayMerkleBuilds": 46
+    },
+    "sparse": {
+      "opsPerBot": 4,
+      "passes": [
+        {
+          "pass": 1,
+          "sent": 16096,
+          "ackAccepted": 64,
+          "ackDuplicate": 16032,
+          "received": 948,
+          "ms": {
+            "n": 16,
+            "min": 17383.973760008812,
+            "p50": 17497.77881103754,
+            "p95": 17519.59996598959,
+            "p99": 17519.59996598959,
+            "max": 17519.59996598959,
+            "mean": 17492.1107426323
+          },
+          "wire": {
+            "connections": 16,
+            "bytesToRelay": 11366699,
+            "bytesFromRelay": 1680644
+          }
+        },
+        {
+          "pass": 2,
+          "sent": 17044,
+          "ackAccepted": 0,
+          "ackDuplicate": 17044,
+          "received": 12,
+          "ms": {
+            "n": 16,
+            "min": 16636.42724096775,
+            "p50": 17665.64764803648,
+            "p95": 17679.09297001362,
+            "p99": 17679.09297001362,
+            "max": 17679.09297001362,
+            "mean": 17597.033474188298
+          },
+          "wire": {
+            "connections": 16,
+            "bytesToRelay": 12026950,
+            "bytesFromRelay": 1039617
+          }
+        }
+      ],
+      "converged": true,
+      "msgCounts": [
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533,
+        533
+      ],
+      "relayMerkleBuilds": 66
+    },
+    "chat": {
+      "messages": 80,
+      "expectedDeliveries": 1200,
+      "deliveries": 1200,
+      "complete": true,
+      "elapsedMs": 57367.08093804121,
+      "latency": {
+        "n": 1200,
+        "min": 18265.210541009903,
+        "p50": 19797.521925985813,
+        "p95": 36406.39520096779,
+        "p99": 37558.26628100872,
+        "max": 39557.39807099104,
+        "mean": 21007.21825701053
+      },
+      "syncMs": {
+        "n": 35,
+        "min": 17617.77954494953,
+        "p50": 18277.039068996906,
+        "p95": 19854.736757040024,
+        "p99": 19857.100071012974,
+        "max": 19857.100071012974,
+        "mean": 18704.2259110587
+      },
+      "sentPerSync": {
+        "n": 35,
+        "min": 1066,
+        "p50": 1076,
+        "p95": 1218,
+        "p99": 1218,
+        "max": 1218,
+        "mean": 1080.2285714285715
+      },
+      "scanMs": {
+        "n": 19,
+        "min": 2.2430610060691833,
+        "p50": 4.6563679575920105,
+        "p95": 12.3330659866333,
+        "p99": 12.3330659866333,
+        "max": 12.3330659866333,
+        "mean": 5.249150778117933
+      },
+      "syncsPerBot": 2.1875,
+      "wire": {
+        "connections": 35,
+        "bytesToRelay": 26767163,
+        "bytesFromRelay": 4078066
+      },
+      "syncRequests": 35,
+      "relayMerkleBuilds": 92
+    }
+  },
+  "relay": {
+    "stats": {
+      "sessions_accepted": 131,
+      "sessions_authed": 131,
+      "live_connections": 0,
+      "ops_received": 119950,
+      "ops_accepted": 1226,
+      "ops_duplicate": 118724,
+      "ops_rejected": 0,
+      "sync_requests": 131,
+      "merkle_builds": 267,
+      "merkle_node_requests": 70,
+      "merkle_leaf_requests": 66,
+      "delta_requests": 66,
+      "delta_ops_sent": 18390,
+      "at": 1789259371885
+    },
+    "proc": {
+      "rssKb": 13924,
+      "hwmKb": 41664,
+      "cpuMs": 10980
+    },
+    "statsTicks": 190
+  }
+}

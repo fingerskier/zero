@@ -2,7 +2,7 @@
 
 **Review date:** 2026-08-27  
 **Scope:** written against `bec091c`; Stage 0+1 landed on `9903280`. Local SQLite/materialization/query paths, direct peer sync, relay sync, and relay persistence.  
-**Status:** static code review, not a benchmark report. The repository has strong conformance and end-to-end coverage, but no repeatable performance benchmark suite yet (LEDGER `perf-bench`, pinned). Claims below distinguish observed algorithmic work from hypotheses that still need measurement. The four P0 findings are tracked for later benchmarking (Reqall PERF P0-1..P0-4).
+**Status:** static code review plus a first relay-path baseline. `bench/relay-chat/` (LEDGER `perf-bench`, first slice) measures the relay scenarios below on loopback; results under `bench/results/` are baselines, not published numbers. Local 10k/100k and direct-peer harnesses are still missing. Claims below distinguish observed algorithmic work from hypotheses that still need measurement. The four P0 findings are tracked for later benchmarking (Reqall PERF P0-1..P0-4).
 
 ## Disposition
 
@@ -44,6 +44,8 @@ Before major redesign, add deterministic scaling fixtures and phase counters. Se
 ## Data-wrangling findings
 
 ### P0 — Projection maintenance is broad-scan rather than target-indexed
+
+**Measured indirectly 2026-09-13** (`bench/relay-chat/` cold join): a fresh NAPI peer ingesting 1k relay ops takes ~0.5 s; 10k takes ~68 s (136× for 10× history). Download is unpaced, so this is per-op ingest cost on the receiving client. The local 10k/100k Stage 0 fixture is still the direct measurement to add.
 
 Observed in `zerodb-storage/src/lib.rs`:
 
@@ -153,6 +155,8 @@ Pinned for Stage 3.
 
 ### P0 — Relay sync uploads all local operations before reconciliation
 
+**Measured 2026-09-13** (`bench/relay-chat/`, release relay, loopback, 1k history): every reconnect of an equal replica re-uploads all 1000 ops (~704 KB), all acked `DUPLICATE`, and takes ~16.5 s because the client paces at the advertised `ops_per_second` = 100. At 10k history: ~170.6 s and ~7.0 MB per reconnect. Cold join: ~0.5 s at 1k but ~68 s at 10k (download is unpaced; that is the receiving client's per-op ingest, P0-1). Reconnect and one-op-delta time are linear in history at this rate. 16 concurrent bots at 1k: sync p50 ~18.3 s, delivery p95 ~36 s; relay RSS/CPU stay small. See `bench/results/`.
+
 `relay_client::sync` calls `export_all`, filters local ops, converts every op to a relay CBOR wrapper, and submits all of them on every connection. An equal replica receives only duplicate ACKs. The client then computes roots/frontier from the same history; `local_frontier` calls `export_all` again (`zerodb-storage/src/relay_client.rs`).
 
 The current Merkle walk optimizes relay-to-client catch-up only. It does not optimize client-to-relay upload.
@@ -162,6 +166,8 @@ The current Merkle walk optimizes relay-to-client catch-up only. It does not opt
 Stage 1 does the one-export derivation. Missing-only upload is Stage 3.
 
 ### P0 — Relay Merkle walking rebuilds whole-dataset state per round trip
+
+**Measured 2026-09-13:** relay `merkle_builds == sync_requests` on equal replicas (one full tree per `SYNC_REQUEST`), plus one build per node/leaf request during a walk (`RelayStats`). Not yet the dominant cost at 1k/10k (client pacing and client ingest are); the counter exists so 100k can be judged.
 
 `RelaySession::on_sync` loads every full `StoredOp`, builds a tree, and stores the full operation vector as the session's frozen walk snapshot. `on_merkle_node` and `on_merkle_leaf` rebuild the complete tree from that vector for every request (`zerodb-relay/src/session.rs`). `on_delta` scans the frozen vector and clones matched bodies.
 
@@ -232,6 +238,8 @@ Capture p50/p95/p99 latency, SQLite statement count, rows scanned, JSON bytes pa
 Measure equal replicas, one-op delta, 1% divergence, and cold join at increasing histories. Capture bytes and frames each direction, IDs transmitted, diff CPU, export/import time, replay time, store-lock hold time, and peak RSS.
 
 ### Relay
+
+`bench/relay-chat/run.mjs` covers equal-replica reconnect, one-op delta, sparse divergence, cold join, and a polling chat round (delivery latency), with wire bytes from a counting proxy and relay counters (`merkle_builds`, `sync_requests`, ops outcomes) from `--stats-interval-secs`. Dense same-bucket divergence and 100k history are not run yet.
 
 Measure equal replicas, missing upload only, sparse missing buckets, dense same-bucket divergence, and cold join. Capture upload duplicate ratio, request count, drain-wait time, Merkle builds, snapshot bytes, delta bytes, SQLite commits, relay-lock wait/hold time, and end-to-end latency.
 
