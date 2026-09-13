@@ -1,0 +1,245 @@
+{
+  "meta": {
+    "date": "2026-09-13T00:22:45.699Z",
+    "host": "omarchy",
+    "node": "v26.7.0",
+    "git": "bf25af0",
+    "relayBuild": "release",
+    "bots": 2,
+    "history": 1000,
+    "messages": 20,
+    "pollMs": 50,
+    "gapMs": 200,
+    "reconnects": 5,
+    "seed": {
+      "messages": 500,
+      "localMs": 6755.602416038513,
+      "uploadMs": 16528.0968080163,
+      "sent": 1000,
+      "ackAccepted": 1000
+    },
+    "historyOps": 1000,
+    "chatDeadlineMs": 136224.7744641304
+  },
+  "scenarios": {
+    "cold": {
+      "historyOps": 1000,
+      "ms": 476.96443396806717,
+      "received": 1000,
+      "applied": 1000,
+      "merkleNodes": 0,
+      "merkleLeaves": 1,
+      "wire": {
+        "connections": 1,
+        "bytesToRelay": 34901,
+        "bytesFromRelay": 737841
+      },
+      "relayMerkleBuilds": 2
+    },
+    "reconnect": {
+      "reconnects": 5,
+      "perBot": [
+        {
+          "bot": "bot0",
+          "n": 5,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 5,
+            "min": 16513.665956020355,
+            "p50": 16514.959985017776,
+            "p95": 16516.951444983482,
+            "p99": 16516.951444983482,
+            "max": 16516.951444983482,
+            "mean": 16515.04391080141
+          }
+        },
+        {
+          "bot": "bot1",
+          "n": 5,
+          "sent": 1000,
+          "ackDuplicate": 1000,
+          "ackAccepted": 0,
+          "merkleNodes": 0,
+          "merkleLeaves": 0,
+          "ms": {
+            "n": 5,
+            "min": 16514.617048978806,
+            "p50": 16514.94938004017,
+            "p95": 16517.655767023563,
+            "p99": 16517.655767023563,
+            "max": 16517.655767023563,
+            "mean": 16515.74391180277
+          }
+        }
+      ],
+      "wire": {
+        "connections": 10,
+        "bytesToRelay": 7036980,
+        "bytesFromRelay": 603780
+      },
+      "wirePerReconnect": {
+        "bytesToRelay": 703698,
+        "bytesFromRelay": 60378
+      },
+      "syncRequests": 10,
+      "relayMerkleBuilds": 10,
+      "relayOpsDuplicate": 10000
+    },
+    "delta": {
+      "writer": {
+        "sent": 1002,
+        "ackAccepted": 2,
+        "ackDuplicate": 1000,
+        "ms": 16520.257013976574
+      },
+      "readerReceived": 2,
+      "readerMs": {
+        "n": 1,
+        "min": 16522.2935090065,
+        "p50": 16522.2935090065,
+        "p95": 16522.2935090065,
+        "p99": 16522.2935090065,
+        "max": 16522.2935090065,
+        "mean": 16522.2935090065
+      },
+      "wire": {
+        "connections": 2,
+        "bytesToRelay": 1409234,
+        "bytesFromRelay": 122867
+      },
+      "relayMerkleBuilds": 4
+    },
+    "sparse": {
+      "opsPerBot": 10,
+      "passes": [
+        {
+          "pass": 1,
+          "sent": 2024,
+          "ackAccepted": 20,
+          "ackDuplicate": 2004,
+          "received": 20,
+          "ms": {
+            "n": 2,
+            "min": 16586.119594991207,
+            "p50": 16586.119594991207,
+            "p95": 16588.049974024296,
+            "p99": 16588.049974024296,
+            "max": 16588.049974024296,
+            "mean": 16587.08478450775
+          },
+          "wire": {
+            "connections": 2,
+            "bytesToRelay": 1426033,
+            "bytesFromRelay": 139044
+          }
+        },
+        {
+          "pass": 2,
+          "sent": 2044,
+          "ackAccepted": 0,
+          "ackDuplicate": 2044,
+          "received": 0,
+          "ms": {
+            "n": 2,
+            "min": 16516.583489000797,
+            "p50": 16516.583489000797,
+            "p95": 16517.24039196968,
+            "p99": 16517.24039196968,
+            "max": 16517.24039196968,
+            "mean": 16516.91194048524
+          },
+          "wire": {
+            "connections": 2,
+            "bytesToRelay": 1438532,
+            "bytesFromRelay": 123372
+          }
+        }
+      ],
+      "converged": true,
+      "msgCounts": [
+        511,
+        511
+      ],
+      "relayMerkleBuilds": 10
+    },
+    "chat": {
+      "messages": 40,
+      "expectedDeliveries": 40,
+      "deliveries": 40,
+      "complete": true,
+      "elapsedMs": 34536.34049797058,
+      "latency": {
+        "n": 40,
+        "min": 17796.281486988068,
+        "p50": 17882.361410975456,
+        "p95": 17957.57449400425,
+        "p99": 34522.39629101753,
+        "max": 34522.39629101753,
+        "mean": 18295.732427829505
+      },
+      "syncMs": {
+        "n": 4,
+        "min": 16514.655250012875,
+        "p50": 16526.43956798315,
+        "p95": 17808.78130698204,
+        "p99": 17808.78130698204,
+        "max": 17808.78130698204,
+        "mean": 17162.220117256045
+      },
+      "sentPerSync": {
+        "n": 4,
+        "min": 1022,
+        "p50": 1024,
+        "p95": 1062,
+        "p99": 1062,
+        "max": 1062,
+        "mean": 1042.5
+      },
+      "scanMs": {
+        "n": 2,
+        "min": 2.300363004207611,
+        "p50": 2.300363004207611,
+        "p95": 2.5272949934005737,
+        "p99": 2.5272949934005737,
+        "max": 2.5272949934005737,
+        "mean": 2.4138289988040924
+      },
+      "syncsPerBot": 2,
+      "wire": {
+        "connections": 4,
+        "bytesToRelay": 2938570,
+        "bytesFromRelay": 315186
+      },
+      "syncRequests": 4,
+      "relayMerkleBuilds": 11
+    }
+  },
+  "relay": {
+    "stats": {
+      "sessions_accepted": 22,
+      "sessions_authed": 22,
+      "live_connections": 0,
+      "ops_received": 21240,
+      "ops_accepted": 1102,
+      "ops_duplicate": 20138,
+      "ops_rejected": 0,
+      "sync_requests": 22,
+      "merkle_builds": 38,
+      "merkle_node_requests": 9,
+      "merkle_leaf_requests": 7,
+      "delta_requests": 6,
+      "delta_ops_sent": 1102,
+      "at": 1789259181536
+    },
+    "proc": {
+      "rssKb": 8716,
+      "hwmKb": 9764,
+      "cpuMs": 1950
+    },
+    "statsTicks": 217
+  }
+}

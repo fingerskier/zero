@@ -88,12 +88,20 @@ export async function runBench(opts = {}) {
     result.meta.seed = { messages: seedMsgs, localMs: seeded.ms, uploadMs: first.ms, sent: first.sent, ackAccepted: first.ackAccepted }
     const historyOps = await bots[0].opCount()
     result.meta.historyOps = historyOps
+    // Slowest full sync seen so far; the chat deadline scales with it because
+    // every poll re-uploads the whole history under the advertised
+    // ops_per_second pacing (P0-3 as measured).
+    let slowestSyncMs = first.ms
+    const noteSync = (...rs) => {
+      for (const r of rs) if (r && r.ms > slowestSyncMs) slowestSyncMs = r.ms
+    }
 
     // Cold join: the first other bot joins with a fully seeded relay.
     if (bots.length > 1) {
       const m = proxy.snapshot()
       const s0 = await statsMark()
       const j = await bots[1].join(ds)
+      noteSync(j)
       const s1 = await statsMark()
       if (wants('cold')) {
         result.scenarios.cold = {
@@ -116,6 +124,7 @@ export async function runBench(opts = {}) {
       const s0 = await statsMark()
       const rounds = []
       for (let k = 0; k < o.reconnects; k += 1) rounds.push(await Promise.all(bots.map((b) => b.sync())))
+      noteSync(...rounds.flat())
       const s1 = await statsMark()
       const wire = proxy.since(m)
       const n = o.reconnects * bots.length
@@ -149,6 +158,7 @@ export async function runBench(opts = {}) {
       await bots[0].say('delta:1')
       const w = await bots[0].sync()
       const readers = await Promise.all(bots.slice(1).map((b) => b.sync()))
+      noteSync(w, ...readers)
       const s1 = await statsMark()
       result.scenarios.delta = {
         writer: { sent: w.sent, ackAccepted: w.ackAccepted, ackDuplicate: w.ackDuplicate, ms: w.ms },
@@ -195,7 +205,9 @@ export async function runBench(opts = {}) {
       const s0 = await statsMark()
       const expectTotal = o.messages * (bots.length - 1)
       const duration = o.messages * o.gapMs
-      const deadlineMs = duration + Math.max(30000, bots.length * o.messages * 500)
+      // Enough for every bot to complete several full polls after the last send.
+      const deadlineMs = duration + Math.max(30000, bots.length * o.messages * 500, 8 * slowestSyncMs)
+      result.meta.chatDeadlineMs = deadlineMs
       const outs = await Promise.all(
         bots.map((b, i) =>
           b.chat({
