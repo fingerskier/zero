@@ -19,7 +19,7 @@ Do not bump workspace semver to `0.1.0` and do not `cargo publish` / `npm publis
 
 ### C5 slice — kr=0 device-cert self-attestation
 
-A write member can no longer mint a well-signed `kr = 0` DeviceCert under their own root that binds a victim `device_pk` and overwrites the victim's `META_PRINCIPAL`. Envelope author MUST equal `BLAKE3(cert.device)`; membership for that op uses the verified cert principal; `apply_device_principal` refuses a conflicting principal. Evidence: `e6_well_signed_foreign_root_does_not_rebind`, `e6_second_device_of_principal_opens_random_does_not` (envelope signed by the second device), `e6_forged_kr0_junk_cert_sig_does_not_rebind`. Contract: [AUTH.md](doc/AUTH.md) §4.1 note. **Not claimed:** C5/PKI trust store closed, two-level membership on data ops, M3b exit, H5/H8/H10 closed, format freeze.
+A write member can no longer mint a well-signed `kr = 0` DeviceCert under their own root that binds a victim `device_pk` and overwrites the victim's `META_PRINCIPAL`. Envelope author MUST equal `BLAKE3(cert.device)`; membership for that op uses the verified cert principal; `apply_device_principal` refuses a conflicting principal and runs **before** `op_insert` so `import_bundle` / quarantine-release cannot leave a rejected kr=0 in the signed oplog. Evidence: `e6_well_signed_foreign_root_does_not_rebind`, `e6_conflicting_self_bind_is_not_left_in_oplog`, `e6_second_device_of_principal_opens_random_does_not` (envelope signed by the second device), `e6_forged_kr0_junk_cert_sig_does_not_rebind`. Contract: [AUTH.md](doc/AUTH.md) §4.1 note. **Not claimed:** C5/PKI trust store closed, two-level membership on data ops, M3b exit, H5/H8/H10 closed, format freeze.
 
 ### perf-bench first slice — `bench/relay-chat/` live relay harness
 
