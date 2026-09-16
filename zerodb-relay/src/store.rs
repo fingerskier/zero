@@ -116,8 +116,16 @@ impl OpStore for MemoryStore {
         Ok(())
     }
 
-    fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError> {
-        self.grants.insert((hex::encode(grant.ds), grant.id), grant);
+    fn upsert_grant(&mut self, mut grant: KnownGrant) -> Result<(), StoreError> {
+        let key = (hex::encode(grant.ds), grant.id);
+        // `revoked` is monotone: a grant op re-delivered after its revoke
+        // (out-of-order delivery, every-connect re-upload) must not re-admit.
+        if let Some(existing) = self.grants.get(&key)
+            && existing.revoked
+        {
+            grant.revoked = true;
+        }
+        self.grants.insert(key, grant);
         Ok(())
     }
 
@@ -244,7 +252,8 @@ impl OpStore for SqliteStore {
             "INSERT INTO membership_grants (ds, grant_id, subject, scopes, expiry, revoked)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(ds, grant_id) DO UPDATE SET subject=excluded.subject,
-             scopes=excluded.scopes, expiry=excluded.expiry, revoked=excluded.revoked",
+             scopes=excluded.scopes, expiry=excluded.expiry,
+             revoked=MAX(membership_grants.revoked, excluded.revoked)",
             params![
                 hex::encode(grant.ds),
                 grant.id.as_slice(),
