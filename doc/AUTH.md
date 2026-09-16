@@ -175,7 +175,7 @@ An operation **O** is authorized iff **all** of:
      - if `G.expiry` is non-null, `O.ts.physical_ms < G.expiry` (wall-clock advisory only for expiry; see §4.3).
 4. **Control-plane chain:** for control ops other than genesis, the authoring principal MUST hold `admin` under (3) **or** be the founder.
 
-**Note — device cert ops:** a `KeyRecord` with `kr ∈ {0,1}` is valid if its `cert_sig` verifies under the named `root_pk` and the principal matches; the *envelope* author should be a device of that principal (self-attestation of publication). Group-key `KeyRecord`s (`kr = 2`) require `admin` or key-distribution policy (M3b).
+**Note — device cert ops:** a `KeyRecord` with `kr ∈ {0,1}` is valid if its `cert_sig` verifies under the named `root_pk` and the principal matches. For `kr = 0` the *envelope* author MUST equal `BLAKE3(cert.device)` (the named device consents by publishing; the named root consents by `cert_sig`). Membership for that op is the verified `cert.principal`, not solo-device `author`. A write member MUST NOT bind a foreign `device` under their own root. Group-key `KeyRecord`s (`kr = 2`) require `admin` or key-distribution policy (M3b).
 
 ### 4.2 Concurrent-with-revocation
 

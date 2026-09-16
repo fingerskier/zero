@@ -1,11 +1,14 @@
 //! Peer-side AUTH.md §4 evaluation over experimental WireOps.
 //!
-//! Solo-device principals: `PrincipalId == PeerId == BLAKE3(device pk)`.
-//! AUTH is enforced only when a genesis op is present (or `auth` meta is set).
+//! Solo-device principals: `PrincipalId == PeerId == BLAKE3(device pk)`
+//! for data/control ops other than `kr = 0` device certs. A `kr = 0`
+//! KeyRecord is self-attested: envelope author MUST be the named device,
+//! membership uses the verified cert principal. AUTH is enforced only
+//! when a genesis op is present (or `auth` meta is set).
 
 use zerodb_core::auth::{
     AuthzBody, AuthzOp, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD,
-    KIND_SCHEMA_EPOCH, auth_error_tag, authorize,
+    KIND_SCHEMA_EPOCH, KR_DEVICE_CERT, auth_error_tag, authorize, peer_id, verify_device_cert,
 };
 
 use crate::{StoreError, WireOp, decode32};
@@ -142,7 +145,20 @@ pub fn authorize_wire(
         .iter()
         .map(wire_to_authz)
         .collect::<Result<Vec<_>, _>>()?;
-    let candidate_authz = wire_to_authz(candidate)?;
+    let mut candidate_authz = wire_to_authz(candidate)?;
+    if candidate.kind == KIND_KEY_RECORD
+        && matches!(
+            &candidate_authz.body,
+            AuthzBody::KeyRecord { kr } if *kr == KR_DEVICE_CERT
+        )
+    {
+        let cert = crate::device_cert_from_wire(&candidate.body)?;
+        verify_device_cert(&cert).map_err(|err| StoreError::Authz(auth_error_tag(&err)))?;
+        if peer_id(&cert.device_pk) != candidate_authz.author {
+            return Err(StoreError::Authz("CAP_INVALID"));
+        }
+        candidate_authz.principal = cert.principal_id;
+    }
     authorize(datastore_id, &applied_authz, &candidate_authz)
         .map_err(|err| StoreError::Authz(auth_error_tag(&err)))
 }

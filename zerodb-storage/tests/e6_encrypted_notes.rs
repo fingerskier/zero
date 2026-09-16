@@ -868,7 +868,7 @@ fn e6_second_device_of_principal_opens_random_does_not() {
     let issued =
         issue_device_cert(&d1.identity_seed(), device_pk_from_seed(&d2_seed), 1, None).unwrap();
     let cert = sign_wire(
-        &a.identity_seed(),
+        &d2_seed,
         &ds_bytes(&a),
         1,
         &control_deps(&a),
@@ -1004,6 +1004,51 @@ fn e6_forged_kr0_junk_cert_sig_does_not_rebind() {
         victim.principal_hex(),
         before,
         "junk cert_sig must not rebind the victim principal"
+    );
+}
+
+#[test]
+fn e6_well_signed_foreign_root_does_not_rebind() {
+    let mut a = auth_store();
+    let mut victim = empty_store();
+    let writer = empty_store();
+    a.apply_schema_json(NOTE_SCHEMA).unwrap();
+    a.grant_membership(
+        &victim.principal_hex(),
+        &[SCOPE_WRITE, SCOPE_READ, SCOPE_SYNC],
+    )
+    .unwrap();
+    a.grant_membership(&writer.principal_hex(), &[SCOPE_WRITE])
+        .unwrap();
+    victim.import_bundle(&a.export_all().unwrap()).unwrap();
+    let before = victim.principal_hex();
+    let victim_pk: [u8; 32] = hex::decode(victim.author_pk_hex())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let issued = issue_device_cert(&writer.identity_seed(), victim_pk, 1, None).unwrap();
+    let attack = sign_wire(
+        &writer.identity_seed(),
+        &ds_bytes(&a),
+        1,
+        &control_deps(&a),
+        last_physical(&a).saturating_add(1),
+        8,
+        cert_body(&issued),
+    );
+    match victim.ingest_op(&attack).unwrap() {
+        IngestResult::Rejected { reason } => {
+            assert!(
+                reason == "AUTH_SIG_INVALID" || reason == "CAP_INVALID",
+                "well-signed foreign-root kr=0 must be named authz, got {reason}"
+            );
+        }
+        other => panic!("well-signed foreign-root kr=0 must not apply, got {other:?}"),
+    }
+    assert_eq!(
+        victim.principal_hex(),
+        before,
+        "write member must not rebind the victim principal with their own root"
     );
 }
 

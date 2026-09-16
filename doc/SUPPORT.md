@@ -126,7 +126,7 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 - **M4a complete.** H6 protocol is **closed** (Decision Log 2026-09-12; [RELAY-SPEC](RELAY-SPEC.md) §14.2; #25–#28). Fake ordered DataChannel; no hosted TURN / public STUN / `wrtc` (TURN is infra). Signaling identity is relay-asserted until DC AUTH; DC AUTH is DTLS channel-bound (`HELLO.channel_binding`, H5 slice) but the handshake server is still unauthenticated (H5 open). Do not claim M4a complete (O4 pinned; M4a stays open on its own platform criteria (real-browser WebRTC DataChannel path — tests use a fake channel; direct/relay parity; browser restart/offline tests); E10 is M4b).
 - **Full TLS production story** — in-process TLS exists (`--tls-cert`/`--tls-key`), but there is no CA, no minted or rotated certs, no OCSP/ALPN story, and no hosted relay; `--allow-insecure` is a LAN escape hatch only.
 - **Format freeze** — no versioned frozen profile; wrap-body unfrozen.
-- **C5 on-wire complete** — AUTH contract exists; do not claim C5 closed as a product/PKI story.
+- **C5 on-wire complete** — AUTH contract exists; kr=0 self-attestation (envelope author MUST be the named device) landed 2026-09-15. Do not claim C5 closed as a product/PKI story (no root trust store; data-op membership still solo-device).
 - **H9 closed** — two-language harness landed (PR #19); issue stays open until an approved-resolution removal.
 - **H10 closed** — leftovers implemented; envelope/key lifecycle not closed.
 - **M3b exit** — remainder pinned; E5–E8 live is the security bar carried into M3c, not a gate close.
