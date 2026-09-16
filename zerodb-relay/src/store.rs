@@ -1,6 +1,6 @@
 //! Durable validated oplog. The relay hashes this set as `validated_root`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use rusqlite::{Connection, params};
@@ -71,6 +71,10 @@ pub struct MemoryStore {
     // (ds, op_id) → op
     ops: BTreeMap<(String, [u8; 32]), StoredOp>,
     grants: BTreeMap<(String, [u8; 32]), KnownGrant>,
+    // Revoke tombstones: (ds, grant_id) seen revoked, whether or not the
+    // grant row exists yet. The relay has no causal-readiness step, so a
+    // revoke may arrive before the grant it names.
+    revoked: BTreeSet<(String, [u8; 32])>,
 }
 
 impl MemoryStore {
@@ -78,6 +82,7 @@ impl MemoryStore {
         Self {
             ops: BTreeMap::new(),
             grants: BTreeMap::new(),
+            revoked: BTreeSet::new(),
         }
     }
 }
@@ -116,8 +121,18 @@ impl OpStore for MemoryStore {
         Ok(())
     }
 
-    fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError> {
-        self.grants.insert((hex::encode(grant.ds), grant.id), grant);
+    fn upsert_grant(&mut self, mut grant: KnownGrant) -> Result<(), StoreError> {
+        let key = (hex::encode(grant.ds), grant.id);
+        // `revoked` is monotone in either arrival order: a grant op
+        // re-delivered after its revoke (every-connect re-upload) or arriving
+        // after a revoke that named it first must not re-admit.
+        if self.revoked.contains(&key) {
+            grant.revoked = true;
+        }
+        if grant.revoked {
+            self.revoked.insert(key.clone());
+        }
+        self.grants.insert(key, grant);
         Ok(())
     }
 
@@ -130,8 +145,12 @@ impl OpStore for MemoryStore {
             .collect())
     }
 
+    /// Records the tombstone unconditionally; returns whether a grant row
+    /// existed to mark.
     fn revoke_grant(&mut self, ds: &str, id: &[u8; 32]) -> Result<bool, StoreError> {
-        if let Some(grant) = self.grants.get_mut(&(ds.to_string(), *id)) {
+        let key = (ds.to_string(), *id);
+        self.revoked.insert(key.clone());
+        if let Some(grant) = self.grants.get_mut(&key) {
             grant.revoked = true;
             return Ok(true);
         }
@@ -173,6 +192,11 @@ impl SqliteStore {
                 scopes TEXT NOT NULL,
                 expiry INTEGER,
                 revoked INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (ds, grant_id)
+            );
+            CREATE TABLE IF NOT EXISTS revoked_grants (
+                ds TEXT NOT NULL,
+                grant_id BLOB NOT NULL,
                 PRIMARY KEY (ds, grant_id)
             );",
         )?;
@@ -240,11 +264,16 @@ impl OpStore for SqliteStore {
     fn upsert_grant(&mut self, grant: KnownGrant) -> Result<(), StoreError> {
         let scopes =
             serde_json::to_string(&grant.scopes).map_err(|e| StoreError::Io(e.to_string()))?;
+        // `revoked` is monotone in either arrival order: the inserted value
+        // honors an earlier tombstone, and a conflict keeps the max.
         self.conn.execute(
             "INSERT INTO membership_grants (ds, grant_id, subject, scopes, expiry, revoked)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             VALUES (?1, ?2, ?3, ?4, ?5,
+                     MAX(?6, EXISTS(SELECT 1 FROM revoked_grants
+                                    WHERE ds=?1 AND grant_id=?2)))
              ON CONFLICT(ds, grant_id) DO UPDATE SET subject=excluded.subject,
-             scopes=excluded.scopes, expiry=excluded.expiry, revoked=excluded.revoked",
+             scopes=excluded.scopes, expiry=excluded.expiry,
+             revoked=MAX(membership_grants.revoked, excluded.revoked)",
             params![
                 hex::encode(grant.ds),
                 grant.id.as_slice(),
@@ -290,7 +319,13 @@ impl OpStore for SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// Records the tombstone unconditionally; returns whether a grant row
+    /// existed to mark.
     fn revoke_grant(&mut self, ds: &str, id: &[u8; 32]) -> Result<bool, StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO revoked_grants (ds, grant_id) VALUES (?1, ?2)",
+            params![ds, id.as_slice()],
+        )?;
         Ok(self.conn.execute(
             "UPDATE membership_grants SET revoked=1 WHERE ds=?1 AND grant_id=?2",
             params![ds, id.as_slice()],

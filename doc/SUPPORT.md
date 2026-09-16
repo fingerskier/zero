@@ -129,6 +129,8 @@ HLC / peer ingest: `max_drift_ms` = 60000 (`CLOCK_DRIFT`). SchemaEpoch in this s
 - **C5 on-wire complete** — AUTH contract exists; kr=0 self-attestation (envelope author MUST be the named device) landed 2026-09-15. Do not claim C5 closed as a product/PKI story (no root trust store; data-op membership still solo-device).
 - **H9 closed** — two-language harness landed (PR #19); issue stays open until an approved-resolution removal.
 - **H10 closed** — leftovers implemented; envelope/key lifecycle not closed.
+- **Device revocation** — `KeyRecord kr = 1` is verified and stored but has no authorization effect (solo-device principal resolution; AUTH §1.3).
+- **Bounded revocation window** — a revoked member's ops that never dep the revoke stay accepted by peers (AUTH §4.2); the honest relay filter is the only stop and it is not integrity. Read revocation is honest-client-only until a key rotation, and rotation is manual (PR #35, G1/G4).
 - **M3b exit** — remainder pinned; E5–E8 live is the security bar carried into M3c, not a gate close.
 - **Live Rust↔TS partition/rejoin** — follow-on, not this tag, not format freeze. Evidence for this act is H9 two-language fixtures (#19), existing Rust E3, and TS smoke.
 - **M4 rolling-upgrade / adjacent-version rollback matrix** — [UPGRADE.md](UPGRADE.md) points forward; do not treat this profile as E10.

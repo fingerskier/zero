@@ -48,6 +48,7 @@ Solo-device users generate both keys transparently; the SDK hides the split.
 ### 1.3 Device rotation and root loss
 
 - **Rotation:** issue a new `device_cert` from the root; optionally emit `device_revoke` for the old device. Old-device ops remain valid under historical authorization if they were causally before the revoke.
+- **Enforcement status (2026-09-15, not a close):** `device_revoke` (`kr = 1`) is accepted, structurally validated, and root-signature verified, but **not enforced**. Peer-side principal resolution is still solo-device (`principal = author`), so applying a `kr = 1` record changes no authorization state and no device loses authority. Do not present it as device revocation until the two-key principal path lands (C5). Revocation research: PR #35 (`plan/REVOCATION.md`, G7).
 - **Root compromise/loss (v0.1):** no in-protocol recovery. Re-admission of a new principal is an out-of-band founder/admin action (documented product limitation). Social recovery / multi-sig roots are post-v0.1.
 
 ### 1.4 Carrying keys with operations (C5)
@@ -180,6 +181,12 @@ An operation **O** is authorized iff **all** of:
 ### 4.2 Concurrent-with-revocation
 
 Ops concurrent with a revoke (neither is in the other's causal past) are **accepted** if they satisfy (3) without that revoke. Deterministic: every peer computes the same answer from `deps` (I-1). The revoker's client may surface concurrent late writes; no op flips valid→invalid when the revoke later arrives (avoids C6-style reevaluation).
+
+**Stated limits (2026-09-15, draft-1):**
+
+- **The window is unbounded.** A revoked member who never causally acknowledges the revoke (never puts it, or anything after it, in `deps`) can keep producing ops that every honest peer accepts under this rule. On the relay path the admission filter (§5) stops them; that filter is not integrity and is bypassed by a colluding relay or a direct peer session. Bounding the window is a contract change (grace window on the revoke's own timestamp plus a receiver-side `ts ≥ deps.ts` rule; vectors both runners) — tracked as R2 in PR #35, not done here.
+- **Mutual concurrent admin revokes remove both.** Two admins that revoke each other concurrently are each authorized in their own causal past; both revokes stand. This is the chosen rule (remove-wins), not an accident of the predicate.
+- **Not a byte change.** Nothing in this note changes preimages, bodies, or vectors.
 
 ### 4.3 Expiry
 
