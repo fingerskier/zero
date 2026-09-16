@@ -38,6 +38,7 @@ Status: `open` · `in-progress` · `blocked(<on>)` · `done(<evidence>)` · `pin
 | M4a-h5-binding DTLS channel binding | 2026-09-12 | #31 @ `a322c4d`; `H6-AUTH-004` both runners; `webrtc.test.mjs` bridged-MITM + control; entrypoints require binding. H5 not closed. |
 | M3b-relay-harden transport hardening + in-process TLS | 2026-09-12 | #32 @ `175784f`; `zerodb-relay/tests/hardening.rs` (9). Issue "no wss listener" closed. Not M3b exit. |
 | O6 resolved | 2026-09-12 | Decision Log; advertised limits, rate windows, subscription/connection caps, pre-buffer ceiling all enforced (`limits.rs`, `hardening.rs`). Quotas/datastore-creation policy stay M3b remainder. |
+| M3b-c5-attest kr=0 self-attestation | 2026-09-15 | AUTH §4.1; `e6_well_signed_foreign_root_does_not_rebind`. Not C5/PKI closed, not M3b exit. |
 
 Detailed resolved-issue audit prose lives in the [ISSUES Decision Log](../doc/ISSUES.md) only (no second copy here).
 
@@ -64,7 +65,7 @@ DQ-12 (capacity / effort bands) dropped 2026-09-12 — no owner, blocked nothing
 
 | ID | Work | Status | Notes |
 |----|------|--------|-------|
-| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH + DTLS binding, session limits, transport hardening + TLS, and H10 leftovers landed (rows below). **Not** M3b exit — outstanding: C5/PKI device-cert trust store, H10 close (rotation, wrap-body), H8 direction (undecided 2026-09-12), quotas / datastore-creation policy. H5 remainder is handshake-server identity. |
+| M3b | Security remainder | open/pinned | E5–E8 live. H5 transcript AUTH + DTLS binding, session limits, transport hardening + TLS, H10 leftovers, and kr=0 self-attestation (`M3b-c5-attest`) landed. **Not** M3b exit — outstanding: C5/PKI device-cert trust store (data-op membership still solo-device), H10 close (rotation, wrap-body), H8 direction (undecided 2026-09-12), quotas / datastore-creation policy. H5 remainder is handshake-server identity. |
 | M3b-h5 | Transcript AUTH (draft) | done(handshake + RELAY-HELLO-001 + limits H5 negatives) | `zerodb-relay-auth-v2` ‖ HELLO+nonce+intended WELCOME. v1 nonce-only `AUTH_FAILED`. Not a format freeze. |
 | M3b-limits | Session rate/sub/conn + plaintext listen | done(`zerodb-relay/tests/limits.rs`) | `0x305 TOO_MANY_SUBS`, `0x304 RATE_EXCEEDED` / `TOO_MANY_CONNECTIONS`, `--allow-insecure`. No global quota. |
 | M3b-h10-remain | H10 leftovers | done(`e6_encrypted_notes` H10 cases) | Offline-revoke at open, key-before/after-data hold, principal+device wrap, wrap-shape draft. **H10 not closed.** |

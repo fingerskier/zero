@@ -24,7 +24,7 @@ Roadmap M0–M6 (including M3a/b/c, M4a/b, M5a/b/c) is normative in [SPEC §10](
 | P0 readiness, composite M0 (draft-1, 109 vectors) | **done** |
 | M1 `v0.1.0-local`, M2 `v0.1.0-sdk` | **done** (experimental; M2 not SPEC-complete) |
 | M3a L2 relay + E3 | **done** |
-| M3b security | **pinned remainder** — E5–E8 live; transcript AUTH, session limits, transport hardening + TLS, H10 leftovers landed. **Not** M3b exit (C5/PKI trust store, H10 close, H8 direction outstanding) |
+| M3b security | **pinned remainder** — E5–E8 live; transcript AUTH, session limits, transport hardening + TLS, H10 leftovers, kr=0 self-attestation landed. **Not** M3b exit (C5/PKI trust store, H10 close, H8 direction outstanding) |
 | M3c `v0.1.0` | **done and tagged** @ `177e247` (#22); not a format freeze |
 | M4a platform | **in progress** — WASM + IDB/OPFS (#23), React hooks (#24), H6 protocol closed over a fake DataChannel (#25–#29), DTLS binding (#31). Open: real-browser DataChannel path, direct/relay parity, browser restart/offline tests |
 | O4 WASM size | **pinned** (#30) — CI ceiling 300 KiB gzip; not an M4a gate |
@@ -78,7 +78,7 @@ This is the only live action list. Everything landed before 2026-09-12 is indexe
 **Pinned (do not start):**
 - **O4 WASM size budget** — pinned 2026-09-12; trigger: an app needs RGA/Richtext in the browser (then decide optional modules). CI ceiling 300 KiB gzip stands meanwhile.
 - **H5 remainder** — handshake-server identity (signed CHALLENGE/WELCOME or an explicit Decision Log exception). TLS on the relay path and DTLS binding on the DataChannel are the interim story.
-- **M3b exit** — needs C5/PKI trust store, H10 close, H8 direction; remainder rows in LEDGER. Not a gate rename.
+- **M3b exit** — needs C5/PKI trust store (kr=0 self-attestation landed 2026-09-15; data-op membership still solo-device), H10 close, H8 direction; remainder rows in LEDGER. Not a gate rename.
 - **perf Stage 2** — trigger: Stage 0 still scan-dominated. **perf Stage 3** — trigger: equal/one-op-delta still full-history. Relay-side evidence now comes from `bench/relay-chat/` (LEDGER `perf-bench`, first slice landed); the local 10k/100k fixture and a direct-peer scenario set are still missing.
 - **Todo-app transport** — GitHub Pages todo app cannot reach a LAN peer (direct NAPI peer has no TLS listener). Optional either way: wss on `db.serve`, or route the app via the relay. Tracked in LEDGER; not scheduled.
 - M2-crdts (until an app needs MVRegister/RGA/LWWMap); E11; query-scoped subscribe; interactive `repl`; CBOR wire (protocol v3); OPFS/sqlite-wasm.

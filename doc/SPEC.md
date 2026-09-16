@@ -1050,7 +1050,7 @@ Delivered as three independently auditable gates (amended 2026-07-18 from the de
 #### M3b — Security (internal)
 
 - [x] Mandatory signing policy, OpId/datastore bind, datastore-membership admission, author-key resolution via device certs — `m3b_admission`, `e5_membership` (C4 on-wire; AUTH §1).
-- [ ] C5 device-cert **trust store / PKI**: a write member can still mint a well-signed cert under its own root and rebind a device. Open.
+- [ ] C5 device-cert **trust store / PKI**: kr=0 self-attestation landed (envelope author MUST be the named device; well-signed foreign-root rebind is `CAP_INVALID`). Remaining: data-op membership still solo-device (`principal = author`); no root trust store. Open.
 - [x] Handshake hardening: CBOR-only through auth, transcript AUTH binding version/limits/caps (`zerodb-relay-auth-v2`), DTLS channel binding on the DataChannel (#31); shared peer handshake for direct P2P and relay (H6 closed #29).
 - [ ] Handshake-server identity (ISSUES H5 remainder): the client cannot authenticate the relay / DC handshake server in-protocol; TLS + DTLS binding are the interim story. Open.
 - [ ] E2E encrypted-property envelope + group-key wrap + offline revoke are live (E6, H10 leftovers 2026-08-28); key **rotation** and the wrap-body freeze are not — H10 not closed. Whole-op encryption (H8) undecided by choice.
