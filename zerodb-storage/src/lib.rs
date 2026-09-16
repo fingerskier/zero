@@ -44,7 +44,7 @@ use uuid::Uuid;
 use zerodb_core::auth::{
     DeviceCert, GenesisBody, KIND_CAP_GRANT, KIND_CAP_REVOKE, KIND_GENESIS, KIND_KEY_RECORD,
     KIND_SCHEMA_EPOCH, KR_DEVICE_CERT, KR_DEVICE_REVOKE, KR_GROUP_KEY, SCOPE_ADMIN, SCOPE_READ,
-    SCOPE_SYNC, SCOPE_WRITE, auth_error_tag, datastore_id_from_genesis, genesis_envelope,
+    SCOPE_SYNC, SCOPE_WRITE, auth_error_tag, datastore_id_from_genesis, genesis_envelope, peer_id,
     verify_device_cert,
 };
 use zerodb_core::cbor::Cbor;
@@ -2084,6 +2084,14 @@ fn apply_wire(
     }
     if wire.kind == KIND_KEY_RECORD {
         check_key_record_wraps(&wire.body)?;
+        // Device-cert local-bind checks fail closed *before* insert so
+        // import_bundle / quarantine-release skip paths cannot leave a
+        // rejected kr=0 in the signed oplog.
+        if let Some(KR_DEVICE_CERT | KR_DEVICE_REVOKE) =
+            wire.body.get("kr").and_then(|v| v.as_u64())
+        {
+            apply_device_principal(tx, wire)?;
+        }
     }
 
     let adopt_current = if wire.kind == KIND_KEY_RECORD {
@@ -3740,7 +3748,7 @@ fn decode64(s: &str) -> Result<[u8; 64], StoreError> {
         .map_err(|_| StoreError::Invalid("expected 64 bytes".into()))
 }
 
-fn device_cert_from_wire(body: &serde_json::Value) -> Result<DeviceCert, StoreError> {
+pub(crate) fn device_cert_from_wire(body: &serde_json::Value) -> Result<DeviceCert, StoreError> {
     let kr = body
         .get("kr")
         .and_then(|v| v.as_u64())
@@ -3782,6 +3790,10 @@ fn apply_device_principal(tx: &dyn BackendTxn, wire: &WireOp) -> Result<(), Stor
     if cert.kr != KR_DEVICE_CERT {
         return Ok(());
     }
+    let author = decode32(&wire.author)?;
+    if peer_id(&cert.device_pk) != author {
+        return Err(StoreError::Authz("CAP_INVALID"));
+    }
     let Some(seed_raw) = tx.meta_get("seed")? else {
         return Ok(());
     };
@@ -3790,6 +3802,12 @@ fn apply_device_principal(tx: &dyn BackendTxn, wire: &WireOp) -> Result<(), Stor
         .map_err(|_| StoreError::Invalid("seed length".into()))?;
     let local_pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
     if cert.device_pk != local_pk {
+        return Ok(());
+    }
+    if let Some(existing) = tx.meta_get(META_PRINCIPAL)? {
+        if existing.as_slice() != cert.principal_id.as_slice() {
+            return Err(StoreError::Authz("CAP_INVALID"));
+        }
         return Ok(());
     }
     tx.meta_set(META_PRINCIPAL, &cert.principal_id)?;
