@@ -268,6 +268,56 @@ fn revoked_grant_redelivered_stays_revoked_sqlite() {
     let _ = std::fs::remove_file(path);
 }
 
+/// The relay has no causal-readiness step and a peer picks its upload order,
+/// so a revoke can reach the relay before the grant it names. The tombstone
+/// makes both arrival orders converge on "revoked".
+#[test]
+fn revoke_before_grant_stays_revoked() {
+    let relay = Relay::memory();
+    let (grant, token) = member_token();
+    assert!(
+        !relay.revoke_grant(&ds(), &GRANT_ID).unwrap(),
+        "no grant row yet; tombstone only"
+    );
+
+    relay.upsert_grant(grant).unwrap();
+
+    let mut member = relay.accept();
+    handshake(&mut member, &MEMBER_DEVICE);
+    assert_eq!(subscribe(&mut member, Some(&token)), MSG_ERROR);
+    assert_eq!(sync(&mut member), MSG_ERROR);
+}
+
+#[test]
+fn revoke_before_grant_stays_revoked_sqlite() {
+    let path = std::env::temp_dir().join(format!(
+        "zerodb-e5-revoke-first-{}-{}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let (grant, token) = member_token();
+    {
+        let relay = Relay::open(&path).unwrap();
+        assert!(!relay.revoke_grant(&ds(), &GRANT_ID).unwrap());
+    }
+    {
+        // Tombstone survives reopen; the late grant inserts as revoked.
+        let relay = Relay::open(&path).unwrap();
+        relay.upsert_grant(grant).unwrap();
+    }
+    {
+        let relay = Relay::open(&path).unwrap();
+        let mut member = relay.accept();
+        handshake(&mut member, &MEMBER_DEVICE);
+        assert_eq!(subscribe(&mut member, Some(&token)), MSG_ERROR);
+    }
+    let _ = std::fs::remove_file(path);
+}
+
 #[test]
 fn membership_control_plane_survives_sqlite_reopen() {
     let path = std::env::temp_dir().join(format!(
