@@ -2087,7 +2087,8 @@ fn apply_wire(
         // Device-cert local-bind checks fail closed *before* insert so
         // import_bundle / quarantine-release skip paths cannot leave a
         // rejected kr=0 in the signed oplog.
-        if let Some(KR_DEVICE_CERT | KR_DEVICE_REVOKE) = wire.body.get("kr").and_then(|v| v.as_u64())
+        if let Some(KR_DEVICE_CERT | KR_DEVICE_REVOKE) =
+            wire.body.get("kr").and_then(|v| v.as_u64())
         {
             apply_device_principal(tx, wire)?;
         }

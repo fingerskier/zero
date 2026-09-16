@@ -1082,8 +1082,13 @@ fn e6_conflicting_self_bind_is_not_left_in_oplog() {
     let before = d2.principal_hex();
     assert_eq!(before, d1.principal_hex());
 
-    let rebound =
-        issue_device_cert(&writer.identity_seed(), device_pk_from_seed(&d2_seed), 2, None).unwrap();
+    let rebound = issue_device_cert(
+        &writer.identity_seed(),
+        device_pk_from_seed(&d2_seed),
+        2,
+        None,
+    )
+    .unwrap();
     let attack = sign_wire(
         &d2_seed,
         &ds_bytes(&a),
